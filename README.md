@@ -14,7 +14,9 @@ upstream を直接依存に書く方針（重複と更新追従の手間を避�
 ├── skill-builder/SKILL.md
 ├── test-review/SKILL.md
 ├── empirical-prompt-tuning/SKILL.md
-└── research-practices/SKILL.md
+├── research-practices/SKILL.md
+├── software-design/SKILL.md
+└── design-review/SKILL.md
 ```
 
 ## 収録 skill
@@ -25,6 +27,8 @@ upstream を直接依存に書く方針（重複と更新追従の手間を避�
 | `test-review` | 自作（`agegis` で運用していたもの） |
 | `empirical-prompt-tuning` | 自作（`agegis` で運用していたもの） |
 | `research-practices` | 自作（`agegis` で運用していたもの） |
+| `software-design` | 自作（13 レンズ: PoSD / Immutable Data Model / TM法 / FP / DDD / TDD / RoP / FoSA / xUnit / CQRS / ES / ADR / Secure by Design） |
+| `design-review` | 自作（`software-design` の成果物を別 agent に白紙で読ませてレビューする pair skill） |
 
 ## プロジェクトでの利用 (apm.yml)
 
