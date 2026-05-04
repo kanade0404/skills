@@ -1,6 +1,6 @@
 ---
 name: skill-builder
-description: agegis プロジェクト内で Claude Code skill を新規作成・既存 skill のトリガ精度を測定/改善するためのメタスキル。新しい skill を `.claude/skills/<name>/SKILL.md` に scaffold したい時、既存 skill が適切なときに発火しない / 余計な時に発火するのを直したい時、skill description を eval ベースで最適化したい時、skill の trigger 性能をベースライン測定したい時に必ず使う。「skill 作って」「このスキルなんで起動しない」「スキルが暴発する」「skill description 最適化」「skill の eval 作って」「メタスキル」のような要請に該当する。プロジェクト規約（CLAUDE.md / rules/）への整合チェックも兼ねる。
+description: Claude Code skill を新規作成・既存 skill のトリガ精度を測定/改善するためのメタスキル。新しい skill を `.claude/skills/<name>/SKILL.md` に scaffold したい時、既存 skill が適切なときに発火しない / 余計な時に発火するのを直したい時、skill description を eval ベースで最適化したい時、skill の trigger 性能をベースライン測定したい時、Mode C で起動後の本文品質を subagent dispatch で測りたい時に必ず使う。発火例: 「skill 作って」「このスキルなんで起動しない」「スキルが暴発する」「skill description 最適化」「skill の eval 作って」「メタスキル」「skill の trigger 精度測って」「skill の品質を測りたい」。consumer プロジェクトの CLAUDE.md / 規約ファイル（`rules/` `docs/` 等）への整合チェックも兼ねる。プラグインスキル（`plugins/<plugin>/skills/...`）の編集は範囲外で、plugin-dev 系 skill に委ねる。
 allowed-tools:
   - Read
   - Write
@@ -14,9 +14,11 @@ allowed-tools:
   - AskUserQuestion
 ---
 
-# Skill Builder (agegis)
+# Skill Builder
 
-公式 `skill-creator` の発想を踏襲しつつ、agegis プロジェクト内に閉じた軽量メタスキル。subagent や外部 LLM を立てずに、**1 セッション内で完結する eval ループ**を回す。
+公式 `skill-creator` の発想を踏襲しつつ、consumer プロジェクトの `.claude/skills/` 運用に閉じた軽量メタスキル。subagent や外部 LLM を立てずに、**1 セッション内で完結する eval ループ**を回す。
+
+APM (`microsoft/apm`) で `kanade0404/skills/skill-builder` として配布される前提で project-agnostic に書く。consumer プロジェクトの CLAUDE.md / 規約ファイル（`rules/`, `docs/`, `AGENTS.md` 等）への整合は consumer 側の規約として参照する。
 
 主参照：
 - [Anthropic Agent Skills best practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices)（公式の規範）
@@ -25,7 +27,7 @@ allowed-tools:
 外部 skill-creator との位置付け：
 
 - 公式 skill-creator は汎用かつ重装備（並列 subagent、blind A/B comparator、HTML viewer）。新規プラグイン公開を想定。
-- 本スキルは **agegis のローカル `.claude/skills/` 配下を運用するための最小ループ**。CLAUDE.md と `rules/` への整合、日本語 description、Onion / FP / TDD ドクトリンへの寄り添いを担保する。
+- 本スキルは **consumer プロジェクト内 `.claude/skills/` を運用するための最小ループ**。日本語 description / 規約整合チェック / 1 セッション内 eval を担保する。
 
 ---
 
@@ -69,10 +71,11 @@ allowed-tools:
 - **既存スキルとの分担境界** — 機能が重なる skill があれば名指しで線を引く
 - **依存ツール / MCP** — `allowed-tools` に何を入れるか
 
-agegis 固有の確認：
+consumer プロジェクト固有の確認：
 
-- `rules/architecture-style.md` / `rules/design-guide.md` のどの原則に直接関わるか
-- 取り扱う対象（テスト / RLS / プロンプト / インフラ）が既存 skill とどう違うか
+- consumer プロジェクトに `CLAUDE.md` / `rules/*.md` / `AGENTS.md` / `docs/` 等の規約があれば、新 skill が違反していないか確認する
+- 取り扱う対象（テスト / API / プロンプト / インフラ / プロダクト要求 etc.）が既存 skill とどう違うかを名指しで線引きする
+- consumer プロジェクトに同領域の既存 skill / agent / slash command があれば、責務境界を frontmatter description に明記する
 
 ### Step 2 — frontmatter を書く
 
@@ -102,12 +105,16 @@ agegis 固有の確認：
 
 判断基準は **「Claude が書ける/判断できることを書かない」**。`PDF を読み込み → 各ページのテキストを取得` は不要、`pdfplumber を使え` だけで十分（公式の "concise is key" 原則）。
 
-#### 参考構造（`test-review` を雛形にする）：
+#### 参考構造（同カタログ内の `test-review` / `research-practices` / `product-discovery` を雛形にできる）：
 
 ```
-# <skill name> (agegis)
+# <skill name>
 
 <なぜ必要か。1 段落>
+
+## いつ使うか / 使わない場面
+- 発火すべき状況（口語含む）
+- 発火しない場面 → 該当 skill 名を明示
 
 ## ワークフロー
 ### Step 1 — ...
@@ -118,7 +125,10 @@ agegis 固有の確認：
 <固定テンプレ>
 
 ## このスキルがやらないこと
-- ...
+- 成果物名で除外（動詞ではなく）
+
+## リファレンス
+- references/<topic>.md
 ```
 
 **書き方の原則**：
@@ -134,7 +144,7 @@ Mode B の入力になる。詳細は後段。
 
 ### Step 5 — レビュー観点（Anthropic 公式チェックリスト準拠）
 
-書き終えたら以下を自己点検する。`[A]` は公式 best-practices の checklist 項目、`[L]` は agegis ローカル追加：
+書き終えたら以下を自己点検する。`[A]` は公式 best-practices の checklist 項目、`[L]` は本カタログのローカル追加：
 
 **Core quality**
 - [A] description が具体的で key terms を含む
@@ -151,7 +161,7 @@ Mode B の入力になる。詳細は後段。
 **Triggering / boundary**
 - [A] description に should-use の典型表現が複数列挙されている
 - [L] negative space（やらないこと）が **動詞ではなく成果物** で定義されている（参照: failure-patterns.md `dual-meaning-verb-by-action`）
-- [L] CLAUDE.md / `rules/` と矛盾しない
+- [L] consumer プロジェクトの CLAUDE.md / 規約ファイル（`rules/`, `AGENTS.md`, `docs/` 等）と矛盾しない
 
 **Code / scripts（同梱する場合のみ）**
 - [A] スクリプトは「Claude に投げない」(solve, don't punt)。エラー処理を内側で持つ

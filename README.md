@@ -14,17 +14,21 @@ upstream を直接依存に書く方針（重複と更新追従の手間を避�
 ├── skill-builder/SKILL.md
 ├── test-review/SKILL.md
 ├── empirical-prompt-tuning/SKILL.md
-└── research-practices/SKILL.md
+├── research-practices/SKILL.md
+└── product-discovery/SKILL.md
 ```
 
 ## 収録 skill
 
-| Skill | 出所 |
+いずれも自作。プロジェクト固有 doctrine への依存を外し、APM (`microsoft/apm`) で `kanade0404/skills/<name>` として project-agnostic に配布する。
+
+| Skill | 概要 |
 | --- | --- |
-| `skill-builder` | 自作（`agegis` で運用していたもの） |
-| `test-review` | 自作（`agegis` で運用していたもの） |
-| `empirical-prompt-tuning` | 自作（`agegis` で運用していたもの） |
-| `research-practices` | 自作（`agegis` で運用していたもの） |
+| `skill-builder` | Claude Code skill のスキャフォールド + trigger / quality eval ループを回すメタスキル |
+| `test-review` | テストコードを Khorikov 4 属性 / Meszaros 17 smells / AI 生成アンチパターンで一貫レビュー（言語・スタック非依存） |
+| `empirical-prompt-tuning` | プロンプトをバイアス排除した実行者で評価し反復改善する手法 |
+| `research-practices` | ライブラリ / 学術 / 業界実践の構造化リサーチワークフロー（CRAAP / SIFT / S0-S5 信頼度タグ） |
+| `product-discovery` | 要求定義（要件定義の前段）。Outcome > Output で PRD を起こし、`prd-review` → `requirements` に渡す |
 
 ## プロジェクトでの利用 (apm.yml)
 
