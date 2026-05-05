@@ -53,7 +53,7 @@ APM (`microsoft/apm`) で `kanade0404/skills/skill-builder` として配布さ�
 
 | モード | 入力 | 出力 |
 |---|---|---|
-| `create` | 何をする skill か（自然文） | `.claude/skills/<name>/SKILL.md` + `evals/trigger.json` 雛形 |
+| `create` | 何をする skill か（自然文） | `.claude/skills/<name>/SKILL.md` + `evals/<name>-trigger.json` 雛形 |
 | `tune-trigger` | 既存 skill 名 | `evals/<skill>-trigger-results-<date>.json` + description 改訂案 |
 | `tune-quality` | 既存 skill 名 + シナリオ | subagent 品質レポート + SKILL.md 改訂案 |
 
@@ -138,7 +138,7 @@ consumer プロジェクト固有の確認：
 - 詳細レイヤは `references/<topic>.md` に切り出し、本文からは「対象が X のときだけ参照する」と書く
 - 出力フォーマットは固定する。スキャンしやすさ優先
 
-### Step 4 — `evals/trigger.json` 雛形を置く
+### Step 4 — `evals/<name>-trigger.json` 雛形を置く
 
 Mode B の入力になる。詳細は後段。
 
@@ -270,7 +270,7 @@ description を直したら **同じ eval セット**で再測定。F1 が上が
 
 ## Files
 - .claude/skills/<name>/SKILL.md
-- .claude/skills/<name>/evals/trigger.json (雛形)
+- .claude/skills/<name>/evals/<name>-trigger.json (雛形)
 
 ## Self-review
 - [✓/✗] 500 行以内
