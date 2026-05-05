@@ -255,4 +255,4 @@ CLAUDE.md に従い、ユーザとのやり取りおよび PRD 本文は **日�
 - `references/triage-decision.md` — Phase A 判定木と別 skill への振り分け
 - `references/handoff-protocol.md` — prd-review / requirements への引き継ぎ仕様
 - `assets/prd-lean.md.tpl` — Lean PRD テンプレート
-- `evals/trigger.json` — trigger eval 雛形（skill-builder Mode B で利用）
+- `evals/product-discovery-trigger.json` — trigger eval 雛形（skill-builder Mode B で利用）

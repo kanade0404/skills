@@ -1,7 +1,7 @@
 {
   "target_skill": "product-discovery",
   "version": "1",
-  "notes": "skill-builder Mode B 用の trigger eval 雛形。should-trigger / should-skip 計 20 件。explicit / ambiguous / adjacent / distractor の混合。Mode B で計測する際は別途 evals/trigger-results-<YYYY-MM-DD>.jsonl を生成する。",
+  "notes": "skill-builder Mode B 用の trigger eval 雛形。should-trigger / should-skip 計 20 件。explicit / ambiguous / adjacent / distractor の混合。Mode B で計測する際は別途 evals/product-discovery-trigger-results-<YYYY-MM-DD>.jsonl を生成する。",
   "cases": [
     {
       "id": "t01",
