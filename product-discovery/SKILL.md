@@ -68,7 +68,7 @@ PRD 出力先は **常に `docs/prd/<slug>.md`**（Linear など外部ツール�
 
 ## ワークフロー
 
-```
+```text
 [Phase A: triage]          ── 顧客 / 起動可否 / 既存 PRD diff か新規か
    ↓
 [Phase B: outcome framing] ── 動かしたい outcome を 1 つに絞る (Build Trap 防御)

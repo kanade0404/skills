@@ -74,7 +74,7 @@ Cagan の主張: 製品開発の失敗のほとんどは以下 4 種に集約さ
 
 ### Opportunity Solution Tree (OST)
 
-```
+```text
 Outcome
  ├── Opportunity 1
  │    ├── Solution candidate 1a

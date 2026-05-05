@@ -8,7 +8,7 @@
 
 ## ステージ全体図
 
-```
+```text
 [product-discovery]      ── 本 skill。docs/prd/<slug>.md を生成 / 更新
         ↓ ユーザ起動
 [prd-review]             ── 別 agent / 別 skill。must / imo を出す
@@ -49,7 +49,7 @@ PRD には以下のセクションを **必ず** 埋める。prd-review はこ�
 
 ### 完了報告でユーザに渡す文面（テンプレ）
 
-```
+```text
 PRD ドラフトを docs/prd/<slug>.md に書きました。
 
 要約:

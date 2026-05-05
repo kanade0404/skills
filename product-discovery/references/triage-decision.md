@@ -90,6 +90,12 @@ existing_materials:
   notes: bool
   competitor_links: []
   linear_urls: []
+
+# PRD §Meta への変換規則（Phase E で適用）:
+#   existing_materials.prd_path        → related.prior_prd (path or null)
+#   existing_materials.notes (bool)    → related.notes (array; bool は「素材が存在するか」フラグ。中身は Phase B/C 入力に展開)
+#   existing_materials.competitor_links → related.competitor_links (array)
+#   existing_materials.linear_urls     → related.linear_urls (array)
 ```
 
 これを以後の Phase で参照する。
