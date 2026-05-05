@@ -1,13 +1,18 @@
 ---
 name: pr-review-respond
-description: PR に投稿された自動レビュー (CodeRabbit / Devin) と人間レビュアーのコメントを取得し、各指摘の妥当性を検証したうえで対応するスキル。VALID は修正コミットを当てて該当スレッドに「Fixed in <SHA>」と返信、INVALID_PUSH は根拠付きの pushback コメントを残し resolve しない、VALID_DEFER は issue 化して参照、DUPLICATE は既存対応スレッドを指す。最後に PR へ集約サマリコメントを 1 件投稿し「何を・どう対応した／なぜ対応しなかったか」を 1 箇所で追えるようにする。`gh pr create` 直後・「レビュー対応して」「コメント見て対応して」「コードラビット対応」「Devin の指摘片付けて」「PR のコメント全部捌いて」のような要請、CodeRabbit / Devin / 人間レビュアーが新規コメントを残した時、PR を merge する前に未解決スレッドを確認したい時、いずれでも必ず起動すること。レビュアー判別はコメント author と本文を読んで行い、bot suffix のような表面的なルールは持たない。本スキルは「読む・直す・返信する・サマリ投稿する」までで、レビュー自体を実行する (CodeRabbit や Devin を呼び出す) ことはしない — 既にレビュー済みの PR に後追いで対応するスキル。GitHub API 呼び出しは同梱の `scripts/*.sh` に閉じ込めており、`Bash(bash scripts/*.sh:*)` を 1 度許可するだけで運用できる。
+description: PR に投稿された自動レビュー (CodeRabbit / Devin) と人間レビュアーのコメントを取得し、各指摘の妥当性を検証したうえで対応するスキル。VALID は修正コミットを当てて該当スレッドに「Fixed in <SHA>」と返信、INVALID_PUSH は根拠付きの pushback コメントを残し resolve しない、VALID_DEFER は issue 化して参照、DUPLICATE は既存対応スレッドを指す。最後に PR へ集約サマリコメントを 1 件投稿し「何を・どう対応した／なぜ対応しなかったか」を 1 箇所で追えるようにする。`gh pr create` 直後・「レビュー対応して」「コメント見て対応して」「コードラビット対応」「Devin の指摘片付けて」「PR のコメント全部捌いて」のような要請、CodeRabbit / Devin / 人間レビュアーが新規コメントを残した時、PR を merge する前に未解決スレッドを確認したい時、いずれでも必ず起動すること。レビュアー判別はコメント author と本文を読んで行い、bot suffix のような表面的なルールは持たない。本スキルは「読む・直す・返信する・サマリ投稿する」までで、レビュー自体を実行する (CodeRabbit や Devin を呼び出す) ことはしない — 既にレビュー済みの PR に後追いで対応するスキル。GitHub API 呼び出しは同梱の単一エントリ `scripts/prr` (subcommand: `fetch` / `reply` / `resolve` / `summary` / `wait-ci`) に集約しており、`allowed-tools` で `Bash(bash *prr *)` を auto-grant するため consumer 側で permission を追加する必要は無い。
 allowed-tools:
   - Read
   - Write
   - Edit
-  - Bash
+  - Bash(bash *prr *)
+  - Bash(git add *)
+  - Bash(git commit *)
+  - Bash(git diff *)
+  - Bash(git log *)
+  - Bash(git status *)
+  - Bash(jq *)
   - Task
-  - WebFetch
 ---
 
 # PR Review Respond
@@ -24,27 +29,34 @@ CodeRabbit / Devin / 人間レビュアーが残したコメントを **盲信�
 
 ## 前提: 同梱スクリプトと権限
 
-`gh api` / `gh pr ...` を毎回 inline で叩くと、実行のたびに permission prompt が発生して煩雑になる。本スキルは GitHub API 呼び出しを `scripts/*.sh` に閉じ込めて、許可は **`bash <skill-dir>/scripts/*.sh` 一括** で済むようにする。
+`gh api` / `gh pr ...` を毎回 inline で叩くと、実行のたびに permission prompt が発生して煩雑になる。本スキルは GitHub API 呼び出しを `scripts/` 配下に閉じ込め、**単一エントリーポイント `prr` 経由でのみ呼び出す** 設計にしている。これにより:
 
-| Script | 役割 |
-|---|---|
-| `scripts/fetch_threads.sh <PR>` | 全 review thread + PR 一般コメントを GraphQL + REST で取得し、vendor 判定 (`coderabbit` / `devin` / `human`) と `self_replied` フラグを付けた正規化 JSON を出力 |
-| `scripts/reply_thread.sh <PR> <comment-id> <body-file>` | 正しい `/repos/{O}/{R}/pulls/{PR}/comments/{id}/replies` エンドポイントで返信投稿。本文は file 経由で multi-line / 引用符事故を防ぐ |
-| `scripts/resolve_thread.sh <PR> <comment-id> [body-file]` | `body + @coderabbitai resolve` を投稿し thread を resolve。VALID / VALID_DEFER / DUPLICATE 専用 (INVALID_PUSH では呼ばない) |
-| `scripts/post_summary.sh <PR> <body-file>` | 集約 Review Response Summary を **新規** issue comment として投稿 (毎回新規投稿、過去サマリは履歴として残す) |
-| `scripts/wait_ci.sh <PR> [interval]` | `gh pr checks --watch` をラップし全 check 完了まで block。失敗時は exit 非ゼロで呼出側に通知 (本スキルは retry しない) |
+- `allowed-tools` の rule は `Bash(bash *prr *)` 1 行で全アクションをカバー (末尾 `*` のみで Claude Code permission engine の保証範囲内)
+- consumer の `~/.claude/settings.json` への permission 追加は不要 (`allowed-tools` が auto-grant、workspace trust 受諾後に有効化)
 
-推奨設定 (consumer プロジェクトの `.claude/settings.json`):
+### scripts/
 
-```json
-{
-  "permissions": {
-    "allow": [
-      "Bash(bash <plugin-skills-dir>/pr-review-respond/scripts/*.sh:*)"
-    ]
-  }
-}
+```text
+scripts/
+├── prr                  # entry point (subcommand dispatcher)
+├── fetch_threads.sh     # prr fetch
+├── reply_thread.sh      # prr reply
+├── resolve_thread.sh    # prr resolve
+├── post_summary.sh      # prr summary
+└── wait_ci.sh           # prr wait-ci
 ```
+
+### Subcommand 一覧
+
+すべて `bash "${CLAUDE_SKILL_DIR}/scripts/prr" <subcommand> <args>` で呼び出す:
+
+| Subcommand | 役割 |
+|---|---|
+| `prr fetch <PR>` | 全 review thread + PR 一般コメントを GraphQL + REST で取得し、vendor 判定 (`coderabbit` / `devin` / `human`) と `self_replied` フラグを付けた正規化 JSON を stdout に出力 |
+| `prr reply <PR> <comment-id> <body-file>` | 正しい `/repos/{O}/{R}/pulls/{PR}/comments/{id}/replies` エンドポイントで返信投稿。本文は file 経由で multi-line / 引用符事故を防ぐ |
+| `prr resolve <PR> <comment-id> [body-file]` | `body + @coderabbitai resolve` を投稿し thread を resolve。VALID / VALID_DEFER / DUPLICATE 専用 (INVALID_PUSH では呼ばない) |
+| `prr summary <PR> <body-file>` | 集約 Review Response Summary を **新規** issue comment として投稿 (毎回新規投稿、過去サマリは履歴として残す) |
+| `prr wait-ci <PR> [interval]` | `gh pr checks --watch` をラップし全 check 完了まで block。失敗時は exit 非ゼロで呼出側に通知 (本スキルは retry しない) |
 
 スクリプト本体は最小依存 (`gh`, `jq`, `bash`) のみ前提。Python / Node 等は使わない。
 
@@ -54,10 +66,10 @@ CodeRabbit / Devin / 人間レビュアーが残したコメントを **盲信�
 
 ### Phase A — 取得 (fetch)
 
-inline review threads + PR 一般コメントを 1 コマンドで取得・正規化する。`gh api` は同梱スクリプトに閉じ込めて毎回の許可確認を不要にする。
+inline review threads + PR 一般コメントを 1 コマンドで取得・正規化する。`gh api` は `prr` wrapper 経由で呼び出して毎回の許可確認を不要にする。
 
 ```bash
-bash scripts/fetch_threads.sh <PR>   # → 正規化 JSON を stdout
+bash "${CLAUDE_SKILL_DIR}/scripts/prr" fetch <PR>   # → 正規化 JSON を stdout
 ```
 
 スクリプトは:
@@ -118,14 +130,14 @@ Refs: https://github.com/<owner>/<repo>/pull/<n>#discussion_r<id>
 
 ### Phase D — 返信 (reply)
 
-inline thread への返信は GitHub REST の `/replies` エンドポイントを使う必要がある (top-level review comment への返信のみ可、reply-to-reply は不可)。これも同梱スクリプトに閉じ込める。
+inline thread への返信は GitHub REST の `/replies` エンドポイントを使う必要がある (top-level review comment への返信のみ可、reply-to-reply は不可)。これも `prr` wrapper に閉じ込める。
 
 ```bash
 # 返信本文は file 経由 (multi-line / 引用符のエスケープ事故防止)
-bash scripts/reply_thread.sh <PR> <root-comment-id> <body-file>
+bash "${CLAUDE_SKILL_DIR}/scripts/prr" reply <PR> <root-comment-id> <body-file>
 
 # CodeRabbit に「対応済み」を伝えて thread を resolve する場合 (VALID / VALID_DEFER / DUPLICATE のみ)
-bash scripts/resolve_thread.sh <PR> <root-comment-id> [body-file]
+bash "${CLAUDE_SKILL_DIR}/scripts/prr" resolve <PR> <root-comment-id> [body-file]
 # body-file を渡すとその内容 + 改行 + "@coderabbitai resolve" が投稿される
 ```
 
@@ -133,12 +145,12 @@ vendor 別の使い分け:
 
 | 分類 | CodeRabbit | Devin | 人間 |
 |---|---|---|---|
-| `VALID` | `resolve_thread.sh` (body: 「Fixed in `<SHA>`」) | `reply_thread.sh` (Fixed in `<SHA>`) | `reply_thread.sh` (Fixed in `<SHA>`. Ready for re-review.) |
-| `INVALID_PUSH` | `reply_thread.sh` (根拠のみ、resolve しない) | `reply_thread.sh` (根拠のみ) | `reply_thread.sh` (根拠 + 質問形式) |
-| `VALID_DEFER` | `resolve_thread.sh` (body: 「Tracked in #`<issue>`」) | `reply_thread.sh` (Tracked in #`<issue>`) | `reply_thread.sh` (Tracked in #`<issue>`) |
-| `DUPLICATE` | `resolve_thread.sh` (body: 「Already addressed by `<other-thread-url>`」) | `reply_thread.sh` (Already addressed by ...) | 同左 |
+| `VALID` | `prr resolve` (body: 「Fixed in `<SHA>`」) | `prr reply` (Fixed in `<SHA>`) | `prr reply` (Fixed in `<SHA>`. Ready for re-review.) |
+| `INVALID_PUSH` | `prr reply` (根拠のみ、resolve しない) | `prr reply` (根拠のみ) | `prr reply` (根拠 + 質問形式) |
+| `VALID_DEFER` | `prr resolve` (body: 「Tracked in #`<issue>`」) | `prr reply` (Tracked in #`<issue>`) | `prr reply` (Tracked in #`<issue>`) |
+| `DUPLICATE` | `prr resolve` (body: 「Already addressed by `<other-thread-url>`」) | `prr reply` (Already addressed by ...) | 同左 |
 
-**重要**: `INVALID_PUSH` は **どのレビュアーに対しても resolve コマンドを発行しない** (`reply_thread.sh` のみ使用)。reviewer 側に「無視された」と取られる余地を消すため。
+**重要**: `INVALID_PUSH` は **どのレビュアーに対しても resolve コマンドを発行しない** (`prr reply` のみ使用)。reviewer 側に「無視された」と取られる余地を消すため。
 
 返信本文の最低構成 (INVALID_PUSH の例):
 
@@ -149,11 +161,11 @@ vendor 別の使い分け:
 
 ### Phase E — 集約サマリ投稿 + 最終 gate
 
-PR の **issue comment** として、以下のサマリを **新規 1 件** で投稿する (既存サマリの更新ではなく毎回新規投稿、古いサマリは残して履歴にする)。投稿は同梱スクリプト経由:
+PR の **issue comment** として、以下のサマリを **新規 1 件** で投稿する (既存サマリの更新ではなく毎回新規投稿、古いサマリは残して履歴にする)。投稿は `prr` wrapper 経由:
 
 ```bash
 # サマリ本文を temp file に書き出してから投稿
-bash scripts/post_summary.sh <PR> <body-file>
+bash "${CLAUDE_SKILL_DIR}/scripts/prr" summary <PR> <body-file>
 ```
 
 サマリ本文テンプレ (`<body-file>` の中身):
@@ -184,10 +196,10 @@ bash scripts/post_summary.sh <PR> <body-file>
 
 - 未解決スレッド総数 - サマリの (Fixed + Pushback + Deferred + Duplicate) = 0 を確認
 - ローカル検証は **`verify-done` を呼んで** PASS を取る (`should/probably/seems` 系の語彙はそこで弾かれる)
-- CI 完了待ちも script 経由:
+- CI 完了待ちも `prr` 経由:
 
 ```bash
-bash scripts/wait_ci.sh <PR>   # 全 check 完了まで block、fail なら ci-self-heal に渡す
+bash "${CLAUDE_SKILL_DIR}/scripts/prr" wait-ci <PR>   # 全 check 完了まで block、fail なら ci-self-heal に渡す
 ```
 
 ---
@@ -237,8 +249,8 @@ PR 作者本人 (= 自分) のコメントは fetcher 側ではフィルタし�
 
 ### 出力する成果物
 
-- **集約サマリコメント 1 件** (PR の issue comment、毎回新規投稿、過去サマリは履歴として残す)
-- **inline thread への返信文字列** (vendor 別フォーマット)
+- **集約サマリコメント 1 件** (`prr summary` 経由で PR の issue comment として投稿、毎回新規、過去サマリは履歴として残す)
+- **inline thread への返信文字列** (`prr reply` / `prr resolve` 経由、vendor 別フォーマット)
 - **修正コミット列** (commit message に `Refs: <thread-url>` を含む)
 - **ユーザ向け最終報告** (Stats / Commits / Pushback / CI / Summary URL の固定構造)
 
