@@ -7,7 +7,7 @@
 ### アーキテクチャ特性
 
 - **特性 = -ility 群**: performance, availability, scalability, evolvability, security, observability, deployability, simplicity, cost …
-- **3 つまでに絞る。** 「全部大事」は決定の放棄。**最重要 1〜2、副次 1〜2** を ADR に書く。
+- **3 つまでに絞る。** 「全部大事」は決定の放棄。**最重要 1〜2、副次 1〜2（合計 3 つまで）** を ADR に書く。
 - **特性同士のトレードオフを明示**: 高 availability と低 cost、強 consistency と高 throughput、simplicity と extensibility は通常両立しない。
 
 ### アーキテクチャ量子
@@ -89,7 +89,7 @@ ES は強力だが導入コストが高い。次のいずれかに **本気で�
 
 ## レビュー観点
 
-- 採用したアーキテクチャ特性が 5 個以下に絞れているか / ADR にあるか
+- 採用したアーキテクチャ特性が 3 個以下に絞れているか / ADR にあるか
 - 量子の数が意図した通りか（同期呼び出しで実質 1 量子になっていないか）
 - スタイル選定の理由が「どの -ility を優先したか」で書けているか
 - CQRS / ES が「採用したい理由」「採用しない理由」両方で評価されたか

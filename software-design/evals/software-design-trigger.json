@@ -167,7 +167,7 @@
       "id": "t24",
       "prompt": "設計レビューしたあとの最終チェックを別エージェントに頼みたい。",
       "should_trigger": false,
-      "rationale": "design-review の担当（明示的に "別エージェント" と言っている）",
+      "rationale": "design-review の担当（明示的に \"別エージェント\" と言っている）",
       "tags": ["adjacent", "design-review"]
     }
   ]
