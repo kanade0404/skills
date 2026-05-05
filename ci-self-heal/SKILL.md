@@ -12,7 +12,7 @@ allowed-tools:
 
 > **Iron Law**: NO FIXES WITHOUT ROOT CAUSE.
 > retry-to-green / "もう一度走らせれば緑" / 推測修正の連投はしない。
-
+>
 > **3-Failure Architecture Gate**: 3 連続で同じ失敗を解消できなかったら停止して **architecture を疑う**。同じ層で粘らない。
 
 Superpowers `systematic-debugging` の Iron Law を CI 失敗対応に適用したスキル。
@@ -92,7 +92,7 @@ flaky / environment / infra は **コード修正で直さない**。retry-to-gr
 
 commit message には **試行回数と原因仮説** を含める：
 
-```
+```text
 fix(ci): handle null in parser (attempt 2)
 
 Hypothesis: parser receives undefined when input is empty,
@@ -107,7 +107,7 @@ push したら Step 1 に戻り、再 watch。
 
 **同じ失敗が 3 連続で解消されなかったら停止する**。試行カウンタを保持：
 
-```
+```text
 - attempt 1: hypothesis A → fail
 - attempt 2: hypothesis B → fail
 - attempt 3: hypothesis C → fail

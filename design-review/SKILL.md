@@ -52,7 +52,7 @@ Task tool で `general-purpose` agent を新規起動。プロンプトに必ず
 
 ### Step 3 — レビュー観点 (subagent に渡す)
 
-```
+```markdown
 ## 観点
 
 1. Responsibility — この変更で増える module/class/function は単一責務か / 既存責務と重複していないか

@@ -4,7 +4,6 @@ description: 「完了した」「動いた」「直した」「pass してい�
 allowed-tools:
   - Read
   - Bash
-  - Edit
 ---
 
 # Verify Done
@@ -124,7 +123,7 @@ git status: clean / <未 commit ファイル一覧>
 
 ### 例 1: 機能追加後
 
-```
+```markdown
 ## Verification
 - typecheck: pnpm tsc --noEmit → 0 (0 errors)
 - test: pnpm test packages/foo → 0 (12/12 passed, 0 skipped)
@@ -145,7 +144,7 @@ git status: clean
 
 ### 例 2: ありがちな落とし穴
 
-```
+```markdown
 ## Verification
 - typecheck: pnpm tsc --noEmit → 0
 - test: pnpm test → 0 (0/0 passed)   ← ⚠ 0 件、テストが走っていない

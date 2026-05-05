@@ -57,7 +57,7 @@ Task tool で `feature-dev:code-reviewer` または `pr-review-toolkit:code-revi
 
 ### Step 3 — レビュー観点
 
-```
+```markdown
 ## 観点
 
 1. Spec / Requirements 準拠 — 実装が要件を満たしているか / 過剰実装はないか (YAGNI)

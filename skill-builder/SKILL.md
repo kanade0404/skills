@@ -56,7 +56,7 @@ allowed-tools:
 
 | モード | 入力 | 出力 |
 |---|---|---|
-| `create` | 何をする skill か（自然文） | `<skills-dir>/<name>/SKILL.md` + `evals/trigger.json` 雛形 (配置形式は検出した構造に従う) |
+| `create` | 何をする skill か（自然文） | `<skills-dir>/<name>/SKILL.md` + `<skills-dir>/<name>/evals/<name>-trigger.json` 雛形 (配置形式は検出した構造に従う、Mode B の入力と同じパス) |
 | `tune-trigger` | 既存 skill 名 | `evals/<skill>-trigger-results-<date>.json` + description 改訂案 |
 | `tune-quality` | 既存 skill 名 + シナリオ | subagent 品質レポート + SKILL.md 改訂案 |
 
@@ -265,7 +265,7 @@ description を直したら **同じ eval セット**で再測定。F1 が上が
 
 ## Files
 - <skills-dir>/<name>/SKILL.md
-- <skills-dir>/<name>/evals/trigger.json (雛形)
+- <skills-dir>/<name>/evals/<name>-trigger.json (雛形)
 
 ## Self-review
 - [✓/✗] 500 行以内

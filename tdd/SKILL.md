@@ -140,7 +140,7 @@ RED テストと GREEN 実装は **同一 commit** に入れる (片方だけ re
 - **設計仕様 / spec ドキュメント**: 仕様起草は `design` / requirements 領域、本スキルでは出さない。
 - **structural change のみの commit**: `tidy-first` の出力に委ねる。
 - **CI 検証の結果**: `ci-self-heal` の領域、本スキルはローカル test 実行のみ。
-- **既存テストの assertion / 期待値変更 diff**: 既存テスト全 pass 維持が前提。仕様変更が必要なら設計フェーズに戻る。
+- **根拠のない既存テストの assertion / 期待値変更 diff**: 既存テスト全 pass 維持が原則。**意図的な仕様変更**で既存テストの期待値変更が必要な場合のみ、RED で先に新仕様の失敗を示した直後の対応 diff として許可する (RED-GREEN サイクル内に閉じる、コミットも分離する)。
 - **「先にコードを書いた」状態の commit**: テスト先行違反のコードは保持せず、削除と書き直しの commit を出す。
 - **mock / stub を多用したテストコード**: test double は `test-review` §4 の規律で最小限、本スキルからは推奨も生成もしない。
 

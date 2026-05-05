@@ -104,7 +104,7 @@ Beck の *Tidy First?* に基づく主要な tidyings。**1 つの commit = 1 �
 
 各 tidying について：
 
-```
+```text
 1. tidying を 1 つだけ適用
 2. 既存テスト全 pass を確認 (verify-done を呼んでもよい)
 3. commit する
@@ -133,25 +133,36 @@ commit message に **必ず `tidy:` プレフィックス**を付ける。後で
 
 ---
 
-## pre-commit hook の推奨設定
+## Git hook の推奨設定
 
-混在を物理的に block するため、以下の hook をプロジェクトに置くことを推奨する。本スキルは hook を **生成しない** が、ユーザに提示する：
+混在を物理的に block するため、**`commit-msg` hook** に以下を置くことを推奨する。`pre-commit` ではなく `commit-msg` である理由は、`COMMIT_EDITMSG` (commit message ファイル) は `pre-commit` 段階では未確定であり、`commit-msg` から先でしか参照できないため。本スキルは hook を **生成しない** が、ユーザに提示する：
 
 ```bash
-# .git/hooks/pre-commit (or husky/lefthook 経由)
+#!/usr/bin/env bash
+# .git/hooks/commit-msg (or husky/lefthook 経由)
+# 引数: $1 = commit message ファイルへのパス
 # 1 commit 内で structural と behavioral を混ぜない検出
 
-msg=$(cat .git/COMMIT_EDITMSG 2>/dev/null || true)
+msg_file="$1"
+msg=$(cat "$msg_file" 2>/dev/null || true)
 if echo "$msg" | grep -qE '^tidy:'; then
-  # tidy commit: テストファイル以外の振る舞い変更が混ざっていないか
-  # ヒューリスティック: 同 commit で既存テストの期待値変更があれば疑う
+  # tidy commit: 既存テストの期待値変更が含まれていないか検査
+  # ヒューリスティック: staged diff で expect/assert 系の追加・削除があれば疑う
   if git diff --cached --name-only | grep -qE 'test|spec'; then
     if git diff --cached -- '*test*' '*spec*' | grep -qE '^[+-]\s*(expect|assert|toBe|toEqual)'; then
-      echo "ERROR: tidy commit にテストの期待値変更が含まれます。振る舞い変更は別 commit に分けてください。"
+      echo "ERROR: tidy commit にテストの期待値変更が含まれます。振る舞い変更は別 commit に分けてください。" >&2
       exit 1
     fi
   fi
 fi
+```
+
+ファイル種別だけ見たい場合は `pre-commit` 側に分離する選択もある (両方併用可)：
+
+```bash
+#!/usr/bin/env bash
+# .git/hooks/pre-commit
+# 例: 巨大 diff の警告など、message 非依存の検査をここに置く
 ```
 
 このヒューリスティックは万能ではない (test を tidying するケースは正当)。**規律は人 + AI の側で守り、hook は最終防壁**として運用する。

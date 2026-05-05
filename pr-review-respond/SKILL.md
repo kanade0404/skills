@@ -1,6 +1,6 @@
 ---
 name: pr-review-respond
-description: PR に投稿された自動レビュー (CodeRabbit / Devin) と人間レビュアーのコメントを取得し、各指摘の妥当性を検証したうえで対応するスキル。VALID は修正コミットを当てて該当スレッドに「Fixed in <SHA>」と返信、INVALID_PUSH は根拠付きの pushback コメントを残し resolve しない、VALID_DEFER は issue 化して参照、DUPLICATE は既存対応スレッドを指す。最後に PR へ集約サマリコメントを 1 件投稿し「何を・どう対応した／なぜ対応しなかったか」を 1 箇所で追えるようにする。`gh pr create` 直後・「レビュー対応して」「コメント見て対応して」「コードラビット対応」「Devin の指摘片付けて」「PR のコメント全部捌いて」のような要請、CodeRabbit / Devin / 人間レビュアーが新規コメントを残した時、PR を merge する前に未解決スレッドを確認したい時、いずれでも必ず起動すること。レビュアー判別はコメント author と本文を読んで行い、bot suffix のような表面的なルールは持たない。本スキルは「読む・直す・返信する・サマリ投稿する」までで、レビュー自体を実行する (CodeRabbit や Devin を呼び出す) ことはしない — 既にレビュー済みの PR に後追いで対応するスキル。
+description: PR に投稿された自動レビュー (CodeRabbit / Devin) と人間レビュアーのコメントを取得し、各指摘の妥当性を検証したうえで対応するスキル。VALID は修正コミットを当てて該当スレッドに「Fixed in <SHA>」と返信、INVALID_PUSH は根拠付きの pushback コメントを残し resolve しない、VALID_DEFER は issue 化して参照、DUPLICATE は既存対応スレッドを指す。最後に PR へ集約サマリコメントを 1 件投稿し「何を・どう対応した／なぜ対応しなかったか」を 1 箇所で追えるようにする。`gh pr create` 直後・「レビュー対応して」「コメント見て対応して」「コードラビット対応」「Devin の指摘片付けて」「PR のコメント全部捌いて」のような要請、CodeRabbit / Devin / 人間レビュアーが新規コメントを残した時、PR を merge する前に未解決スレッドを確認したい時、いずれでも必ず起動すること。レビュアー判別はコメント author と本文を読んで行い、bot suffix のような表面的なルールは持たない。本スキルは「読む・直す・返信する・サマリ投稿する」までで、レビュー自体を実行する (CodeRabbit や Devin を呼び出す) ことはしない — 既にレビュー済みの PR に後追いで対応するスキル。GitHub API 呼び出しは同梱の `scripts/*.sh` に閉じ込めており、`Bash(bash scripts/*.sh:*)` を 1 度許可するだけで運用できる。
 allowed-tools:
   - Read
   - Write
@@ -22,27 +22,57 @@ CodeRabbit / Devin / 人間レビュアーが残したコメントを **盲信�
 
 ---
 
+## 前提: 同梱スクリプトと権限
+
+`gh api` / `gh pr ...` を毎回 inline で叩くと、実行のたびに permission prompt が発生して煩雑になる。本スキルは GitHub API 呼び出しを `scripts/*.sh` に閉じ込めて、許可は **`bash <skill-dir>/scripts/*.sh` 一括** で済むようにする。
+
+| Script | 役割 |
+|---|---|
+| `scripts/fetch_threads.sh <PR>` | 全 review thread + PR 一般コメントを GraphQL + REST で取得し、vendor 判定 (`coderabbit` / `devin` / `human`) と `self_replied` フラグを付けた正規化 JSON を出力 |
+| `scripts/reply_thread.sh <PR> <comment-id> <body-file>` | 正しい `/repos/{O}/{R}/pulls/{PR}/comments/{id}/replies` エンドポイントで返信投稿。本文は file 経由で multi-line / 引用符事故を防ぐ |
+| `scripts/resolve_thread.sh <PR> <comment-id> [body-file]` | `body + @coderabbitai resolve` を投稿し thread を resolve。VALID / VALID_DEFER / DUPLICATE 専用 (INVALID_PUSH では呼ばない) |
+| `scripts/post_summary.sh <PR> <body-file>` | 集約 Review Response Summary を **新規** issue comment として投稿 (毎回新規投稿、過去サマリは履歴として残す) |
+| `scripts/wait_ci.sh <PR> [interval]` | `gh pr checks --watch` をラップし全 check 完了まで block。失敗時は exit 非ゼロで呼出側に通知 (本スキルは retry しない) |
+
+推奨設定 (consumer プロジェクトの `.claude/settings.json`):
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash <plugin-skills-dir>/pr-review-respond/scripts/*.sh:*)"
+    ]
+  }
+}
+```
+
+スクリプト本体は最小依存 (`gh`, `jq`, `bash`) のみ前提。Python / Node 等は使わない。
+
+---
+
 ## ワークフロー
 
 ### Phase A — 取得 (fetch)
 
-`gh` で 3 系統を取り、未解決スレッドのみに絞る。
+inline review threads + PR 一般コメントを 1 コマンドで取得・正規化する。`gh api` は同梱スクリプトに閉じ込めて毎回の許可確認を不要にする。
 
 ```bash
-gh pr view <PR> --json url,number,headRefName,baseRefName,headRefOid
-gh api "repos/{owner}/{repo}/pulls/<PR>/comments" \
-  --paginate --jq '.[] | {id, author: .user.login, path, line, body, html_url, in_reply_to_id, created_at}'
-gh api "repos/{owner}/{repo}/issues/<PR>/comments" \
-  --paginate --jq '.[] | {id, author: .user.login, body, html_url, created_at}'
-gh api "graphql" -f query='...'   # reviewThreads.isResolved を取って resolved を除外
+bash scripts/fetch_threads.sh <PR>   # → 正規化 JSON を stdout
 ```
 
-整形ルール：
+スクリプトは:
 
-- `pulls/<PR>/comments` は **inline review thread**。`in_reply_to_id` で thread にまとめる。
-- `issues/<PR>/comments` は **PR 全体への一般コメント**。CodeRabbit のサマリ・walkthrough や Devin のレビュー総評がここに入りやすい。
-- thread 内最新を VALID 判定の対象とし、解決済み (`isResolved=true`) はスキップ。
-- 本スキル自身が前回投稿した集約サマリは除外（自分の `Review Response Summary` ヘッダで判定）。
+- GraphQL の `reviewThreads` を cursor pagination で全取得
+- `pulls/<PR>/comments` 相当の inline thread を root + 履歴付きで返す
+- `issues/<PR>/comments` 相当の PR 一般コメントも同梱 (CodeRabbit のサマリ・walkthrough や Devin のレビュー総評)
+- 各 root comment に `vendor` フィールドを付与 (`coderabbit` / `devin` / `human`、author login と本文から判定、bot suffix のような表面ルールは持たない)
+- `self_replied` フラグで「自分が既に返信済みのスレッド」を識別
+
+呼出側 (本スキル本体) は得られた JSON から:
+
+- `is_resolved == true` / `is_outdated == true` を除外
+- 自分が投稿した集約サマリ (`Review Response Summary` ヘッダ) を `issue_comments` から除外
+- `self_replied == true` のスレッドはスキップ (多重返信防止)
 
 ### Phase B — 妥当性 verify (triage)
 
@@ -76,7 +106,7 @@ gh api "graphql" -f query='...'   # reviewThreads.isResolved を取って resolv
 - **behavioral change** は失敗テストを先に書く（`test-driven-development` の規律）。
 - 各 commit message に該当スレッドの URL を `Refs:` で付ける：
 
-```
+```text
 fix: handle empty result in foo()
 
 Refs: https://github.com/<owner>/<repo>/pull/<n>#discussion_r<id>
@@ -88,27 +118,45 @@ Refs: https://github.com/<owner>/<repo>/pull/<n>#discussion_r<id>
 
 ### Phase D — 返信 (reply)
 
-vendor 別に inline thread に返信する。`gh api repos/{owner}/{repo}/pulls/<PR>/comments -F in_reply_to=<comment_id> -F body=<text>`。
+inline thread への返信は GitHub REST の `/replies` エンドポイントを使う必要がある (top-level review comment への返信のみ可、reply-to-reply は不可)。これも同梱スクリプトに閉じ込める。
+
+```bash
+# 返信本文は file 経由 (multi-line / 引用符のエスケープ事故防止)
+bash scripts/reply_thread.sh <PR> <root-comment-id> <body-file>
+
+# CodeRabbit に「対応済み」を伝えて thread を resolve する場合 (VALID / VALID_DEFER / DUPLICATE のみ)
+bash scripts/resolve_thread.sh <PR> <root-comment-id> [body-file]
+# body-file を渡すとその内容 + 改行 + "@coderabbitai resolve" が投稿される
+```
+
+vendor 別の使い分け:
 
 | 分類 | CodeRabbit | Devin | 人間 |
 |---|---|---|---|
-| `VALID` | 「Fixed in `<SHA>`」 + `@coderabbitai resolve` | 「Fixed in `<SHA>`」 | 「Fixed in `<SHA>`. Ready for re-review.」 |
-| `INVALID_PUSH` | 根拠コメントのみ（resolve しない） | 根拠コメントのみ | 根拠 + 質問形式で対話継続 |
-| `VALID_DEFER` | 「Tracked in #`<issue>`」 + `@coderabbitai resolve` | 「Tracked in #`<issue>`」 | 「Tracked in #`<issue>`」 |
-| `DUPLICATE` | 「Already addressed by `<other-thread-url>`」 + `@coderabbitai resolve` | 同左 | 同左 |
+| `VALID` | `resolve_thread.sh` (body: 「Fixed in `<SHA>`」) | `reply_thread.sh` (Fixed in `<SHA>`) | `reply_thread.sh` (Fixed in `<SHA>`. Ready for re-review.) |
+| `INVALID_PUSH` | `reply_thread.sh` (根拠のみ、resolve しない) | `reply_thread.sh` (根拠のみ) | `reply_thread.sh` (根拠 + 質問形式) |
+| `VALID_DEFER` | `resolve_thread.sh` (body: 「Tracked in #`<issue>`」) | `reply_thread.sh` (Tracked in #`<issue>`) | `reply_thread.sh` (Tracked in #`<issue>`) |
+| `DUPLICATE` | `resolve_thread.sh` (body: 「Already addressed by `<other-thread-url>`」) | `reply_thread.sh` (Already addressed by ...) | 同左 |
 
-**重要**: `INVALID_PUSH` は **どのレビュアーに対しても resolve コマンドを発行しない**。reviewer 側に「無視された」と取られる余地を消すため。
+**重要**: `INVALID_PUSH` は **どのレビュアーに対しても resolve コマンドを発行しない** (`reply_thread.sh` のみ使用)。reviewer 側に「無視された」と取られる余地を消すため。
 
-返信本文の最低構成（INVALID_PUSH の例）：
+返信本文の最低構成 (INVALID_PUSH の例):
 
-```
+```text
 本指摘は採用しません。理由: <YAGNI / 既存方針 / 前提誤り / トレードオフ のいずれか> — <1-2 文で具体>。
 再考の余地があればコメントで詳細を教えてください。
 ```
 
 ### Phase E — 集約サマリ投稿 + 最終 gate
 
-PR の **issue comment** として、以下のサマリを **新規 1 件** で投稿する（既存サマリの更新ではなく毎回新規投稿。古いサマリは残して履歴にする）。
+PR の **issue comment** として、以下のサマリを **新規 1 件** で投稿する (既存サマリの更新ではなく毎回新規投稿、古いサマリは残して履歴にする)。投稿は同梱スクリプト経由:
+
+```bash
+# サマリ本文を temp file に書き出してから投稿
+bash scripts/post_summary.sh <PR> <body-file>
+```
+
+サマリ本文テンプレ (`<body-file>` の中身):
 
 ```markdown
 ## Review Response Summary (<YYYY-MM-DD HH:MM JST>)
@@ -135,8 +183,12 @@ PR の **issue comment** として、以下のサマリを **新規 1 件** で�
 最終 gate：
 
 - 未解決スレッド総数 - サマリの (Fixed + Pushback + Deferred + Duplicate) = 0 を確認
-- ローカル検証は **`verify-done` を呼んで** PASS を取る（`should/probably/seems` 系の語彙はそこで弾かれる）
-- `gh pr checks --watch` で CI を待ち、緑であることを確認してから完了宣言（CI fail 時は `ci-self-heal` に渡す）
+- ローカル検証は **`verify-done` を呼んで** PASS を取る (`should/probably/seems` 系の語彙はそこで弾かれる)
+- CI 完了待ちも script 経由:
+
+```bash
+bash scripts/wait_ci.sh <PR>   # 全 check 完了まで block、fail なら ci-self-heal に渡す
+```
 
 ---
 
@@ -169,14 +221,15 @@ PR の **issue comment** として、以下のサマリを **新規 1 件** で�
 
 ## レビュアー判別
 
-author login と本文を読んで判定する。表面的なルールは持たない。
+`fetch_threads.sh` が `vendor` フィールドを 1 次判定として返す (author login が `coderabbit*` で始まるなら `coderabbit`、`devin*` または `devin-ai-*` を含むなら `devin`、それ以外は `human`)。
 
-- 直近の commit author / PR 作者と同一ならコメント不要 (自分のコメント)
-- 本文構造が CodeRabbit walkthrough / nitpick markup を含む → CodeRabbit
-- 本文に Devin 特有のシグネチャ / Confidence 表記 → Devin
-- いずれでもなければ人間扱い
+本スキルは script 結果を起点に、本文構造でさらに補正する:
 
-判別が曖昧な場合は **人間として扱う** (resolve コマンドを誤って発行しないため、より安全な側に倒す)。
+- 本文構造が CodeRabbit walkthrough / nitpick markup を含む → `coderabbit` で固定
+- 本文に Devin 特有のシグネチャ / Confidence 表記 → `devin` で固定
+- それ以外で script の判定が曖昧な場合 → **人間として扱う** (resolve コマンドを誤って発行しないため、より安全な側に倒す)
+
+PR 作者本人 (= 自分) のコメントは fetcher 側ではフィルタしない。本スキルが「自分のコメント」「自分の集約サマリ」を識別して捌く。
 
 ---
 

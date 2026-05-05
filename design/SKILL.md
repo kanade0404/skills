@@ -86,7 +86,7 @@ Critical が残っているなら Step 2 に戻る。Important 以下は次の�
 
 PR マージ後に scratchpad を削除する旨を **PR description に明記する** (約束を残す)。例：
 
-```
+```markdown
 ## Scratchpad
 - z/<task>/<session>/design-scratch.md (post-merge: delete)
 - ADR added: docs/adr/0042-... .md (persistent)
