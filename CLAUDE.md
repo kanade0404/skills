@@ -21,7 +21,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 └── assets/*            # テンプレ等
 ```
 
-収録 skill: `skill-builder`, `test-review`, `empirical-prompt-tuning`, `research-practices`（いずれも自作・日本語 description・Anthropic skill best-practices 準拠）。
+収録 skill: `skill-builder`, `test-review`, `empirical-prompt-tuning`, `research-practices`, `software-design`, `design-review`（いずれも自作・日本語 description・Anthropic skill best-practices 準拠）。
 
 ## SKILL.md 編集時の規約
 
