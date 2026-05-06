@@ -140,7 +140,7 @@ normalized=$(jq -n \
           url: $root.url,
           created_at: $root.createdAt
         },
-        self_replied: ([$t.comments.nodes[] | select(.author.login == $pr_author)] | length > 1)
+        self_replied: ([$t.comments.nodes[1:][] | select(.author.login == $pr_author)] | length > 0)
       }
   ],
   issue_comments: [
