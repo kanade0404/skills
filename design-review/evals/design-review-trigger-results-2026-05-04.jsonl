@@ -1,0 +1,18 @@
+{"id":"t01","predicted":true,"actual":true,"reason":"skill 名直接"}
+{"id":"t02","predicted":true,"actual":true,"reason":"「この設計いい?」description 直マッチ"}
+{"id":"t03","predicted":true,"actual":true,"reason":"「依存方向大丈夫?」description 直マッチ"}
+{"id":"t04","predicted":true,"actual":true,"reason":"「設計のセカンドオピニオン」description 直マッチ"}
+{"id":"t05","predicted":true,"actual":true,"reason":"「architecture review」description 直マッチ"}
+{"id":"t06","predicted":true,"actual":true,"reason":"構造評価依頼 = 設計レビュー"}
+{"id":"t07","predicted":true,"actual":true,"reason":"観点 1 (Responsibility)"}
+{"id":"t08","predicted":true,"actual":true,"reason":"観点 3 (I/O Boundaries)"}
+{"id":"t09","predicted":true,"actual":true,"reason":"観点 4 (Testability)"}
+{"id":"t10","predicted":true,"actual":true,"reason":"検討漏れ確認 = レビュー"}
+{"id":"t11","predicted":false,"actual":false,"reason":"code-review 起動文脈"}
+{"id":"t12","predicted":false,"actual":false,"reason":"test-review 起動文脈"}
+{"id":"t13","predicted":false,"actual":false,"reason":"requirements-review 起動文脈"}
+{"id":"t14","predicted":false,"actual":false,"reason":"pr-review-respond 起動文脈"}
+{"id":"t15","predicted":false,"actual":false,"reason":"adr-writer 値判定"}
+{"id":"t16","predicted":false,"actual":false,"reason":"記事照会"}
+{"id":"t17","predicted":false,"actual":false,"reason":"レビューシステム自体の設計、別文脈"}
+{"id":"t18","predicted":false,"actual":false,"reason":"人選照会"}

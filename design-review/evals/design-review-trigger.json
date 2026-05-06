@@ -1,0 +1,24 @@
+{
+  "target_skill": "design-review",
+  "version": "1",
+  "cases": [
+    {"id":"t01","prompt":"設計レビューして","should_trigger":true,"rationale":"skill 名直接","tags":["explicit"]},
+    {"id":"t02","prompt":"この設計でいい?","should_trigger":true,"rationale":"設計判断の確認","tags":["explicit"]},
+    {"id":"t03","prompt":"依存方向大丈夫?","should_trigger":true,"rationale":"設計観点の質問","tags":["explicit"]},
+    {"id":"t04","prompt":"設計のセカンドオピニオンほしい","should_trigger":true,"rationale":"レビュー要請","tags":["explicit"]},
+    {"id":"t05","prompt":"architecture review して","should_trigger":true,"rationale":"architecture review = design-review","tags":["explicit"]},
+    {"id":"t06","prompt":"これで構造的に大丈夫?","should_trigger":true,"rationale":"構造評価依頼","tags":["ambiguous"]},
+    {"id":"t07","prompt":"責務ちゃんと分かれてる?","should_trigger":true,"rationale":"観点 1 (Responsibility)","tags":["ambiguous"]},
+    {"id":"t08","prompt":"I/O の置き方これでいい?","should_trigger":true,"rationale":"観点 3 (I/O Boundaries)","tags":["ambiguous"]},
+    {"id":"t09","prompt":"テスタブルかチェックして","should_trigger":true,"rationale":"観点 4 (Testability)","tags":["ambiguous"]},
+    {"id":"t10","prompt":"設計の検討漏れ無いか確認","should_trigger":true,"rationale":"漏れ確認 = レビュー","tags":["ambiguous"]},
+    {"id":"t11","prompt":"コードレビューして","should_trigger":false,"rationale":"code-review 領域","tags":["adjacent"]},
+    {"id":"t12","prompt":"テストレビューして","should_trigger":false,"rationale":"test-review 領域","tags":["adjacent"]},
+    {"id":"t13","prompt":"要件レビューして","should_trigger":false,"rationale":"requirements-review 領域","tags":["adjacent"]},
+    {"id":"t14","prompt":"PR レビュー指摘対応","should_trigger":false,"rationale":"pr-review-respond 領域","tags":["adjacent"]},
+    {"id":"t15","prompt":"ADR の妥当性確認","should_trigger":false,"rationale":"adr-writer の値判定領域","tags":["adjacent"]},
+    {"id":"t16","prompt":"design pattern 本のレビュー記事教えて","should_trigger":false,"rationale":"書籍/記事の照会","tags":["distractor"]},
+    {"id":"t17","prompt":"review system 設計したい","should_trigger":false,"rationale":"レビューシステム自体を設計、別文脈","tags":["distractor"]},
+    {"id":"t18","prompt":"reviewer 候補 list して","should_trigger":false,"rationale":"人選照会","tags":["distractor"]}
+  ]
+}

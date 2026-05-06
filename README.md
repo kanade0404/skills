@@ -15,7 +15,16 @@ upstream を直接依存に書く方針（重複と更新追従の手間を避�
 ├── test-review/SKILL.md
 ├── empirical-prompt-tuning/SKILL.md
 ├── research-practices/SKILL.md
-└── product-discovery/SKILL.md
+├── product-discovery/SKILL.md
+├── pr-review-respond/SKILL.md
+├── verify-done/SKILL.md
+├── tidy-first/SKILL.md
+├── tdd/SKILL.md
+├── design/SKILL.md
+├── design-review/SKILL.md
+├── adr-writer/SKILL.md
+├── code-review/SKILL.md
+└── ci-self-heal/SKILL.md
 ```
 
 ## 収録 skill
@@ -24,11 +33,20 @@ upstream を直接依存に書く方針（重複と更新追従の手間を避�
 
 | Skill | 概要 |
 | --- | --- |
-| `skill-builder` | Claude Code skill のスキャフォールド + trigger / quality eval ループを回すメタスキル |
-| `test-review` | テストコードを Khorikov 4 属性 / Meszaros 17 smells / AI 生成アンチパターンで一貫レビュー（言語・スタック非依存） |
-| `empirical-prompt-tuning` | プロンプトをバイアス排除した実行者で評価し反復改善する手法 |
-| `research-practices` | ライブラリ / 学術 / 業界実践の構造化リサーチワークフロー（CRAAP / SIFT / S0-S5 信頼度タグ） |
+| `skill-builder` | メタスキル: Claude Code skill 新規作成 + trigger / quality 改善ループ |
+| `test-review` | テストコード review (Khorikov 4 属性 + Meszaros 17 smells + AI 生成パターン、言語・スタック非依存) |
+| `empirical-prompt-tuning` | プロンプト / skill の subagent dispatch 経験的評価 |
+| `research-practices` | リサーチ実践 (情報源評価 / 思考フレームワーク / レポーティング、CRAAP / SIFT / S0-S5 信頼度タグ) |
 | `product-discovery` | 要求定義（要件定義の前段）。Outcome > Output で PRD を起こし、`prd-review` → `requirements` に渡す |
+| `pr-review-respond` | CodeRabbit / Devin / 人間レビュアーのコメント verify-and-respond ループ |
+| `verify-done` | 完了宣言前の最終 gate (Iron Law: NO COMPLETION CLAIMS WITHOUT FRESH EVIDENCE) |
+| `tidy-first` | structural / behavioral 分離規律 (Kent Beck *Tidy First?*) |
+| `tdd` | Test-Driven Development (RED-GREEN-REFACTOR + Verify RED gate) |
+| `design` | 設計検討 (scratchpad で検討、決定のみ ADR に蒸留、spec を永続化しない) |
+| `design-review` | 設計レビュー subagent dispatch (severity 三分類) |
+| `adr-writer` | Michael Nygard 形式 ADR の値判定 + 生成 |
+| `code-review` | PR 起票前の subagent コードレビュー (severity 三分類) |
+| `ci-self-heal` | CI 失敗の root-cause-first 自己修復ループ (3-failure architecture gate) |
 
 ## プロジェクトでの利用 (apm.yml)
 
