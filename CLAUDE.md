@@ -21,7 +21,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 └── assets/*            # テンプレ等
 ```
 
-収録 skill: `skill-builder`, `test-review`, `empirical-prompt-tuning`, `research-practices`, `pr-review-respond`, `verify-done`, `tidy-first`, `tdd`, `design`, `design-review`, `adr-writer`, `code-review`, `ci-self-heal`（いずれも自作・日本語 description・Anthropic skill best-practices 準拠）。
+収録 skill: `skill-builder`, `test-review`, `empirical-prompt-tuning`, `research-practices`, `product-discovery`, `pr-review-respond`, `verify-done`, `tidy-first`, `tdd`, `design`, `design-review`, `adr-writer`, `code-review`, `ci-self-heal`（いずれも自作・日本語 description・Anthropic skill best-practices 準拠）。
 
 ## SKILL.md 編集時の規約
 
@@ -50,5 +50,5 @@ uv run python skill-builder/scripts/score_triggers.py \
 ## 新しい skill を足すとき
 
 1. `<name>/SKILL.md` を作る。雛形と self-review チェックリストは `skill-builder/SKILL.md` Mode A。
-2. `README.md` の「出所」表に 1 行追加する。
+2. `README.md` の「概要」表に 1 行追加する。
 3. APM 配布対象なので、`<name>/` のディレクトリ名 = `name` frontmatter にする。
