@@ -15,20 +15,36 @@ upstream を直接依存に書く方針（重複と更新追従の手間を避�
 ├── test-review/SKILL.md
 ├── empirical-prompt-tuning/SKILL.md
 ├── research-practices/SKILL.md
+├── pr-review-respond/SKILL.md
+├── verify-done/SKILL.md
+├── tidy-first/SKILL.md
+├── tdd/SKILL.md
+├── design/SKILL.md
 ├── software-design/SKILL.md
-└── design-review/SKILL.md
+├── design-review/SKILL.md
+├── adr-writer/SKILL.md
+├── code-review/SKILL.md
+└── ci-self-heal/SKILL.md
 ```
 
 ## 収録 skill
 
-| Skill | 出所 |
+| Skill | 出所・用途 |
 | --- | --- |
-| `skill-builder` | 自作（`agegis` で運用していたもの） |
-| `test-review` | 自作（`agegis` で運用していたもの） |
-| `empirical-prompt-tuning` | 自作（`agegis` で運用していたもの） |
-| `research-practices` | 自作（`agegis` で運用していたもの） |
-| `software-design` | 自作（13 レンズ: PoSD / Immutable Data Model / TM法 / FP / DDD / TDD / RoP / FoSA / xUnit / CQRS / ES / ADR / Secure by Design） |
-| `design-review` | 自作（`software-design` の成果物を別 agent に白紙で読ませてレビューする pair skill） |
+| `skill-builder` | メタスキル: skill 新規作成 + trigger / quality 改善ループ |
+| `test-review` | テストコード review (Khorikov 4 属性 + Meszaros 17 smells + AI 生成パターン) |
+| `empirical-prompt-tuning` | プロンプト / skill の subagent dispatch 経験的評価 |
+| `research-practices` | リサーチ実践 (情報源評価 / 思考フレームワーク / レポーティング) |
+| `pr-review-respond` | CodeRabbit / Devin / 人間レビュアーのコメント verify-and-respond ループ |
+| `verify-done` | 完了宣言前の最終 gate (Iron Law: NO COMPLETION CLAIMS WITHOUT FRESH EVIDENCE) |
+| `tidy-first` | structural / behavioral 分離規律 (Kent Beck *Tidy First?*) |
+| `tdd` | Test-Driven Development (RED-GREEN-REFACTOR + Verify RED gate) |
+| `design` | 設計検討 (scratchpad で検討、決定のみ ADR に蒸留、spec を永続化しない) |
+| `software-design` | 13 レンズの設計支援フレームワーク (PoSD / Immutable Data Model / TM法 / FP / DDD / TDD / RoP / FoSA / xUnit / CQRS / ES / ADR / Secure by Design) |
+| `design-review` | `software-design` 成果物を別 agent に白紙で読ませてレビューする pair skill (severity 三分類 + 13 レンズ checklist) |
+| `adr-writer` | Michael Nygard 形式 ADR の値判定 + 生成 |
+| `code-review` | PR 起票前の subagent コードレビュー (severity 三分類) |
+| `ci-self-heal` | CI 失敗の root-cause-first 自己修復ループ (3-failure architecture gate) |
 
 ## プロジェクトでの利用 (apm.yml)
 
