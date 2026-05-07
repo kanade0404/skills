@@ -15,6 +15,7 @@ upstream を直接依存に書く方針（重複と更新追従の手間を避�
 ├── test-review/SKILL.md
 ├── empirical-prompt-tuning/SKILL.md
 ├── research-practices/SKILL.md
+├── product-discovery/SKILL.md
 ├── pr-review-respond/SKILL.md
 ├── verify-done/SKILL.md
 ├── tidy-first/SKILL.md
@@ -29,12 +30,15 @@ upstream を直接依存に書く方針（重複と更新追従の手間を避�
 
 ## 収録 skill
 
-| Skill | 出所・用途 |
+いずれも自作。プロジェクト固有 doctrine への依存を外し、APM (`microsoft/apm`) で `kanade0404/skills/<name>` として project-agnostic に配布する。
+
+| Skill | 概要 |
 | --- | --- |
-| `skill-builder` | メタスキル: skill 新規作成 + trigger / quality 改善ループ |
-| `test-review` | テストコード review (Khorikov 4 属性 + Meszaros 17 smells + AI 生成パターン) |
+| `skill-builder` | メタスキル: Claude Code skill 新規作成 + trigger / quality 改善ループ |
+| `test-review` | テストコード review (Khorikov 4 属性 + Meszaros 17 smells + AI 生成パターン、言語・スタック非依存) |
 | `empirical-prompt-tuning` | プロンプト / skill の subagent dispatch 経験的評価 |
-| `research-practices` | リサーチ実践 (情報源評価 / 思考フレームワーク / レポーティング) |
+| `research-practices` | リサーチ実践 (情報源評価 / 思考フレームワーク / レポーティング、CRAAP / SIFT / S0-S5 信頼度タグ) |
+| `product-discovery` | 要求定義（要件定義の前段）。Outcome > Output で PRD を起こし、`prd-review` → `requirements` に渡す |
 | `pr-review-respond` | CodeRabbit / Devin / 人間レビュアーのコメント verify-and-respond ループ |
 | `verify-done` | 完了宣言前の最終 gate (Iron Law: NO COMPLETION CLAIMS WITHOUT FRESH EVIDENCE) |
 | `tidy-first` | structural / behavioral 分離規律 (Kent Beck *Tidy First?*) |

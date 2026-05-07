@@ -1,6 +1,6 @@
 ---
 name: skill-builder
-description: Claude Code skill を新規作成・既存 skill のトリガ精度を測定/改善するためのメタスキル。プロジェクトの skill ディレクトリ（`.claude/skills/<name>/SKILL.md` 形式または top-level `<name>/SKILL.md` 形式のいずれにも対応）に新しい skill を scaffold したい時、既存 skill が適切なときに発火しない / 余計な時に発火するのを直したい時、skill description を eval ベースで最適化したい時、skill の trigger 性能をベースライン測定したい時、いずれでも必ず起動すること。「skill 作って」「このスキルなんで起動しない」「スキルが暴発する」「skill description 最適化」「skill の eval 作って」「メタスキル」「skill の自己改善ループ回したい」のような要請に該当する。プロジェクト規約 (CLAUDE.md 等) との整合確認も兼ねるが、特定プロジェクトには依存せず、本スキルが置かれたリポジトリと配布先の双方で機能する。
+description: Claude Code skill を新規作成・既存 skill のトリガ精度を測定/改善するためのメタスキル。プロジェクトの skill ディレクトリ（`.claude/skills/<name>/SKILL.md` または top-level `<name>/SKILL.md` の両形式に対応）に新しい skill を scaffold したい時、既存 skill が適切なときに発火しない / 余計な時に発火するのを直したい時、description を eval ベースで最適化したい時、trigger 性能をベースライン測定したい時、Mode C で起動後の本文品質を subagent dispatch で測りたい時、いずれでも必ず起動すること。「skill 作って」「このスキルなんで起動しない」「スキルが暴発する」「skill description 最適化」「skill の eval 作って」「メタスキル」「skill の品質測りたい」のような要請に該当する。プロジェクト規約 (CLAUDE.md / `rules/` / `AGENTS.md` 等) との整合確認も兼ね、特定プロジェクトには依存せず本スキルが置かれたリポジトリと配布先の双方で機能する。プラグインスキル（`plugins/<plugin>/skills/...`）の編集は範囲外。
 allowed-tools:
   - Read
   - Write
@@ -17,6 +17,8 @@ allowed-tools:
 # Skill Builder
 
 公式 `skill-creator` の発想を踏襲しつつ、軽量・プロジェクト非依存のメタスキル。subagent や外部 LLM を立てずに、**1 セッション内で完結する eval ループ**を回す。
+
+APM (`microsoft/apm`) で `kanade0404/skills/skill-builder` として配布される前提で project-agnostic に書く。プロジェクト規約ファイル（CLAUDE.md / `rules/`, `docs/`, `AGENTS.md` 等）への整合は consumer 側の規約として参照する。
 
 主参照：
 - [Anthropic Agent Skills best practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices)（公式の規範）
@@ -76,8 +78,9 @@ allowed-tools:
 
 プロジェクト固有の確認 (規約ファイルがある場合のみ)：
 
-- CLAUDE.md / `rules/` / `docs/conventions.md` 等のどの原則に直接関わるか
-- 取り扱う対象が既存 skill とどう違うか (機能領域の重複を避ける)
+- CLAUDE.md / `rules/` / `AGENTS.md` / `docs/` 等の規約があれば、新 skill が違反していないか確認する
+- 取り扱う対象（テスト / API / プロンプト / インフラ / プロダクト要求 etc.）が既存 skill とどう違うかを名指しで線引きする
+- 同領域の既存 skill / agent / slash command があれば、責務境界を frontmatter description に明記する
 
 ### Step 2 — frontmatter を書く
 
@@ -107,12 +110,16 @@ allowed-tools:
 
 判断基準は **「Claude が書ける/判断できることを書かない」**。`PDF を読み込み → 各ページのテキストを取得` は不要、`pdfplumber を使え` だけで十分（公式の "concise is key" 原則）。
 
-#### 参考構造（`test-review` を雛形にする）：
+#### 参考構造（同カタログ内の `test-review` / `research-practices` / `product-discovery` を雛形にできる）：
 
 ```
 # <skill name>
 
 <なぜ必要か。1 段落>
+
+## いつ使うか / 使わない場面
+- 発火すべき状況（口語含む）
+- 発火しない場面 → 該当 skill 名を明示
 
 ## ワークフロー
 ### Step 1 — ...
@@ -123,7 +130,10 @@ allowed-tools:
 <固定テンプレ>
 
 ## このスキルがやらないこと
-- ...
+- 成果物名で除外（動詞ではなく）
+
+## リファレンス
+- references/<topic>.md
 ```
 
 **書き方の原則**：
@@ -133,7 +143,7 @@ allowed-tools:
 - 詳細レイヤは `references/<topic>.md` に切り出し、本文からは「対象が X のときだけ参照する」と書く
 - 出力フォーマットは固定する。スキャンしやすさ優先
 
-### Step 4 — `evals/trigger.json` 雛形を置く
+### Step 4 — `evals/<name>-trigger.json` 雛形を置く
 
 Mode B の入力になる。詳細は後段。
 
@@ -156,7 +166,7 @@ Mode B の入力になる。詳細は後段。
 **Triggering / boundary**
 - [A] description に should-use の典型表現が複数列挙されている
 - [L] negative space（やらないこと）が **動詞ではなく成果物** で定義されている（参照: failure-patterns.md `dual-meaning-verb-by-action`）
-- [L] CLAUDE.md / `rules/` と矛盾しない
+- [L] consumer プロジェクトの CLAUDE.md / 規約ファイル（`rules/`, `AGENTS.md`, `docs/` 等）と矛盾しない
 
 **Code / scripts（同梱する場合のみ）**
 - [A] スクリプトは「Claude に投げない」(solve, don't punt)。エラー処理を内側で持つ
