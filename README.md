@@ -21,6 +21,7 @@ upstream を直接依存に書く方針（重複と更新追従の手間を避�
 ├── tidy-first/SKILL.md
 ├── tdd/SKILL.md
 ├── design/SKILL.md
+├── software-design/SKILL.md
 ├── design-review/SKILL.md
 ├── adr-writer/SKILL.md
 ├── code-review/SKILL.md
@@ -43,7 +44,8 @@ upstream を直接依存に書く方針（重複と更新追従の手間を避�
 | `tidy-first` | structural / behavioral 分離規律 (Kent Beck *Tidy First?*) |
 | `tdd` | Test-Driven Development (RED-GREEN-REFACTOR + Verify RED gate) |
 | `design` | 設計検討 (scratchpad で検討、決定のみ ADR に蒸留、spec を永続化しない) |
-| `design-review` | 設計レビュー subagent dispatch (severity 三分類) |
+| `software-design` | 13 レンズの設計支援フレームワーク (PoSD / Immutable Data Model / TM法 / FP / DDD / TDD / RoP / FoSA / xUnit / CQRS / ES / ADR / Secure by Design) |
+| `design-review` | `software-design` 成果物を別 agent に白紙で読ませてレビューする pair skill (severity 三分類 + 13 レンズ checklist) |
 | `adr-writer` | Michael Nygard 形式 ADR の値判定 + 生成 |
 | `code-review` | PR 起票前の subagent コードレビュー (severity 三分類) |
 | `ci-self-heal` | CI 失敗の root-cause-first 自己修復ループ (3-failure architecture gate) |

@@ -1,156 +1,216 @@
 ---
 name: design-review
-description: `design` スキルが出した scratchpad と (あれば) ADR ドラフトを、白紙の subagent にレビューさせて Critical / Important / Minor の三分類で findings を返すゲート用スキル。観点は responsibility 過剰、依存方向違反 (domain → infra への漏れ / 循環参照)、I/O 境界の漏れ、テスタビリティ欠如、可逆性 (one-way door の見落とし)、外部制約の前提崩れ、代替案検討の不足、慣例 (CLAUDE.md / 既存コード) との矛盾。`design` 完了直後・「設計レビューして」「この設計いい?」「ここの構造おかしくない?」「依存方向大丈夫?」のような要請・PR 起票前に設計判断のセカンドオピニオンが欲しい時、いずれでも必ず起動すること。本スキルはレビューのみ。設計修正は `design` に戻し、実装はしない。`requesting-code-review` 系のレビュー流儀 (severity 三分類 + Critical/Important が unresolved なら進めない) を設計フェーズに適用する。レビュアー subagent は新規 dispatch し、設計を書いた本人 (= 本スキル呼出側) には評価させない。
+description: ソフトウェア設計の成果物（ADR、ドメインモデル、モジュール構造、アーキテクチャ提案、設計差分、`software-design` skill の提案）を、書き手バイアスのない別エージェントに白紙で読ませて構造化された指摘を返すレビュー専用スキル。philosophy of software design (Ousterhout)、immutable data model (kawasima)、TM法 (佐藤正美)、関数型プログラミング、DDD (Vlad Khononov)、TDD (Kent Beck)、Railway Oriented Programming (Scott Wlaschin)、Fundamentals of Software Architecture、xUnit Test Patterns、CQRS、Event Sourcing、ADR (Nygard)、Secure by Design の 13 レンズを checklist で当てる。「設計レビューして」「ADR レビューして」「設計で抜け落ちている観点ない?」「別エージェントで読み直して」「設計の最終チェック」「この提案で行く?」「集約境界これで OK?」「Result への置き換え、抜けない?」「Secure by Design 観点で監査して」「ADR の Negative consequences 薄い」のような要請、`software-design` の Proposal/ADR 最終確認、PR の設計関連ドキュメント / コード境界の妥当性確認、設計セッション後の「セルフレビューでない外部視点」が必要な場面で必ず起動する。Agent ツールで subagent を dispatch して評価し、書き手（同セッションの主エージェント）にレビューさせない。テスト本体のレビューは `test-review`、調査は `research-practices`、Skill 本体の作成・トリガ調整は `skill-builder` 担当のため、それらの目的が明確な依頼ではこのスキルを起動しない。実装を書き換える作業（コード修正、リファクタリング実施、lint 違反対応）は範囲外で、本スキルは「読んで指摘する」レビュー専用である。
 allowed-tools:
   - Read
-  - Task
+  - Glob
+  - Grep
+  - Bash
+  - Agent
+  - TaskCreate
+  - TaskUpdate
+  - TaskList
+  - AskUserQuestion
+  - mcp__plugin_serena_serena__find_symbol
+  - mcp__plugin_serena_serena__get_symbols_overview
+  - mcp__plugin_serena_serena__search_for_pattern
+  - mcp__plugin_serena_serena__list_dir
+  - mcp__plugin_serena_serena__find_file
+  - mcp__plugin_serena_serena__read_file
 ---
 
 # Design Review
 
-> **規律**: 設計を書いた主体に評価させない。常に **白紙の subagent** で再読して「書き手には自明、読み手には不明瞭」を炙り出す。
+設計成果物を **書き手バイアスのない別エージェント** に白紙で読ませ、`software-design` の 13 レンズに沿った checklist を機械的に当てて構造化された findings を返すスキル。
 
-`design` フェーズの自己評価で済ませると、書き手の理解にバイアスされた評価になり、後で実装段階・運用段階で破綻が露呈する。本スキルはバイアスを排除する subagent dispatch ゲート。
+書き手バイアス排除の鉄則：
 
----
+- **同じセッション / 同じ context の主エージェントにレビューさせない。** 「書きながら自分でセルフレビュー」は読み返しているだけで、隠れた前提に気づけない。
+- **必ず Agent ツールで subagent を dispatch** し、白紙でレビュー資料を読ませる。
+- **subagent にも "13 レンズの checklist を順に当てよ" と指示する。** 主観で読み流させない。
 
-## いつ起動するか
-
-- `design` の Step 5 で呼ばれる (主経路)
-- 既存の設計ドキュメント (ADR draft / scratchpad) のセカンドオピニオンが欲しい時
-- 「この依存方向 / 構造選択でいいか」と聞かれた時
-
-逆に **起動しない**:
-
-- 実装後のコードレビュー (これは `code-review` の領域)
-- 要件レビュー (これは `requirements-review` の領域)
-- 単純な命名相談 (`tidy-first` Tidying の領域)
+`software-design` を実行した直後、ADR をドラフトした直後、PR に含まれる設計関連の差分が固まった時に併用する。
 
 ---
 
 ## ワークフロー
 
-### Step 1 — Subagent への入力を整える
+### Step 1 — レビュー対象の同定
 
-以下を 1 メッセージにまとめる：
+入力から以下を確定する。曖昧なら `AskUserQuestion` で確認する。
 
-- 設計の **採用案** (1-3 行)
-- **却下案と理由** (最低 2 つ)
-- 関連する **既存コード** へのファイルパス参照 (subagent に読ませるため)
-- 設計対象が触る **I/O 境界 / 外部依存** の列挙
-- 既存規約ファイル (`CLAUDE.md`, `docs/conventions.md`, ADR ディレクトリ) へのパス
-
-### Step 2 — Subagent dispatch (白紙)
-
-Task tool で `general-purpose` agent を新規起動。プロンプトに必ず含める:
-
-- 「あなたは設計レビュアーです。この設計を初見で読みます」
-- 「設計を書いた前提知識は持ち込まない」
-- 観点リスト (下記)
-- 出力フォーマット (severity 三分類)
-- "performative agreement 禁止" の明示 (You're absolutely right! 禁止)
-
-### Step 3 — レビュー観点 (subagent に渡す)
-
-```markdown
-## 観点
-
-1. Responsibility — この変更で増える module/class/function は単一責務か / 既存責務と重複していないか
-2. Direction of Dependencies — 不安定なもの (volatile) → 安定したもの (stable) の方向か / domain → infra になっていないか / 循環参照は無いか
-3. I/O Boundaries — 純関数化できる部分が外部 I/O と混在していないか / Humble Object パターンが守れているか
-4. Testability — test double 不要で書けるか / 直接 unit テスト可能か
-5. Reversibility — one-way door (後で変えにくい) を two-way door に倒せないか
-6. External Constraints — 設計の前提となる外部要因 (SLA / API 契約 / 法令 / パフォーマンス予算) が明示されているか / 前提が変わったときの再考 trigger が定義されているか
-7. Alternatives — 却下案が最低 2 つあるか / 却下理由が「なんとなく」ではなく具体か
-8. Convention — CLAUDE.md / 既存 ADR / 既存コードの慣例と矛盾していないか / 矛盾するなら ADR に正当化が書かれているか
-
-## Severity
-
-- Critical: 本設計のまま進めると重大な技術的負債を生む / 後で revert がほぼ不能 → ブロック
-- Important: PR 前に対処すべき / 進めるならトレードオフを ADR に明記 → 対処を要求
-- Minor: 改善余地はあるが PR 後でも良い / 取捨選択は実装者
-```
-
-### Step 4 — Findings の収集
-
-subagent からの戻り値を以下の構造で受け取る：
-
-```markdown
-## Critical
-- [<観点>] <issue 1 行>
-  - Suggested action: <具体的な修正提案 1 行>
-
-## Important
-- ...
-
-## Minor
-- ...
-
-## What's good
-- ...
-```
-
-### Step 5 — 判定
-
-| 状態 | 次の手 |
+| 種別 | 例 |
 |---|---|
-| Critical = 0 / Important = 0 | PASS — 実装フェーズへ進める |
-| Critical = 0 / Important > 0 | PASS_WITH_FIXES — Important を対処してから or トレードオフを ADR に追記 |
-| Critical > 0 | FAIL — `design` Step 2 に戻る |
+| ADR | `docs/adr/0007-*.md` |
+| Design Proposal | `software-design` skill が直前に出した文書 |
+| 設計コード差分 | 集約 / モデル / ports & adapters の追加・改変 |
+| アーキテクチャ図 / モデル図 | C4, ER, シーケンス |
+| 既存設計の妥当性 | 指定モジュールに対する general review |
 
-呼出側 (`design`) に判定と findings をそのまま返す。本スキル内で再設計はしない。
+**スコープを 1 リクエスト 1 種別に絞る。** 「全部見て」は subagent 側で焦点が散る。
+
+### Step 2 — 適用レンズの選択
+
+対象種別に応じて、`software-design/references/` の中から当てる checklist を選ぶ。本スキルの `references/checklist.md` がレンズごとの設問集を持つ。
+
+| 対象 | 適用レンズ（既定） |
+|---|---|
+| ADR | adr, architecture, ddd（決定が触れる範囲） |
+| Domain model | ddd, data-model, security |
+| Module / class 構造 | philosophy, functional-core, tdd |
+| Aggregate / repository | ddd, data-model |
+| Error handling 戦略 | functional-core (FP/Railway), philosophy |
+| アーキテクチャ提案 | architecture, ddd, adr |
+| Auth / 入力検証 | security, data-model |
+| 全般（種別不明） | philosophy, ddd, security, adr の 4 本を必ず + 内容に応じて追加 |
+
+### Step 3 — Subagent dispatch
+
+`Agent` ツールを使い、`general-purpose` subagent に以下のテンプレートで投げる。**本スキルが書き手代わりに評価しない**：
+
+```markdown
+あなたは <対象名> を白紙で読むレビュー実行者です。書き手の意図は知らない前提で、
+書かれているテキスト / コードだけから判断してください。
+
+## レビュー対象
+<ファイルパス・該当範囲・コードブロック>
+
+## 適用 checklist
+以下のレンズについて、`software-design/references/<lens>.md` の "レビュー観点" 節を
+順に当ててください。レンズ:
+- <lens-1>
+- <lens-2>
+- ...
+
+## チェックの仕方
+各観点について次のいずれかを返す:
+- ○ 充足している（短い根拠 1 行）
+- × 充足していない（issue 1 行 + Fix 提案 1 行 + 該当 path:line）
+- ? 判断不能（追加情報が必要 — 何が要るか 1 行）
+
+## 出力形式
+レンズごとに H2 を立て、観点ごとに箇条書きで上記 ○/×/? を並べる。
+最後に "Summary" 節を立て、Critical / Major / Minor の数を集計し、
+merge OK / changes requested / 要議論 を判定する。findings は捏造しない。
+読みづらいなら "?" で素直にエスカレーションする。
+```
+
+`Agent` の `subagent_type` は `general-purpose`（特化エージェントが既にあるなら指定）。出力をそのまま受け取り、**本スキル側で書き直さない**（バイアスを混ぜないため）。
+
+### Step 4 — 主エージェントが集約
+
+subagent から返ってきた findings を、ユーザ向け最終出力に整形する。整形時にやること：
+
+- **重複統合**: 同じ issue が複数レンズで出ているなら 1 件にまとめる（Lens 名タグを `[philosophy/deep-module] [ddd/aggregate]` のように複数つける）
+- **Critical / Major / Minor 振り分け**: subagent の判定を尊重するが、明らかにレベル違いが見えたら主エージェントが調整。理由を 1 行残す。
+- **Open Questions の昇格**: subagent が "?" にした項目は最終出力の "Open Questions" に集める。ユーザに判断を返す。
+- **Strengths**: ○ で良かったところを最低 1 件残す。「悪いとこだけ列挙」はレビュー疲れを招く。
+
+### Step 5 — 必要に応じて再 dispatch
+
+以下の場合は同じ subagent に **続報を依頼せず、新しい subagent を立てて** やり直す：
+
+- subagent が checklist を一部スキップした
+- "?" が多すぎて判断材料が足りなかった
+- レンズ選択が誤っていた
+
+「同じ subagent に追加質問」をしないのは、初回読みの白紙性を維持するため。
 
 ---
 
 ## 出力フォーマット
 
 ```markdown
-## Design Review: <design summary 1 行>
+# Design Review
 
-### Findings
-- Critical: <n>
-- Important: <n>
-- Minor: <n>
+## Summary
+判定: <merge OK / changes requested / 要議論>
+主要懸念（最大 3）: ...
 
-### Critical (blocks)
-- [<観点>] <issue> → <action>
+## Critical (blocks merge)
+- [path:line] [<lens-tag>] [<lens-tag>]: <issue>
+  - Fix: <提案>
+  - Reviewer note: <subagent の根拠 1 行>
 
-### Important (fix or ADR 追記)
+## Major (should fix)
 - ...
 
-### Minor
+## Minor / Style
 - ...
 
-### What's good
+## Open Questions
+- [<lens-tag>]: <subagent が "?" にした項目>
+
+## Strengths
 - ...
 
-### Verdict
-- PASS / PASS_WITH_FIXES / FAIL
-- Next: 実装へ / Important 対処 / 再設計 (design へ戻る)
+## Reviewed lenses
+- <lens-1>: ○ N / × N / ? N
+- <lens-2>: ...
+
+## Reviewer
+- subagent: general-purpose（white-paper read）
+- 主エージェント: 集約のみ（レビュー判断はしていない）
 ```
 
----
-
-## 出力する成果物 / 出力しない成果物
-
-### 出力する成果物
-
-- **8 観点 × severity 三分類の findings リスト** (Critical / Important / Minor / What's good の固定構造)
-- **Verdict** (PASS / PASS_WITH_FIXES / FAIL のいずれか + 次の手 1 行)
-- **subagent dispatch (新規)** — Task tool 経由で white-slate review を 1 回起動
-
-### 出力しない成果物
-
-- **設計の修正差分**: findings のみ返し、修正版設計は `design` に差し戻して再起草させる。
-- **実装コード**: Verdict が PASS でも本スキル経由の実装出力はない (`tdd` / 直接編集の領域)。
-- **同一 subagent での再 review 結果**: 修正後の再レビューは新規 subagent dispatch、過去 agent の再利用出力は出さない。
-- **要件レビュー / コードレビューの findings**: それぞれ `requirements-review` / `code-review` の領域。
-- **subagent 指摘の盲信受容**: pushback 候補は明示し、INVALID 判定は根拠と共に出力に残す。
+`<lens-tag>` 例（`software-design` と整合）: `philosophy/deep-module`, `data/mutable-mix`, `tm/key`, `fp/exception-as-control`, `ddd/aggregate-boundary`, `tdd/untestable`, `rop/result-leak`, `arch/quantum`, `xunit/double-overuse`, `cqrs/asymmetry`, `es/state-loss`, `adr/missing-options`, `secure/primitive`。
 
 ---
 
-## 既知の限界
+## このスキルがやらないこと
 
-- **subagent の知識深度は session に依存**: 大規模リポの全慣例を 1 subagent が理解できない場合、findings が浅くなる。観点リストで補強。
-- **「不安定 → 安定」依存方向の判定が文脈依存**: ライブラリの安定度はチーム依存。CLAUDE.md / プロジェクト規約に明記されていない場合は subagent に「判定不能」と返させ、Important 扱いにする。
-- **Solo dev 向けの severity 三分類**: チーム運用では「ブロック権限」がレビュアーごとに違うため別の運用が必要。本スキルは solo 前提。
+- **設計の "提案"。** 提案は `software-design` の担当。本スキルは "読んで指摘" のみ。
+- **コード書き換え。** Fix は提案テキスト。実装は別ステップ / 別スキル。
+- **書き手（同セッションの主エージェント）による直接評価。** 必ず subagent dispatch。
+- **テスト本体のレビュー。** `test-review` の担当。
+- **調査作業（先行事例 / 学術調査）。** `research-practices` の担当。
+- **subagent の出力を主エージェントが書き直して "正しく" すること。** 出力は集約のみ。指摘内容を主エージェントの判断で握りつぶさない。
+- **複数の対象を 1 回でレビューすること。** スコープを 1 種別に絞り、必要なら複数回呼ぶ。
+
+---
+
+## 良いレビューの例
+
+```markdown
+# Design Review
+
+## Summary
+判定: changes requested
+主要懸念: (1) ADR-0007 が Considered Options に却下案を 1 案しか書いていない、
+(2) `Order` 集約が `Customer` と同一トランザクションで更新されている、
+(3) Email がプリミティブ string のまま service 層を流れている。
+
+## Critical (blocks merge)
+- [packages/orders/src/use_cases/place_order.ts:42] [ddd/aggregate-boundary]: 1 トランザクションで `Order` と `Customer` の双方を更新している。
+  - Fix: `Customer.creditUsed` を更新するのは domain event `OrderPlaced` を outbox に書き、別トランザクションで反映する。集約境界に書き戻す動機を ADR に切り出す。
+  - Reviewer note: `Repository.beginTx()` 配下に複数集約の `save()` が並ぶのを検出。
+
+- [packages/orders/src/api/place_order.ts:18] [secure/primitive]: 受け取った `email: string` がそのまま `OrderService.placeOrder(email, ...)` に渡っている。
+  - Fix: API 入口で `Email.parse(raw)` を通し、`Email` 型として service に渡す。`OrderService` の引数を `Email` に変更。
+
+## Major (should fix)
+- [docs/adr/0007-event-sourcing-for-orders.md:24] [adr/missing-options]: Considered Options に "ES なし、状態 + audit_log" 案がない。
+  - Fix: 当該案を Pros/Cons つきで追記し、却下根拠を Decision に書く。
+
+## Minor / Style
+- [packages/orders/src/domain/order.ts:7] [philosophy/deep-module]: `OrderManager` という名前は "manage" を含む。
+  - Fix: 役割が "発注の整合確認" なら `OrderPlacement` のような具体名に。
+
+## Open Questions
+- [arch/quantum]: ADR-0007 が "Order と Inventory は同期 RPC で繋ぐ" としているが、これだと量子は実質 1 つになる。意図して同期にしている?
+
+## Strengths
+- ドメインプリミティブ `Money(amount, currency)` の不変性とコンストラクタ検証は徹底できている。
+- `Result<T, OrderError>` の Err sum type に網羅性チェックがコンパイル時に効いている。
+
+## Reviewed lenses
+- adr: ○ 4 / × 1 / ? 0
+- ddd: ○ 5 / × 1 / ? 0
+- security: ○ 3 / × 1 / ? 0
+- architecture: ○ 3 / × 0 / ? 1
+- philosophy: ○ 6 / × 1 / ? 0
+
+## Reviewer
+- subagent: general-purpose (white-paper read)
+- 主エージェント: 集約のみ
+```
