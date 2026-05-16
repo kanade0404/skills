@@ -150,4 +150,4 @@ RED テストと GREEN 実装は **同一 commit** に入れる (片方だけ re
 
 - **UI / E2E 振る舞いの RED-GREEN は重い**: ブラウザ操作を伴う振る舞いはローカル TDD ループに組み込みにくい。本スキルは unit / integration を主対象とし、E2E は `test-review` §9 の予算原則に従って別レイヤで扱う。
 - **「最小実装」の主観**: Fake It / Triangulate / Obvious Implementation の選択は判断が必要 (Beck 本 Part 1)。本スキルは「テストを通す最小」とだけ規定し、選択基準は実装者に委ねる。
-- **言語固有の TDD 慣習は網羅しない**: Hypothesis / Quickcheck の property-based、pytest の parametrize 等は `test-review/references/python.md` に委ねる。
+- **言語固有の TDD 慣習は網羅しない**: Hypothesis / Quickcheck の property-based、pytest の parametrize 等は `skills/test-review/references/python.md` に委ねる。

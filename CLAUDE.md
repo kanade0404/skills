@@ -19,7 +19,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 rulesync の `fetch` はルート直下のトップレベル feature ディレクトリを読む。
 
-```
+```text
 skills/<skill-name>/
 ├── SKILL.md            # 必須。frontmatter (name, description, allowed-tools) + 本文
 ├── references/*.md     # 詳細レイヤ（progressive disclosure 第3層）

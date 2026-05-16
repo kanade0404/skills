@@ -18,7 +18,7 @@
 rulesync の `fetch` は配布元リポジトリの **トップレベルの feature ディレクトリ**
 （`.rulesync/` ではなくルート直下）を読む。
 
-```
+```text
 .
 ├── README.md / CLAUDE.md / AGENTS.md   # このリポ自体の開発ガイド（配布対象外）
 ├── skills/        # Agent Skills（収録済み・自作15）

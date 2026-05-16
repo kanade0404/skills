@@ -8,7 +8,7 @@ tools: Read, Glob, Grep, Bash, LSP, mcp__plugin_context7_context7__resolve-libra
 
 テストを書くのが速く、レビューするのが安いままであるようにテストコードをレビューするためのスキル。テスト品質は予測可能な形で劣化するので、その劣化を一度・一貫して捕まえることで、以降の PR で時間を節約できる。
 
-APM (`microsoft/apm`) で `kanade0404/skills/test-review` として配布される前提で project-agnostic に書く。consumer プロジェクトに固有の doctrine (例: Safety / Order / Reinforcement のような独自原則) があれば §Step 7 で取り込む拡張点を持たせている。
+rulesync で `kanade0404/skills@<tag>` から `skills/test-review/` として配布される前提で project-agnostic に書く。consumer プロジェクトに固有の doctrine (例: Safety / Order / Reinforcement のような独自原則) があれば §Step 7 で取り込む拡張点を持たせている。
 
 レビューの主レンズ:
 
