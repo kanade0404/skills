@@ -2,9 +2,14 @@
 
 ## Project Structure & Module Organization
 
-This repository is a catalog of Claude/Codex skills intended for distribution through `apm.yml` as `kanade0404/skills/<name>`. Each skill lives in its own top-level directory, for example `skill-builder/`, `test-review/`, `empirical-prompt-tuning/`, and `research-practices/`. Third-party skills are not vendored here; consumers depend on upstream directly via `apm.yml`.
+This repository is a catalog and **rulesync distribution source** for Claude Code / Codex (and other rulesync-supported tools). Distribution is done with [rulesync](https://github.com/dyoshikawa/rulesync): consumers run `rulesync fetch kanade0404/skills@<tag> --features skills,...` then `rulesync generate`. (Migrated from the previous APM `apm.yml` method.)
 
-Use this layout for skill directories:
+`rulesync fetch` reads top-level feature directories at the repository root (not `.rulesync/`):
+
+- `skills/<name>/`: Agent Skills (15 self-authored skills live here).
+- `subagents/`, `commands/`, `hooks/`, `rules/`: distribution feature slots, currently placeholders (README only); content migration is a later phase.
+
+Each skill directory uses this layout:
 
 - `SKILL.md`: required frontmatter plus the primary instructions.
 - `references/*.md`: detailed supporting material for progressive disclosure.
@@ -12,15 +17,15 @@ Use this layout for skill directories:
 - `scripts/*.py`: helper tools, currently used by `skill-builder`.
 - `assets/*`: templates and other reusable artifacts.
 
-Keep `README.md` updated when adding or removing published skills.
+Third-party skills are not vendored here; consumers `rulesync fetch` upstream repositories directly. Keep `README.md` updated when adding or removing published skills.
 
 ## Build, Test, and Development Commands
 
 There is no project-wide build, test, or lint pipeline. Most changes are Markdown edits.
 
 - `rg --files`: list repository files quickly.
-- `uv run python skill-builder/scripts/score_triggers.py --cases <skill>/evals/<skill>-trigger.json --preds <skill>/evals/<skill>-trigger-results-YYYY-MM-DD.jsonl`: score trigger predictions.
-- `python skill-builder/scripts/run_harness.py --cases <path> --target-skill <name> --out <path>`: run the heavier Claude CLI trigger harness when local credentials and budget are available.
+- `uv run python skills/skill-builder/scripts/score_triggers.py --cases skills/<skill>/evals/<skill>-trigger.json --preds skills/<skill>/evals/<skill>-trigger-results-YYYY-MM-DD.jsonl`: score trigger predictions.
+- `python skills/skill-builder/scripts/run_harness.py --cases <path> --target-skill <name> --out <path>`: run the heavier Claude CLI trigger harness when local credentials and budget are available.
 
 ## Coding Style & Naming Conventions
 
@@ -30,14 +35,14 @@ Keep each `SKILL.md` concise, ideally under 500 lines. Move detailed topic mater
 
 ## Testing Guidelines
 
-For trigger evals, place cases in `evals/<skill>-trigger.json` and predictions in `evals/<skill>-trigger-results-YYYY-MM-DD.jsonl`. Include both should-trigger and should-skip prompts, with tags such as `explicit`, `ambiguous`, `adjacent`, and `distractor`. Run `score_triggers.py` after changing trigger descriptions or eval data.
+For trigger evals, place cases in `skills/<skill>/evals/<skill>-trigger.json` and predictions in `skills/<skill>/evals/<skill>-trigger-results-YYYY-MM-DD.jsonl`. Include both should-trigger and should-skip prompts, with tags such as `explicit`, `ambiguous`, `adjacent`, and `distractor`. Run `score_triggers.py` after changing trigger descriptions or eval data.
 
 ## Commit & Pull Request Guidelines
 
-This working tree has no existing commits, so no historical commit convention is available. Use concise, imperative commit subjects such as `Add postgres skill references` or `Tune test-review trigger evals`.
+Use concise, imperative commit subjects such as `Add postgres skill references` or `Tune test-review trigger evals`.
 
-Pull requests should describe the skill changed, why the change is needed, and any eval results. Include updated `README.md` entries for new skills.
+Pull requests should describe the skill changed, why the change is needed, and any eval results. Include updated `README.md` entries for new skills. Cut a git tag (e.g. `v1.1.0`) for releases; consumers pin via `kanade0404/skills@<tag>`.
 
 ## Agent-Specific Instructions
 
-Treat this as a skill-content repository, not an application. Avoid unrelated refactors, and do not rename skill directories without updating references and distribution paths.
+Treat this as a skill-content / distribution-source repository, not an application. Avoid unrelated refactors, and do not rename skill directories without updating `README.md`, internal references, and the dir-name = frontmatter `name` invariant.

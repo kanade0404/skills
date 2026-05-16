@@ -1,36 +1,45 @@
 # skills
 
-自分用に書いた Claude Code / Codex Skill のカタログ。
-プロジェクトへの配布は [microsoft/apm](https://github.com/microsoft/apm) を想定。
+自分用に書いた Claude Code / Codex 向け Agent Skill 等のカタログ兼 **配布元リポジトリ**。
 
-サードパーティ製の skill はここに vendor せず、consumer 側の `apm.yml` から
-upstream を直接依存に書く方針（重複と更新追従の手間を避ける）。
+各プロジェクトへは [rulesync](https://github.com/dyoshikawa/rulesync) で配布する
+（`rulesync fetch` でタグ固定して取り込み、`rulesync generate` で各ツールの設定を生成）。
+
+> **配布方式を APM (`microsoft/apm`) から rulesync へ移行。**
+> 理由: rulesync の方が成熟（双方向 import / CI ドリフト検出 / `--simulate-commands`
+> で Codex の slash-command 非対応を吸収）で、生成器であり Claude ネイティブ plugin を
+> 置換しない。Codex も即対応できる。
+
+サードパーティ製 skill はここに vendor しない。consumer 側で upstream リポジトリを
+直接 `rulesync fetch` する（重複と更新追従の手間を避ける方針は維持）。
 
 ## 構造
 
+rulesync の `fetch` は配布元リポジトリの **トップレベルの feature ディレクトリ**
+（`.rulesync/` ではなくルート直下）を読む。
+
 ```
 .
-├── README.md
-├── skill-builder/SKILL.md
-├── test-review/SKILL.md
-├── empirical-prompt-tuning/SKILL.md
-├── research-practices/SKILL.md
-├── product-discovery/SKILL.md
-├── pr-review-respond/SKILL.md
-├── verify-done/SKILL.md
-├── tidy-first/SKILL.md
-├── tdd/SKILL.md
-├── design/SKILL.md
-├── software-design/SKILL.md
-├── design-review/SKILL.md
-├── adr-writer/SKILL.md
-├── code-review/SKILL.md
-└── ci-self-heal/SKILL.md
+├── README.md / CLAUDE.md / AGENTS.md   # このリポ自体の開発ガイド（配布対象外）
+├── skills/        # Agent Skills（収録済み・自作15）
+│   └── <name>/
+│       ├── SKILL.md          # 必須
+│       ├── references/*.md   # progressive disclosure 第3層
+│       ├── evals/*.{json,jsonl}
+│       ├── scripts/*.py
+│       └── assets/*
+├── subagents/     # サブエージェント（配布枠・未収録 / placeholder）
+├── commands/      # スラッシュコマンド（配布枠・未収録 / placeholder）
+├── hooks/         # フック（配布枠・未収録 / placeholder）
+└── rules/         # 横断指示ルール（配布枠・未収録 / placeholder）
 ```
+
+`subagents/ commands/ hooks/ rules/` は現状プレースホルダ（README のみ）。
+コンテンツの移行は次フェーズ。
 
 ## 収録 skill
 
-いずれも自作。プロジェクト固有 doctrine への依存を外し、APM (`microsoft/apm`) で `kanade0404/skills/<name>` として project-agnostic に配布する。
+いずれも自作。`skills/<name>/` に配置し、rulesync で project-agnostic に配布する。
 
 | Skill | 概要 |
 | --- | --- |
@@ -50,18 +59,29 @@ upstream を直接依存に書く方針（重複と更新追従の手間を避�
 | `code-review` | PR 起票前の subagent コードレビュー (severity 三分類) |
 | `ci-self-heal` | CI 失敗の root-cause-first 自己修復ループ (3-failure architecture gate) |
 
-## プロジェクトでの利用 (apm.yml)
+## プロジェクトでの利用 (rulesync)
 
-自作 skill はこのリポから、サードパーティ skill は upstream から直接引く:
+```bash
+# 1. 取り込み（タグ固定推奨。private repo は GITHUB_TOKEN/GH_TOKEN）
+rulesync fetch kanade0404/skills@v1.0.0 --features skills,subagents,commands,hooks,rules
+#   サードパーティ skill はそれぞれ upstream を直接
+rulesync fetch planetscale/database-skills@<tag> --features skills
 
-```yaml
-name: your-project
-version: 1.0.0
-dependencies:
-  apm:
-    - kanade0404/skills/skill-builder
-    - kanade0404/skills/test-review
-    # サードパーティ例
-    - planetscale/database-skills/skills/postgres
-    - planetscale/database-skills/skills/mysql
+# 2. 各ツール設定を生成（Codex の command/subagent 非対応は simulate で吸収）
+rulesync generate --targets claudecode,codexcli --simulate-commands --simulate-subagents
+
+# 3. 生成物（.claude/ .codex/ .agents/skills/ CLAUDE.md AGENTS.md）をコミット
+
+# 4. CI でドリフト検出
+rulesync generate --targets claudecode,codexcli --check
 ```
+
+- **更新**は `rulesync fetch …@<新タグ>` を再実行 → `generate` し直してコミット。
+  vendoring モデルのため中央更新は自動伝播しない。**タグ運用で固定**するのが定石。
+- `--conflict skip` で consumer 固有ファイルとの衝突を回避できる（既定は `overwrite`）。
+
+## このリポの配布（メンテナ向け）
+
+- skill 追加/更新 → `skills/<name>/`、本 README の表を 1 行更新。
+- ディレクトリ名 = `SKILL.md` の `name` frontmatter を一致させる。
+- リリースは git タグ（例 `v1.1.0`）。consumer は `kanade0404/skills@vX.Y.Z` で固定取得。
