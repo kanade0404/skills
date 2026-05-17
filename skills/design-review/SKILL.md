@@ -51,7 +51,7 @@ allowed-tools:
 
 ### Step 2 — 適用レンズの選択
 
-対象種別に応じて、`software-design/references/` の中から当てる checklist を選ぶ。本スキルの `references/checklist.md` がレンズごとの設問集を持つ。
+対象種別に応じて、`skills/software-design/references/` の中から当てる checklist を選ぶ。本スキルの `references/checklist.md` がレンズごとの設問集を持つ。
 
 | 対象 | 適用レンズ（既定） |
 |---|---|
@@ -76,7 +76,7 @@ allowed-tools:
 <ファイルパス・該当範囲・コードブロック>
 
 ## 適用 checklist
-以下のレンズについて、`software-design/references/<lens>.md` の "レビュー観点" 節を
+以下のレンズについて、`skills/software-design/references/<lens>.md` の "レビュー観点" 節を
 順に当ててください。レンズ:
 - <lens-1>
 - <lens-2>

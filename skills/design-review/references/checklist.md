@@ -1,6 +1,6 @@
 # Design Review Checklist
 
-`software-design/references/*.md` の "レビュー観点" を、レビュー subagent が機械的に当てやすいよう設問形式にまとめたもの。本書を読み手 (subagent) が直接見る想定。
+`skills/software-design/references/*.md` の "レビュー観点" を、レビュー subagent が機械的に当てやすいよう設問形式にまとめたもの。本書を読み手 (subagent) が直接見る想定。
 
 各設問について `○` / `×` / `?` のいずれかで答え、`×` は issue + Fix + path:line を必ず添える。
 

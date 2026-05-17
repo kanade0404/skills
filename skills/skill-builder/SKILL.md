@@ -18,7 +18,7 @@ allowed-tools:
 
 公式 `skill-creator` の発想を踏襲しつつ、軽量・プロジェクト非依存のメタスキル。subagent や外部 LLM を立てずに、**1 セッション内で完結する eval ループ**を回す。
 
-APM (`microsoft/apm`) で `kanade0404/skills/skill-builder` として配布される前提で project-agnostic に書く。プロジェクト規約ファイル（CLAUDE.md / `rules/`, `docs/`, `AGENTS.md` 等）への整合は consumer 側の規約として参照する。
+rulesync で `kanade0404/skills@<tag>` から `skills/skill-builder/` として配布される前提で project-agnostic に書く。プロジェクト規約ファイル（CLAUDE.md / `rules/`, `docs/`, `AGENTS.md` 等）への整合は consumer 側の規約として参照する。
 
 主参照：
 - [Anthropic Agent Skills best practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices)（公式の規範）
@@ -36,7 +36,7 @@ APM (`microsoft/apm`) で `kanade0404/skills/skill-builder` として配布さ�
 対象はプロジェクトスキル全般。配置形式は次のいずれにも対応する：
 
 - consumer プロジェクト形式: `.claude/skills/<name>/SKILL.md`
-- skill カタログ形式 (APM 配布元): top-level `<name>/SKILL.md`
+- skill カタログ形式 (rulesync 配布元): `skills/<name>/SKILL.md`
 
 プラグインスキル（`plugins/<plugin>/skills/...`）の編集はこのスキルでは扱わない（plugin-dev 系の専用スキルに委ねる）。本スキルは現在のリポジトリ構造を `git ls-files` 等で検出し、検出された配置形式に合わせて出力先を決める。
 
