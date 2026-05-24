@@ -30,7 +30,7 @@ skills/<skill-name>/
 subagents/  commands/  hooks/  rules/   # 配布 feature 枠（現状 placeholder）
 ```
 
-収録 skill: `skill-builder`, `test-review`, `empirical-prompt-tuning`, `research-practices`, `product-discovery`, `pr-review-respond`, `verify-done`, `tidy-first`, `tdd`, `design`, `software-design`, `design-review`, `adr-writer`, `code-review`, `ci-self-heal`（いずれも自作・日本語 description・Anthropic skill best-practices 準拠）。
+収録 skill: `skill-builder`, `test-review`, `empirical-prompt-tuning`, `research-practices`, `product-discovery`, `pr-review-respond`, `verify-done`, `tidy-first`, `tdd`, `design`, `software-design`, `design-review`, `adr-writer`, `code-review`, `ci-self-heal`, `shipping`（いずれも自作・日本語 description・Anthropic skill best-practices 準拠）。
 
 ## SKILL.md 編集時の規約
 
