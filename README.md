@@ -21,7 +21,7 @@ rulesync の `fetch` は配布元リポジトリの **トップレベルの feat
 ```text
 .
 ├── README.md / CLAUDE.md / AGENTS.md   # このリポ自体の開発ガイド（配布対象外）
-├── skills/        # Agent Skills（収録済み・自作15）
+├── skills/        # Agent Skills（収録済み・自作16）
 │   └── <name>/
 │       ├── SKILL.md          # 必須
 │       ├── references/*.md   # progressive disclosure 第3層
@@ -58,6 +58,7 @@ rulesync の `fetch` は配布元リポジトリの **トップレベルの feat
 | `adr-writer` | Michael Nygard 形式 ADR の値判定 + 生成 |
 | `code-review` | PR 起票前の subagent コードレビュー (severity 三分類) |
 | `ci-self-heal` | CI 失敗の root-cause-first 自己修復ループ (3-failure architecture gate) |
+| `shipping` | 実装 GREEN 後の出荷ターミナルステージ。各フェーズを fresh subagent に dispatch し code-review→verify-done→PR→ci-self-heal+pr-review-respond を CI 全 pass+全コメント終端まで回す。修正は tdd/tidy-first に委譲、行き詰まったら escalate |
 
 ## プロジェクトでの利用 (rulesync)
 
