@@ -6,7 +6,7 @@ This repository is a catalog and **rulesync distribution source** for Claude Cod
 
 `rulesync fetch` reads top-level feature directories at the repository root (not `.rulesync/`):
 
-- `skills/<name>/`: Agent Skills (15 self-authored skills + 1 explicit copy-in live here).
+- `skills/<name>/`: Agent Skills. The directories and `SKILL.md` frontmatter are the inventory source of truth.
 - `subagents/`, `commands/`, `hooks/`, `rules/`: distribution feature slots, currently placeholders (README only); content migration is a later phase.
 
 Each skill directory uses this layout:
@@ -17,7 +17,7 @@ Each skill directory uses this layout:
 - `scripts/*.py`: helper tools, currently used by `skill-builder`.
 - `assets/*`: templates and other reusable artifacts.
 
-Third-party skills are generally not vendored here; consumers `rulesync fetch` upstream repositories directly. Explicit copy-in exceptions must record source and license information in `README.md` and include required upstream license notices. Keep `README.md` updated when adding or removing published skills.
+Third-party skills are generally not vendored here; consumers `rulesync fetch` upstream repositories directly. Explicit copy-in exceptions must record source and license information inside the skill directory and include required upstream license notices. Do not maintain a duplicated skill inventory in `README.md`.
 
 ## Build, Test, and Development Commands
 
@@ -41,7 +41,7 @@ For trigger evals, place cases in `skills/<skill>/evals/<skill>-trigger.json` an
 
 Use concise, imperative commit subjects such as `Add postgres skill references` or `Tune test-review trigger evals`.
 
-Pull requests should describe the skill changed, why the change is needed, and any eval results. Include updated `README.md` entries for new skills. Cut a git tag (e.g. `v1.1.0`) for releases; consumers pin via `kanade0404/skills@<tag>`.
+Pull requests should describe the skill changed, why the change is needed, and any eval results. Update `README.md` only when distribution usage or repository policy changes. Cut a git tag (e.g. `v1.1.0`) for releases; consumers pin via `kanade0404/skills@<tag>`.
 
 ## Agent-Specific Instructions
 

@@ -14,7 +14,7 @@ Skill のカタログ兼 **rulesync 配布元リポジトリ**。配布は
 
 **サードパーティ製 skill は原則 vendor しない**。consumer 側で upstream を直接
 `rulesync fetch`（例: `planetscale/database-skills`）。明示的な copy-in 例外は
-`README.md` に出典とライセンスを記し、必要な upstream ライセンス表示を同梱する。
+該当 skill ディレクトリ内に出典とライセンスを残し、必要な upstream ライセンス表示を同梱する。
 
 ## レイアウト
 
@@ -31,7 +31,8 @@ skills/<skill-name>/
 subagents/  commands/  hooks/  rules/   # 配布 feature 枠（現状 placeholder）
 ```
 
-収録 skill: `skill-builder`, `test-review`, `empirical-prompt-tuning`, `research-practices`, `product-discovery`, `pr-review-respond`, `verify-done`, `tidy-first`, `tdd`, `design`, `software-design`, `design-review`, `adr-writer`, `code-review`, `ci-self-heal`（自作・日本語 description）, `grill-with-docs`（Matt Pocock `skills` 由来の copy-in・MIT）。
+収録 skill の source of truth は `skills/<name>/` と各 `SKILL.md` frontmatter。README や
+CLAUDE.md に個別 skill の一覧や件数を重複管理しない。
 
 ## SKILL.md 編集時の規約
 
@@ -61,6 +62,6 @@ uv run python skills/skill-builder/scripts/score_triggers.py \
 ## 新しい skill を足すとき
 
 1. `skills/<name>/SKILL.md` を作る。雛形と self-review チェックリストは `skills/skill-builder/SKILL.md` Mode A。
-2. `README.md` の「収録 skill」表に 1 行追加する。copy-in 例外は出典とライセンスも記す。
+2. copy-in 例外は該当 skill ディレクトリ内に出典とライセンスを残す。
 3. 配布対象なので、`skills/<name>/` のディレクトリ名 = `name` frontmatter にする。
 4. リリースは git タグ。consumer は `kanade0404/skills@<tag>` で固定取得する。
