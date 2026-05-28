@@ -6,7 +6,7 @@ This repository is a catalog and **rulesync distribution source** for Claude Cod
 
 `rulesync fetch` reads top-level feature directories at the repository root (not `.rulesync/`):
 
-- `skills/<name>/`: Agent Skills (15 self-authored skills live here).
+- `skills/<name>/`: Agent Skills (15 self-authored skills + 1 explicit copy-in live here).
 - `subagents/`, `commands/`, `hooks/`, `rules/`: distribution feature slots, currently placeholders (README only); content migration is a later phase.
 
 Each skill directory uses this layout:
@@ -17,7 +17,7 @@ Each skill directory uses this layout:
 - `scripts/*.py`: helper tools, currently used by `skill-builder`.
 - `assets/*`: templates and other reusable artifacts.
 
-Third-party skills are not vendored here; consumers `rulesync fetch` upstream repositories directly. Keep `README.md` updated when adding or removing published skills.
+Third-party skills are generally not vendored here; consumers `rulesync fetch` upstream repositories directly. Explicit copy-in exceptions must record source and license information in `README.md` and include required upstream license notices. Keep `README.md` updated when adding or removing published skills.
 
 ## Build, Test, and Development Commands
 
