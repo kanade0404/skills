@@ -10,8 +10,9 @@
 > で Codex の slash-command 非対応を吸収）で、生成器であり Claude ネイティブ plugin を
 > 置換しない。Codex も即対応できる。
 
-サードパーティ製 skill はここに vendor しない。consumer 側で upstream リポジトリを
-直接 `rulesync fetch` する（重複と更新追従の手間を避ける方針は維持）。
+サードパーティ製 skill は原則ここに vendor しない。consumer 側で upstream リポジトリを
+直接 `rulesync fetch` する（重複と更新追従の手間を避ける方針は維持）。明示的に
+copy-in した例外は収録表に出典とライセンスを記す。
 
 ## 構造
 
@@ -21,7 +22,7 @@ rulesync の `fetch` は配布元リポジトリの **トップレベルの feat
 ```text
 .
 ├── README.md / CLAUDE.md / AGENTS.md   # このリポ自体の開発ガイド（配布対象外）
-├── skills/        # Agent Skills（収録済み・自作15）
+├── skills/        # Agent Skills（収録済み・自作15 + copy-in 1）
 │   └── <name>/
 │       ├── SKILL.md          # 必須
 │       ├── references/*.md   # progressive disclosure 第3層
@@ -39,7 +40,7 @@ rulesync の `fetch` は配布元リポジトリの **トップレベルの feat
 
 ## 収録 skill
 
-いずれも自作。`skills/<name>/` に配置し、rulesync で project-agnostic に配布する。
+主に自作。`skills/<name>/` に配置し、rulesync で project-agnostic に配布する。
 
 | Skill | 概要 |
 | --- | --- |
@@ -58,6 +59,7 @@ rulesync の `fetch` は配布元リポジトリの **トップレベルの feat
 | `adr-writer` | Michael Nygard 形式 ADR の値判定 + 生成 |
 | `code-review` | PR 起票前の subagent コードレビュー (severity 三分類) |
 | `ci-self-heal` | CI 失敗の root-cause-first 自己修復ループ (3-failure architecture gate) |
+| `grill-with-docs` | Matt Pocock `skills` 由来（MIT）。設計案をドメイン用語・`CONTEXT.md`・ADR と照合して詰める grilling session |
 
 ## プロジェクトでの利用 (rulesync)
 
