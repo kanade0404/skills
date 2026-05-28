@@ -10,8 +10,9 @@
 > で Codex の slash-command 非対応を吸収）で、生成器であり Claude ネイティブ plugin を
 > 置換しない。Codex も即対応できる。
 
-サードパーティ製 skill はここに vendor しない。consumer 側で upstream リポジトリを
-直接 `rulesync fetch` する（重複と更新追従の手間を避ける方針は維持）。
+サードパーティ製 skill は原則ここに vendor しない。consumer 側で upstream リポジトリを
+直接 `rulesync fetch` する（重複と更新追従の手間を避ける方針は維持）。明示的に
+copy-in した例外は、該当 skill ディレクトリ内に出典とライセンスを残す。
 
 ## 構造
 
@@ -21,50 +22,32 @@ rulesync の `fetch` は配布元リポジトリの **トップレベルの feat
 ```text
 .
 ├── README.md / CLAUDE.md / AGENTS.md   # このリポ自体の開発ガイド（配布対象外）
-├── skills/        # Agent Skills（収録済み・自作16）
+├── skills/        # Agent Skills
 │   └── <name>/
 │       ├── SKILL.md          # 必須
 │       ├── references/*.md   # progressive disclosure 第3層
 │       ├── evals/*.{json,jsonl}
 │       ├── scripts/*.py
 │       └── assets/*
-├── subagents/     # サブエージェント（配布枠・未収録 / placeholder）
-├── commands/      # スラッシュコマンド（配布枠・未収録 / placeholder）
-├── hooks/         # フック（配布枠・未収録 / placeholder）
-└── rules/         # 横断指示ルール（配布枠・未収録 / placeholder）
+├── subagents/     # サブエージェント配布枠
+├── commands/      # スラッシュコマンド配布枠
+├── hooks/         # フック配布枠
+└── rules/         # 横断指示ルール配布枠
 ```
 
-`subagents/ commands/ hooks/ rules/` は現状プレースホルダ（README のみ）。
-コンテンツの移行は次フェーズ。
+各 feature ディレクトリは rulesync の配布単位。空に近いディレクトリは将来の配布枠として
+README 等の placeholder だけを置くことがある。
 
-## 収録 skill
+## 収録内容
 
-いずれも自作。`skills/<name>/` に配置し、rulesync で project-agnostic に配布する。
-
-| Skill | 概要 |
-| --- | --- |
-| `skill-builder` | メタスキル: Claude Code skill 新規作成 + trigger / quality 改善ループ |
-| `test-review` | テストコード review (Khorikov 4 属性 + Meszaros 17 smells + AI 生成パターン、言語・スタック非依存) |
-| `empirical-prompt-tuning` | プロンプト / skill の subagent dispatch 経験的評価 |
-| `research-practices` | リサーチ実践 (情報源評価 / 思考フレームワーク / レポーティング、CRAAP / SIFT / S0-S5 信頼度タグ) |
-| `product-discovery` | 要求定義（要件定義の前段）。Outcome > Output で PRD を起こし、`prd-review` → `requirements` に渡す |
-| `pr-review-respond` | CodeRabbit / Devin / 人間レビュアーのコメント verify-and-respond ループ |
-| `verify-done` | 完了宣言前の最終 gate (Iron Law: NO COMPLETION CLAIMS WITHOUT FRESH EVIDENCE) |
-| `tidy-first` | structural / behavioral 分離規律 (Kent Beck *Tidy First?*) |
-| `tdd` | Test-Driven Development (RED-GREEN-REFACTOR + Verify RED gate) |
-| `design` | 設計検討 (scratchpad で検討、決定のみ ADR に蒸留、spec を永続化しない) |
-| `software-design` | 13 レンズの設計支援フレームワーク (PoSD / Immutable Data Model / TM法 / FP / DDD / TDD / RoP / FoSA / xUnit / CQRS / ES / ADR / Secure by Design) |
-| `design-review` | `software-design` 成果物を別 agent に白紙で読ませてレビューする pair skill (severity 三分類 + 13 レンズ checklist) |
-| `adr-writer` | Michael Nygard 形式 ADR の値判定 + 生成 |
-| `code-review` | PR 起票前の subagent コードレビュー (severity 三分類) |
-| `ci-self-heal` | CI 失敗の root-cause-first 自己修復ループ (3-failure architecture gate) |
-| `shipping` | 実装 GREEN 後の出荷ターミナルステージ。各フェーズを fresh subagent に dispatch し code-review→verify-done→PR→ci-self-heal+pr-review-respond を CI 全 pass+全コメント終端まで回す。修正は tdd/tidy-first に委譲、行き詰まったら escalate |
+`skills/<name>/` が収録 skill の source of truth。README には個別 skill の一覧や件数を
+持たせない。追加・削除・説明変更は各 `SKILL.md` の frontmatter とディレクトリ構造で表現する。
 
 ## プロジェクトでの利用 (rulesync)
 
 ```bash
 # 1. 取り込み（タグ固定推奨。private repo は GITHUB_TOKEN/GH_TOKEN）
-rulesync fetch kanade0404/skills@v1.0.0 --features skills,subagents,commands,hooks,rules
+rulesync fetch kanade0404/skills@<tag> --features skills,subagents,commands,hooks,rules
 #   サードパーティ skill はそれぞれ upstream を直接
 rulesync fetch planetscale/database-skills@<tag> --features skills
 
@@ -83,6 +66,6 @@ rulesync generate --targets claudecode,codexcli --check
 
 ## このリポの配布（メンテナ向け）
 
-- skill 追加/更新 → `skills/<name>/`、本 README の表を 1 行更新。
+- skill 追加/更新 → `skills/<name>/` を変更する。README は配布方式や運用ポリシーが変わるときだけ更新する。
 - ディレクトリ名 = `SKILL.md` の `name` frontmatter を一致させる。
 - リリースは git タグ（例 `v1.1.0`）。consumer は `kanade0404/skills@vX.Y.Z` で固定取得。

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-自作 Skill のカタログ兼 **rulesync 配布元リポジトリ**。配布は
+Skill のカタログ兼 **rulesync 配布元リポジトリ**。配布は
 [rulesync](https://github.com/dyoshikawa/rulesync) を用い、各プロジェクトで
 `rulesync fetch kanade0404/skills@<tag> --features skills,...` → `rulesync generate`
 で Claude Code / Codex 等の設定を生成して使う（旧 APM 方式から移行済み）。
@@ -12,8 +12,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 このリポジトリ自体にビルド・テスト・lint パイプラインは無い。コードを書く場所ではなく
 **SKILL.md を編集する場所**。
 
-**サードパーティ製 skill は vendor しない**。consumer 側で upstream を直接
-`rulesync fetch`（例: `planetscale/database-skills`）。
+**サードパーティ製 skill は原則 vendor しない**。consumer 側で upstream を直接
+`rulesync fetch`（例: `planetscale/database-skills`）。明示的な copy-in 例外は
+該当 skill ディレクトリ内に出典とライセンスを残し、必要な upstream ライセンス表示を同梱する。
 
 ## レイアウト
 
@@ -30,7 +31,8 @@ skills/<skill-name>/
 subagents/  commands/  hooks/  rules/   # 配布 feature 枠（現状 placeholder）
 ```
 
-収録 skill: `skill-builder`, `test-review`, `empirical-prompt-tuning`, `research-practices`, `product-discovery`, `pr-review-respond`, `verify-done`, `tidy-first`, `tdd`, `design`, `software-design`, `design-review`, `adr-writer`, `code-review`, `ci-self-heal`, `shipping`（いずれも自作・日本語 description・Anthropic skill best-practices 準拠）。
+収録 skill の source of truth は `skills/<name>/` と各 `SKILL.md` frontmatter。README や
+CLAUDE.md に個別 skill の一覧や件数を重複管理しない。
 
 ## SKILL.md 編集時の規約
 
@@ -60,6 +62,6 @@ uv run python skills/skill-builder/scripts/score_triggers.py \
 ## 新しい skill を足すとき
 
 1. `skills/<name>/SKILL.md` を作る。雛形と self-review チェックリストは `skills/skill-builder/SKILL.md` Mode A。
-2. `README.md` の「収録 skill」表に 1 行追加する。
+2. copy-in 例外は該当 skill ディレクトリ内に出典とライセンスを残す。
 3. 配布対象なので、`skills/<name>/` のディレクトリ名 = `name` frontmatter にする。
 4. リリースは git タグ。consumer は `kanade0404/skills@<tag>` で固定取得する。
