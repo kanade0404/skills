@@ -139,7 +139,7 @@ rulesync で `kanade0404/skills@<tag>` から `skills/skill-builder/` として�
 **書き方の原則**：
 
 - 「なぜそうするか」を先に書く。`ALWAYS X` ではなく「X しない場合に Y が壊れるから X する」
-- `if`/`while` 等の制御構造で動作を分岐させない（読み手が動作を予測できなくなる）
+- 曖昧・不可視な条件で黙って動作分岐させない（読み手・実行ごとに結果が割れる）。分岐するなら判定基準を**明示・観測可能**にする — Anthropic 公式の Conditional workflow pattern（`Creating?` → A / `Editing?` → B のように観測可能な決定点で分ける）に従う。検証→修正→再検証の feedback loop は推奨
 - 詳細レイヤは `references/<topic>.md` に切り出し、本文からは「対象が X のときだけ参照する」と書く
 - 出力フォーマットは固定する。スキャンしやすさ優先
 
