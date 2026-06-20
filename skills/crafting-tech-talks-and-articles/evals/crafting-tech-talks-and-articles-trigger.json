@@ -1,0 +1,132 @@
+{
+  "target_skill": "crafting-tech-talks-and-articles",
+  "version": "1",
+  "cases": [
+    {
+      "id": "t01",
+      "prompt": "来月のカンファレンスの登壇資料を作りたいんだけど、構成から考えてほしい",
+      "should_trigger": true,
+      "rationale": "登壇資料の企画・構成は中心ユースケース",
+      "tags": ["explicit"]
+    },
+    {
+      "id": "t02",
+      "prompt": "Zenn に技術記事を書きたい。テーマはあるけど構成がまとまらない",
+      "should_trigger": true,
+      "rationale": "技術記事の構成立ては対象（記事の場合）",
+      "tags": ["explicit"]
+    },
+    {
+      "id": "t03",
+      "prompt": "LT のスライド作って",
+      "should_trigger": true,
+      "rationale": "LT スライド作成は明示的に対象",
+      "tags": ["explicit"]
+    },
+    {
+      "id": "t04",
+      "prompt": "このスライド情報詰め込みすぎて伝わらないんだけど、どう直せばいい？",
+      "should_trigger": true,
+      "rationale": "既存スライドの伝わりやすさ改善は紙面 Tips の範囲",
+      "tags": ["explicit"]
+    },
+    {
+      "id": "t05",
+      "prompt": "勉強会で発表することになったんだけど、何話せばいいか決まらない",
+      "should_trigger": true,
+      "rationale": "ネタ（コアメッセージ×ターゲット）決めは Step 1",
+      "tags": ["ambiguous"]
+    },
+    {
+      "id": "t06",
+      "prompt": "発表が時間内に収まらなくて困ってる",
+      "should_trigger": true,
+      "rationale": "アウトライン×リハで時間再配分は Step 2 の守備範囲",
+      "tags": ["ambiguous"]
+    },
+    {
+      "id": "t07",
+      "prompt": "書いた技術ブログ、わかりにくいって言われた…",
+      "should_trigger": true,
+      "rationale": "記事の伝わりやすさ改善は対象",
+      "tags": ["ambiguous"]
+    },
+    {
+      "id": "t08",
+      "prompt": "CFP 出したいけどネタの切り口が思いつかない",
+      "should_trigger": true,
+      "rationale": "ターゲット起点でネタを固める（イベントに持ち込む）ケース",
+      "tags": ["ambiguous"]
+    },
+    {
+      "id": "t09",
+      "prompt": "この設計判断を ADR に残しておきたい",
+      "should_trigger": false,
+      "rationale": "ADR は adr-writer の担当（社内・決定の記録）",
+      "tags": ["adjacent"]
+    },
+    {
+      "id": "t10",
+      "prompt": "新機能の PRD を書きたい",
+      "should_trigger": false,
+      "rationale": "PRD・プロダクト要求は product-discovery",
+      "tags": ["adjacent"]
+    },
+    {
+      "id": "t11",
+      "prompt": "ライブラリの選定について調査レポートをまとめて",
+      "should_trigger": false,
+      "rationale": "調査レポートは research-practices",
+      "tags": ["adjacent"]
+    },
+    {
+      "id": "t12",
+      "prompt": "この PR の説明文を書いて",
+      "should_trigger": false,
+      "rationale": "PR 本文は発信コンテンツではない（開発成果物）",
+      "tags": ["adjacent"]
+    },
+    {
+      "id": "t13",
+      "prompt": "社内向けの設計ドキュメントを書きたい",
+      "should_trigger": false,
+      "rationale": "社内設計ドキュメントは範囲外（adr-writer / product-discovery 系）",
+      "tags": ["adjacent"]
+    },
+    {
+      "id": "t14",
+      "prompt": "プレゼン資料のスライドデザインをかっこよくして（配色とレイアウトの作り込み）",
+      "should_trigger": false,
+      "rationale": "紙面 Tips は方針まで。実デザイン作り込みは範囲外（design 系）",
+      "tags": ["distractor"]
+    },
+    {
+      "id": "t15",
+      "prompt": "営業先に出す提案書（受注用）を作りたい",
+      "should_trigger": false,
+      "rationale": "社外向けでも商談資料は『発信＝技術的知見の共有』ではない",
+      "tags": ["distractor"]
+    },
+    {
+      "id": "t16",
+      "prompt": "コミットメッセージの書き方を教えて",
+      "should_trigger": false,
+      "rationale": "『書き方』だが発表・記事ではない開発作業",
+      "tags": ["distractor"]
+    },
+    {
+      "id": "t17",
+      "prompt": "技術カンファレンスの登壇、ターゲット層に合わせて抽象度を調整したい",
+      "should_trigger": true,
+      "rationale": "ターゲット連想と伝え方チューニングは Step 1 中核",
+      "tags": ["explicit"]
+    },
+    {
+      "id": "t18",
+      "prompt": "発表スライドのサンプルコード、どのくらいの分量にすべき？",
+      "should_trigger": true,
+      "rationale": "スライドのサンプルコード Tips に該当",
+      "tags": ["edge"]
+    }
+  ]
+}
