@@ -1,6 +1,6 @@
 ---
 name: empirical-prompt-tuning
-description: agent 向けテキスト指示（skill / slash command / task プロンプト / CLAUDE.md 節 / コード生成プロンプト）を、バイアスを排した実行者に動かしてもらい、両面（実行者の自己申告 + 指示側メトリクス）で評価して反復改善する手法。改善が頭打ちになるまで回す。プロンプトや skill を新規作成・大幅改訂した直後、またはエージェントの挙動が期待通りにならない原因を指示側の曖昧さに求めたいときに使う。
+description: agent 向けテキスト指示（skill / slash command / task プロンプト / CLAUDE.md 節 / コード生成プロンプト）を、バイアスを排した実行者に実際に動かしてもらい、両面（実行者の自己申告 + 指示側メトリクス）で評価して反復改善する手法。改善が頭打ちになるまで回す。「この skill うまく起動しない / trigger を直したい / description を調整したい」「このプロンプトが効かない / 期待通り動かない、指示が曖昧かも」「skill を新規作成・大幅改訂したから堅牢化・評価して」「プロンプトを実際に走らせて精度を測りながら詰めたい」のような、指示側テキストの起動率・精度を実測で詰めたい要請で必ず起動する。`retro` が skill 不発を検出して ept-handoff を選んだ後、または `skill-builder` Mode B（trigger 調整）の実体として呼ばれる主経路でもある。逆に、コードのバグ修正・一回限りの使い捨てプロンプト・書き手の主観的好みの反映には使わない。
 tools: Agent, Read, Write, Edit, Grep, Glob, TaskCreate, TaskUpdate, TaskList
 ---
 

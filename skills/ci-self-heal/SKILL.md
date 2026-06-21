@@ -6,6 +6,7 @@ allowed-tools:
   - Bash
   - Edit
   - Task
+  - Monitor
 ---
 
 # CI Self-Heal
@@ -35,14 +36,33 @@ Superpowers `systematic-debugging` の Iron Law を CI 失敗対応に適用し�
 
 ## ワークフロー
 
-### Step 1 — CI watch 開始
+### Step 1 — CI watch 開始 (Monitor で非ブロック)
+
+`gh pr checks --watch` をフォアグラウンドで回さない — 長時間 main を専有し、harness のスリープ制約にも当たる。**`Monitor` ツール**に poll ループを渡して background で待機し、status 変化だけをイベントとして受け取る (main は解放)。
+
+まず現状把握:
 
 ```bash
-gh pr checks <PR>                         # 現状把握
-gh pr checks <PR> --watch --interval 30   # 完了まで待機 (タイムアウトはユーザ確認)
+gh pr checks <PR>
 ```
 
-完了したら exit code と各 check の状態を読む。
+次に `Monitor` を呼ぶ。`description`=`"CI for PR #<PR>"`, `timeout_ms`=`1800000` (30 分上限、超過は escalate), `persistent`=`false`, `command`=以下:
+
+```bash
+prev=""
+while true; do
+  s=$(gh pr checks <PR> --json name,bucket 2>/dev/null) || { sleep 30; continue; }
+  cur=$(jq -r '.[] | select(.bucket!="pending") | "\(.name): \(.bucket)"' <<<"$s" | sort)
+  # 新たに非 pending になった check (pass/fail 双方) を 1 行ずつ emit
+  comm -13 <(printf '%s\n' "$prev") <(printf '%s\n' "$cur")
+  prev="$cur"
+  # 全 check が非 pending になったら run 完了として exit
+  jq -e 'all(.bucket!="pending")' <<<"$s" >/dev/null 2>&1 && break
+  sleep 30
+done
+```
+
+成功・失敗の両 bucket を emit するため、緑でも赤でも沈黙しない (Monitor の coverage 規律)。Monitor が exit したら run 完了。`gh pr checks <PR> --json name,bucket` で最終状態を読み、失敗があれば Step 2 へ。timeout で kill された場合は完了判定せずユーザに escalate。
 
 ### Step 2 — 失敗 check の特定
 
@@ -195,7 +215,7 @@ push したら Step 1 に戻り、再 watch。
 
 ## 既知の限界
 
-- **CI 完了待ちの長時間ブロック**: 大規模 CI で 30 分超ブロック想定。`gh pr checks --watch` のフォアグラウンド待機が辛い場合、バックグラウンド実行 + 通知に切り替える運用余地あり。
+- **CI 完了待ち**: Step 1 で `Monitor` (background + 通知) に委ね main をブロックしない。30 分 (`timeout_ms`) を超える CI は timeout で kill され、その場合は完了判定せず escalate する。さらに長い CI はユーザが `timeout_ms` を上げるか、`persistent` 運用を検討。
 - **Infra 問題の判定**: GitHub status / runner outage の判定は外部情報依存。本スキル単体では完璧に分類できない。incident と思われる場合はユーザに確認。
 - **3-failure gate の数値**: Beck の "rule of three" に倣ったが、変更規模やシステム複雑度で適切な閾値は変わる。本スキルは 3 を default とし、ユーザ指示で上書き可能。
 - **ログ末尾だけでは root cause 不明な場合**: stacktrace の中ほどに情報があるケースは、`gh run view --log` で全ログを取得して読む必要がある。本スキルは末尾優先だが、`grep -B 50 -A 5 'Error\|FAIL\|panic'` 等で広く取る判断もある。
