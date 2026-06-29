@@ -15,6 +15,8 @@
     {"id":"t11","prompt":"このバグ直して","should_trigger":false,"rationale":"コードのバグ修正=対象外","tags":["distractor"]},
     {"id":"t12","prompt":"この PR レビューして","should_trigger":false,"rationale":"code-review","tags":["distractor"]},
     {"id":"t13","prompt":"CI 直して","should_trigger":false,"rationale":"ci-self-heal","tags":["distractor"]},
-    {"id":"t14","prompt":"この関数のリファクタして","should_trigger":false,"rationale":"コード構造変更=tidy-first 等","tags":["distractor"]}
+    {"id":"t14","prompt":"この関数のリファクタして","should_trigger":false,"rationale":"コード構造変更=tidy-first 等","tags":["distractor"]},
+    {"id":"t15","prompt":"retro から ept-handoff。skill が不発だったので trigger 文言を実測で詰めたい","should_trigger":true,"rationale":"retro handoff の主経路","tags":["explicit"]},
+    {"id":"t16","prompt":"skill-builder Mode B として trigger を調整したい。別エージェントに走らせて成功率を見ながら直して","should_trigger":false,"rationale":"「skill-builder Mode B」は入口 skill = skill-builder が起動し、ept はその下流実体として呼ばれる。入口フレーズは skill-builder へルーティングされるのが正 (実測で確認した境界)","tags":["adjacent"]}
   ]
 }

@@ -217,8 +217,9 @@ escalate 後は **ユーザの明示指示があるまで追加 dispatch / push 
 ```markdown
 # Shipping: <branch> → PR #<n>
 
-## Pipeline (各フェーズ = 1 subagent dispatch)
-- Phase 1 simplify→code-review: <simplify SIMPLIFIED/NO_CHANGE; code-review PASS / PASS_WITH_FIXES×k → PASS / FAIL>
+## Pipeline (各フェーズ = 1 subagent dispatch; Phase 1 は 1a/1b の 2 dispatch)
+- Phase 1a simplify: <SIMPLIFIED / NO_CHANGE>
+- Phase 1b code-review: <PASS / PASS_WITH_FIXES×k → PASS / FAIL>
 - Phase 2 verify-done: <PASS / FAIL>
 - Phase 3 PR: <created <URL> / reused <URL>>
 - Phase 4 収束ループ: <k サイクル>

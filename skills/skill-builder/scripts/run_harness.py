@@ -18,6 +18,13 @@ Notes:
 - Detection is strict: only tool_use blocks where name == "Skill" and the
   input references the target skill name.
 - Set TRIGGER_THRESHOLD to convert triggered_rate to predicted bool.
+- `ok` in each result row is the `claude -p` process exit status, NOT the
+  eval verdict. A triggering case usually exits non-zero because it hits the
+  --budget cap after the Skill activation was already observed, so `ok:false`
+  is expected and benign. The authoritative trigger signal is `triggered`
+  (stream scan), which is independent of `ok`. Do not chase `ok:true` by
+  raising the budget: that only makes claude start *executing* the matched
+  skill's workflow (dispatching subagents), which is wasteful and still caps.
 """
 
 from __future__ import annotations

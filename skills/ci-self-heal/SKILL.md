@@ -49,11 +49,17 @@ gh pr checks <PR>
 次に `Monitor` を呼ぶ。`description`=`"CI for PR #<PR>"`, `timeout_ms`=`1800000` (30 分上限、超過は escalate), `persistent`=`false`, `command`=以下:
 
 ```bash
-prev=""
+prev=""; errs=0
 while true; do
-  s=$(gh pr checks <PR> --json name,bucket 2>/dev/null) || { sleep 30; continue; }
+  s=$(gh pr checks <PR> --json name,bucket 2>/dev/null) || {
+    errs=$((errs+1))
+    # gh が連続失敗するなら沈黙して timeout を待たず escalate (silent spin 防止)
+    [ "$errs" -ge 5 ] && { echo "ERROR: gh pr checks が $errs 回連続失敗"; exit 3; }
+    sleep 30; continue
+  }
+  errs=0
   cur=$(jq -r '.[] | select(.bucket!="pending") | "\(.name): \(.bucket)"' <<<"$s" | sort)
-  # 新たに非 pending になった check (pass/fail 双方) を 1 行ずつ emit
+  # 新たに終端した check を 1 行ずつ emit (pass/fail/cancel/skipping すべて)
   comm -13 <(printf '%s\n' "$prev") <(printf '%s\n' "$cur")
   prev="$cur"
   # 全 check が非 pending になったら run 完了として exit
@@ -62,7 +68,7 @@ while true; do
 done
 ```
 
-成功・失敗の両 bucket を emit するため、緑でも赤でも沈黙しない (Monitor の coverage 規律)。Monitor が exit したら run 完了。`gh pr checks <PR> --json name,bucket` で最終状態を読み、失敗があれば Step 2 へ。timeout で kill された場合は完了判定せずユーザに escalate。
+終端 bucket (pass/fail/cancel/skipping) を漏れなく emit するため、緑でも赤でも沈黙しない (Monitor の coverage 規律)。Monitor が exit したら run 完了。`gh pr checks <PR> --json name,bucket` で最終状態を読み、**`fail` または `cancel` の bucket が 1 つでもあれば失敗として Step 2 へ** (`cancel` を緑と誤認しない。`skipping`/neutral は終端だが非失敗)。gh が連続失敗で `exit 3` した場合、または timeout で kill された場合は完了判定せずユーザに escalate。
 
 ### Step 2 — 失敗 check の特定
 
