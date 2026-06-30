@@ -72,9 +72,9 @@ design / software-design   →   tdd / tidy-first   →   shipping (本スキル
 
 本スキルは `verdict` / `pushed_commits` / `handback` だけを読む。subagent 本体出力は再掲しない。
 
-| フェーズ | dispatch 先 skill | 読む verdict |
+| フェーズ | dispatch 先 | 読む verdict |
 |---|---|---|
-| 整形 (Phase 1a) | simplify (品質専用クリーンアップ契約) | SIMPLIFIED / NO_CHANGE |
+| 整形 (Phase 1a) | **Task 契約 dispatch** (named skill ではない。`tidy-first` 規律の品質専用クリーンアップ契約。`Skill(simplify)` は存在しないので呼ばない) | SIMPLIFIED / NO_CHANGE |
 | 品質ゲート (Phase 1b) | `code-review` | PASS / PASS_WITH_FIXES / FAIL |
 | 完了ゲート | `verify-done` | PASS / FAIL (+ Verification ブロック literal) |
 | PR 作成 | `commit-commands:commit-push-pr` | PR URL / number |

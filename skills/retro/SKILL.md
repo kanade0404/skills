@@ -28,15 +28,16 @@ allowed-tools:
 
 ### Step 1 — transcript を特定 (main が実行)
 
-現プロジェクトの transcript 置き場から最新の `.jsonl` (= 当該セッション) を特定する。場所は環境依存なので存在するパスを使う:
+**呼び出し元が transcript パスを明示してきたらそれを最優先で使う** (`pr-monitor` は決着時に state の `origin_transcript` = PR を生んだ元セッションを渡す。後の監視セッションを誤解析しないため)。渡されなかったときだけ、以下で現プロジェクトの最新 `.jsonl` を当該セッションとして特定する。場所は環境依存なので存在するパスを使う:
 
 ```bash
 # プロジェクトディレクトリ slug は cwd の "/" と "." を両方 "-" に置換したもの
 # 例: /a/b/.claude/c → -a-b--claude-c  (/. が -- になる)
 proj=$(pwd | sed 's#[/.]#-#g')
-# 最新 mtime の jsonl = 当該セッション
-find "$HOME/.claude/projects/$proj" -maxdepth 1 -name '*.jsonl' 2>/dev/null \
-  | xargs -r ls -t 2>/dev/null | head -1
+# 最新 mtime の jsonl = 当該セッション。
+# glob + ls -t は macOS/BSD でも GNU でも動く (GNU 専用の `xargs -r` を使わない)。
+# マッチ無しなら glob はリテラルのまま残り ls がエラー → /dev/null → 空出力。
+ls -t "$HOME/.claude/projects/$proj"/*.jsonl 2>/dev/null | head -1
 ```
 
 slug 規則が環境で違う / 見つからない場合は推測で代用せず、`~/.claude/projects/` 配下で最新 mtime の `*.jsonl` を全 dir 横断で 1 つ出してユーザに確認する。確定したパスを `TRANSCRIPT` として Step 2 に渡す。
@@ -51,7 +52,7 @@ transcript の事実だけから判断する。実装の良し悪しは見ない
 
 ## 入力
 - TRANSCRIPT: <path>
-- repo skill 一覧: skills/<name>/ の name と description (規範は skills/skill-builder/SKILL.md)
+- repo skill 一覧: skill ディレクトリの name と description。**置き場は環境依存** — 配布元では top-level `skills/<name>/`、consumer 生成先では `.claude/skills/<name>/` や `.agents/skills/<name>/` になる。`skill-builder` が記す multi-location discovery と同じ要領で存在するパスを使い、`skills/` 決め打ちで空一覧にしない (規範は skills/skill-builder/SKILL.md)
 
 ## 網羅スキャン (jq / Read で transcript を読む。観点を 1 つも飛ばさない)
 1. tool 利用統計 (種別ごとの回数)

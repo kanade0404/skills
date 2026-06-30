@@ -62,13 +62,15 @@ while true; do
   # 新たに終端した check を 1 行ずつ emit (pass/fail/cancel/skipping すべて)
   comm -13 <(printf '%s\n' "$prev") <(printf '%s\n' "$cur")
   prev="$cur"
-  # 全 check が非 pending になったら run 完了として exit
-  jq -e 'all(.bucket!="pending")' <<<"$s" >/dev/null 2>&1 && break
+  # 全 check が非 pending になったら run 完了として exit。
+  # `length > 0` ガード必須: push 直後は GitHub が check を登録する前に `[]` が返り、
+  # 空配列に対する `all(...)` は vacuous-true で即 break → CI 未起動を「緑」と誤認する。
+  jq -e 'length > 0 and all(.bucket!="pending")' <<<"$s" >/dev/null 2>&1 && break
   sleep 30
 done
 ```
 
-終端 bucket (pass/fail/cancel/skipping) を漏れなく emit するため、緑でも赤でも沈黙しない (Monitor の coverage 規律)。Monitor が exit したら run 完了。`gh pr checks <PR> --json name,bucket` で最終状態を読み、**`fail` または `cancel` の bucket が 1 つでもあれば失敗として Step 2 へ** (`cancel` を緑と誤認しない。`skipping`/neutral は終端だが非失敗)。gh が連続失敗で `exit 3` した場合、または timeout で kill された場合は完了判定せずユーザに escalate。
+終端 bucket (pass/fail/cancel/skipping) を漏れなく emit するため、緑でも赤でも沈黙しない (Monitor の coverage 規律)。check がまだ 1 件も登録されていない (`[]`) 間は完了とみなさず poll を続ける。Monitor が exit したら run 完了。`gh pr checks <PR> --json name,bucket` で最終状態を読み、**`fail` または `cancel` の bucket が 1 つでもあれば失敗として Step 2 へ** (`cancel` を緑と誤認しない。`skipping`/neutral は終端だが非失敗)。gh が連続失敗で `exit 3` した場合、または timeout で kill された場合は完了判定せずユーザに escalate。
 
 ### Step 2 — 失敗 check の特定
 

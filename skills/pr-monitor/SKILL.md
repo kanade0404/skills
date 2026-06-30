@@ -43,7 +43,7 @@ allowed-tools:
 gh pr view <PR or 省略> --json number,state,url,headRefName -q '.'
 ```
 
-state が既に `MERGED` / `CLOSED` なら Step 4 (retro 起動) へ直行。`OPEN` なら継続。
+state が既に `MERGED` / `CLOSED` なら **Step 5 (retro 起動) へ直行** — 状態ファイルも待機手段も作らない (Step 2〜4 は監視が要るときだけ通る。決着済みに state ファイル更新は不要)。`OPEN` なら Step 2 へ継続。
 
 ### Step 2 — 状態を永続化
 
@@ -56,21 +56,25 @@ branch: <headRefName>
 state: OPEN
 created_at: <ISO8601>
 last_checked_at: <ISO8601>
+monitor_mode: <cron | wakeup | manual>   # Step 3 で採用した待機手段。再入時に何をすべきか判る
+schedule_id: <cron/routine の id | null>  # cron 手段のとき。決着時の解除対象 (無いと何を消すか判らない)
+origin_transcript: <当該 feature/ship を実際に行ったセッションの transcript パス>
 ```
 
-`--check-only` で再入した時はこのファイルを Read し、`last_checked_at` だけ更新する (新規登録しない)。
+- `origin_transcript` は **初回登録時の現セッション transcript** を入れる (retro が解析すべきは「PR を生んだ作業」。後の check-only 監視セッションではない)。パス特定は `retro` Step 1 と同じ slug 規則 (`pwd` の `/` `.` を `-` 置換 → `~/.claude/projects/<slug>/` 最新 `*.jsonl`)。
+- `--check-only` で再入した時はこのファイルを Read し、`last_checked_at` だけ更新する (新規登録せず、`monitor_mode` / `schedule_id` / `origin_transcript` は保持)。
 
 ### Step 3 — 待機手段を優先順で選ぶ
 
 登録前に**利用可能なものを確認**し、使えるものを上から選ぶ (環境で可否が変わる):
 
-| 優先 | 手段 | 動作 |
-|---|---|---|
-| 1 | `/schedule` (cron / routines) | `pr-monitor <n> --check-only` を定期実行する cron を登録し、**main を解放**。ポーリング間隔は 30 分目安 |
-| 2 | `ScheduleWakeup` | cron が無ければ session 内で `delaySeconds≈1800` を渡して self-pace poll。起床ごとに Step 4 を実行し、未決着なら再度 `ScheduleWakeup` |
-| 3 | 手動 | どちらも不可なら「`pr-monitor <n> --check-only` を後で再実行してください」と案内して終了 |
+| 優先 | 手段 | 動作 | state に書く |
+|---|---|---|---|
+| 1 | `/schedule` (cron / routines) | `pr-monitor <n> --check-only` を定期実行する cron を登録し、**main を解放**。ポーリング間隔は 30 分目安 | `monitor_mode: cron`, `schedule_id: <登録した id>` |
+| 2 | `ScheduleWakeup` | cron が無ければ session 内で `delaySeconds≈1800` を渡して self-pace poll。起床ごとに Step 4 を実行し、未決着なら再度 `ScheduleWakeup` | `monitor_mode: wakeup`, `schedule_id: null` |
+| 3 | 手動 | どちらも不可なら「`pr-monitor <n> --check-only` を後で再実行してください」と案内して終了 | `monitor_mode: manual`, `schedule_id: null` |
 
-`ScheduleWakeup` の `prompt` には `pr-monitor <n> --check-only` を渡し、次回起床で本スキルに戻れるようにする。
+`ScheduleWakeup` の `prompt` には `pr-monitor <n> --check-only` を渡し、次回起床で本スキルに戻れるようにする。採用した `monitor_mode` (と cron なら `schedule_id`) を **必ず state に書く** — 再入時の OPEN ブランチはこれを読まないと「次に wakeup を予約すべきか」「決着時に何の cron を解除するか」が判らない。
 
 ### Step 4 — 状態判定 (毎ポーリング)
 
@@ -78,14 +82,16 @@ last_checked_at: <ISO8601>
 gh pr view <n> --json state -q '.state'
 ```
 
+state ファイルの `monitor_mode` を読んで分岐する (再入時は `--check-only` 引数だけでは手段が判らないため):
+
 | state | 次の手 |
 |---|---|
-| `OPEN` | `last_checked_at` 更新。手段 1 (cron) なら何もせず終了、手段 2 (ScheduleWakeup) なら再度 wakeup を予約 |
-| `MERGED` / `CLOSED` | **決着**。状態ファイルを更新し、cron を使っていれば解除。`retro` を起動して当該セッション/PR の振り返りに渡す |
+| `OPEN` | `last_checked_at` 更新。`monitor_mode: cron` なら何もせず終了 (次回 cron 起床に任せる)、`monitor_mode: wakeup` なら再度 `ScheduleWakeup` を予約、`manual` なら手動再実行を案内 |
+| `MERGED` / `CLOSED` | **決着**。状態ファイルの `state` を更新。`monitor_mode: cron` なら `schedule_id` の cron を解除 (one-shot で消さないと check-only が鳴り続け `retro` が再起動し続ける)。Step 5 へ |
 
 ### Step 5 — 決着したら retro
 
-`Skill(retro)` を起動し、「PR #<n> が <merged/closed> した」コンテキストを渡す。retro が transcript を解析し改善提案 (提案のみ) を出す。pr-monitor はここで完了。
+`Skill(retro)` を起動し、「PR #<n> が <merged/closed> した」コンテキストと **state の `origin_transcript` パス** を渡す。これにより retro は「最新の transcript」ではなく **PR を生んだ元セッション** を解析する (check-only の監視セッションを誤って解析しない)。`origin_transcript` が未記録 (Step 1 直行など) のときだけ retro 既定の最新 transcript 選択にフォールバックする。retro が改善提案 (提案のみ) を出して pr-monitor は完了。
 
 ## 出力フォーマット
 
