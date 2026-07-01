@@ -72,9 +72,10 @@ design / software-design   →   tdd / tidy-first   →   shipping (本スキル
 
 本スキルは `verdict` / `pushed_commits` / `handback` だけを読む。subagent 本体出力は再掲しない。
 
-| フェーズ | dispatch 先 skill | 読む verdict |
+| フェーズ | dispatch 先 | 読む verdict |
 |---|---|---|
-| 品質ゲート | `code-review` | PASS / PASS_WITH_FIXES / FAIL |
+| 整形 (Phase 1a) | **Task 契約 dispatch** (named skill ではない。`tidy-first` 規律の品質専用クリーンアップ契約。`Skill(simplify)` は存在しないので呼ばない) | SIMPLIFIED / NO_CHANGE |
+| 品質ゲート (Phase 1b) | `code-review` | PASS / PASS_WITH_FIXES / FAIL |
 | 完了ゲート | `verify-done` | PASS / FAIL (+ Verification ブロック literal) |
 | PR 作成 | `commit-commands:commit-push-pr` | PR URL / number |
 | CI 緑化 | `ci-self-heal` | PASS / HALTED |
@@ -121,9 +122,13 @@ design / software-design   →   tdd / tidy-first   →   shipping (本スキル
 
 5 フェーズを順に通す。各フェーズは上記契約で subagent を 1 つ dispatch し、返った `verdict` を下表で読む。**本スキルは差し戻し先のコードに手を入れない** — 修正は dev/fix subagent が行う。
 
-### Phase 1 — 品質ゲート
+### Phase 1 — 品質ゲート (1a simplify → 1b code-review)
 
-`code-review` を使う subagent を dispatch。
+実装直後の差分をまず **整形 (simplify)** し、整えた差分を `code-review` に通す (整えてから bug 観点で読む)。1a / 1b は各々 fresh subagent、逐次。
+
+**Phase 1a — simplify**: fresh subagent に「**reuse / simplification / efficiency / altitude の品質専用クリーンアップのみ**。振る舞いは変えない。バグ探索・仕様変更・新規実装はしない (それは `code-review` / 上流の領域)」契約で dispatch。整形は structural change なので `tidy-first` の規律に従い behavioral change と混ぜず、**structural commit を local に積む** (push は Phase 3)。verdict: `SIMPLIFIED` (差分を commit した) / `NO_CHANGE`。`SIMPLIFIED` なら以降の Phase は整形後の差分を対象にする。
+
+**Phase 1b — code-review**: 整形後の差分に `code-review` を使う subagent を dispatch。
 
 | code-review verdict | 次の手 |
 |---|---|
@@ -212,8 +217,9 @@ escalate 後は **ユーザの明示指示があるまで追加 dispatch / push 
 ```markdown
 # Shipping: <branch> → PR #<n>
 
-## Pipeline (各フェーズ = 1 subagent dispatch)
-- Phase 1 code-review: <PASS / PASS_WITH_FIXES×k → PASS / FAIL>
+## Pipeline (各フェーズ = 1 subagent dispatch; Phase 1 は 1a/1b の 2 dispatch)
+- Phase 1a simplify: <SIMPLIFIED / NO_CHANGE>
+- Phase 1b code-review: <PASS / PASS_WITH_FIXES×k → PASS / FAIL>
 - Phase 2 verify-done: <PASS / FAIL>
 - Phase 3 PR: <created <URL> / reused <URL>>
 - Phase 4 収束ループ: <k サイクル>
