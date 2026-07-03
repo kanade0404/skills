@@ -1,0 +1,20 @@
+name: rulesync drift
+
+# Fail if the committed generated configs (.claude/, .agents/, .codex/) are stale
+# relative to the source of truth (skills/, permissions.json). Regenerate locally
+# with `node scripts/rulesync-sync.mjs` and commit the result.
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify generated configs are in sync
+        run: node scripts/rulesync-sync.mjs --check

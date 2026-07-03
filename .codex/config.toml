@@ -1,0 +1,13 @@
+default_permissions = "rulesync"
+
+[permissions.rulesync.filesystem]
+":minimal" = "read"
+
+[permissions.rulesync.filesystem.":workspace_roots"]
+"*" = "write"
+
+[permissions.rulesync.network]
+enabled = true
+
+[permissions.rulesync.network.domains]
+"*" = "allow"

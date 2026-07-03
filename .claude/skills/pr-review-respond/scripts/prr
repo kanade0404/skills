@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# pr-review-respond entry point.
+# Dispatches to per-action scripts in this same directory.
+#
+# Usage:
+#   prr fetch   <pr-number>
+#   prr reply   <pr-number> <root-comment-id> <body-file>
+#   prr resolve <pr-number> <root-comment-id> [body-file]
+#   prr summary <pr-number> <body-file>
+#   prr wait-ci <pr-number> [interval-seconds]
+#
+# Why this wrapper exists:
+#   Claude Code permission rules (`allowed-tools`) match against the literal
+#   command string. With per-script invocation we'd need a separate rule per
+#   script and per install path. Routing every action through a single `prr`
+#   entry point lets a single rule (`Bash(bash *prr *)`) cover everything.
+
+set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+
+usage() {
+  cat <<'EOF'
+prr — pr-review-respond entry point
+
+Usage:
+  prr fetch   <pr>
+  prr reply   <pr> <root-comment-id> <body-file>
+  prr resolve <pr> <root-comment-id> [body-file]
+  prr summary <pr> <body-file>
+  prr wait-ci <pr> [interval-sec]
+
+All subcommands shell out to <scripts-dir>/<action>_*.sh.
+EOF
+}
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  fetch)
+    exec "$SCRIPT_DIR/fetch_threads.sh" "$@"
+    ;;
+  reply)
+    exec "$SCRIPT_DIR/reply_thread.sh" "$@"
+    ;;
+  resolve)
+    exec "$SCRIPT_DIR/resolve_thread.sh" "$@"
+    ;;
+  summary)
+    exec "$SCRIPT_DIR/post_summary.sh" "$@"
+    ;;
+  wait-ci)
+    exec "$SCRIPT_DIR/wait_ci.sh" "$@"
+    ;;
+  help|--help|-h)
+    usage
+    exit 0
+    ;;
+  "")
+    usage >&2
+    exit 2
+    ;;
+  *)
+    printf 'error: unknown subcommand: %s\n\n' "$cmd" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

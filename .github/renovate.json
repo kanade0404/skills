@@ -1,0 +1,37 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "pyenv": {
+    "description": "Disabled: the custom regex manager below owns .python-version so it can be grouped with flake.nix in one Python-runtime PR. Renovate's built-in pyenv manager would otherwise raise a duplicate PR for the same file.",
+    "enabled": false
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Update uv's Python version pin in .python-version.",
+      "managerFilePatterns": ["/(^|/)\\.python-version$/"],
+      "datasourceTemplate": "python-version",
+      "depNameTemplate": "python",
+      "versioningTemplate": "python",
+      "matchStrings": ["^(?<currentValue>\\d+\\.\\d+(?:\\.\\d+)?)\\s*$"]
+    },
+    {
+      "customType": "regex",
+      "description": "Update the Nix Python version used by the dev shell.",
+      "managerFilePatterns": ["/(^|/)flake\\.nix$/"],
+      "datasourceTemplate": "python-version",
+      "depNameTemplate": "python",
+      "versioningTemplate": "python",
+      "matchStrings": ["pythonVersion = \\\"(?<currentValue>\\d+\\.\\d+(?:\\.\\d+)?)\\\";"]
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Keep uv and Nix Python versions in the same Renovate PR.",
+      "matchDepNames": ["python"],
+      "matchDatasources": ["python-version"],
+      "groupName": "python runtime",
+      "groupSlug": "python-runtime"
+    }
+  ]
+}
