@@ -117,10 +117,14 @@ rule は足す一方だと context rot でループ全体を劣化させる。�
 
 | 分岐 | 承認後のアクション | 実装の担当 |
 |---|---|---|
-| rule | 対象 CLAUDE.md / SKILL.md へ最小差分を Edit | 本スキル (差分適用のみ)。skill の構造改訂が要るなら skill-builder へ |
+| rule | 対象 CLAUDE.md / SKILL.md / 配布 rules へ最小差分を Edit | 本スキル (差分適用のみ)。skill の構造改訂が要るなら skill-builder へ |
 | sensor | テスト/CI チェックの実装 | tdd (behavioral) / tidy-first (structural) へ handoff |
 | issue | `gh issue create` (下記ドラフトのまま) | 本スキル |
 | eval-case | loop-ops `golden/cases/` への PR 起票 | 本スキル (merge は人間) |
+
+**rule の宛先はクラウド実行にも届く配布層を優先する** (プロジェクトの CLAUDE.md、rulesync
+の rules 等)。ローカル専用ファイル (`~/.claude/CLAUDE.md`) はそのマシンでしか効かないため、
+配布層が無い場合の最後の選択肢とする。
 
 計測イベント (`agent_run` 等) の送信は本スキルの仕事ではなく実行ラッパー / Stop hook の仕事。配線方法は [references/loop-ops-integration.md](references/loop-ops-integration.md) を参照する (loop-ops 連携がある環境でのみ)。
 
