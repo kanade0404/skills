@@ -1,0 +1,19 @@
+# loop-ops への計測イベント送信。PR クローズごとに pr_closed イベントを 1 件記録する。
+# 収集ロジック本体は kanade0404/loop-ops 側の reusable workflow が持つ。
+name: loop-metrics
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  collect:
+    # デフォルト workflow 権限が read (restricted) のため明示付与が必須。
+    # reusable workflow は caller の token 権限を下げることしかできない
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    uses: kanade0404/loop-ops/.github/workflows/collect-metrics.yml@master
+    secrets:
+      LOOP_OPS_TOKEN: ${{ secrets.LOOP_OPS_TOKEN }}
