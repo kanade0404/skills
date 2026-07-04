@@ -1,9 +1,10 @@
 name: release propagate
 
-# リリースタグ push 時に Devin API へ session を作成し、consumer リポ
+# リリースタグ push 時に Devin API (v3) へ session を作成し、consumer リポ
 # (agegis / dotfiles) の rulesync pin 追随 PR を作らせる。
 # playbook は .github/devin/consumer-update.md で管理する。
-# 必要 secret: DEVIN_API_KEY
+# 必要 secret: DEVIN_API_KEY (Service User token, prefix "cog_"),
+#              DEVIN_ORG_ID (prefix "org-")
 on:
   push:
     tags: ['v*']
@@ -21,16 +22,21 @@ jobs:
       - name: Create Devin session
         env:
           DEVIN_API_KEY: ${{ secrets.DEVIN_API_KEY }}
+          DEVIN_ORG_ID: ${{ secrets.DEVIN_ORG_ID }}
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           if [ -z "$DEVIN_API_KEY" ]; then
             echo "::error::DEVIN_API_KEY secret is not set"; exit 1
           fi
+          if [ -z "$DEVIN_ORG_ID" ]; then
+            echo "::error::DEVIN_ORG_ID secret is not set"; exit 1
+          fi
           PROMPT="$(printf 'kanade0404/skills のリリースタグ %s が発行された。\n\n%s' "$TAG" "$(cat .github/devin/consumer-update.md)")"
-          jq -n --arg p "$PROMPT" '{prompt: $p, idempotent: true}' > body.json
+          jq -n --arg p "$PROMPT" --arg t "skills $TAG consumer update" \
+            '{prompt: $p, title: $t, tags: ["skills-release-propagate"]}' > body.json
           # -f: API エラー時に非ゼロ exit (エラー本文をデータ扱いしない)
-          curl -sS -f -X POST https://api.devin.ai/v1/sessions \
+          curl -sS -f -X POST "https://api.devin.ai/v3/organizations/${DEVIN_ORG_ID}/sessions" \
             -H "Authorization: Bearer $DEVIN_API_KEY" \
             -H "Content-Type: application/json" \
             -d @body.json | jq '{session_id, url}'
