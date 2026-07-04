@@ -1,0 +1,82 @@
+{
+  "permission": {
+    "agent": {
+      "*": "allow"
+    },
+    "AskUserQuestion": {
+      "*": "allow"
+    },
+    "bash": {
+      "*": "allow"
+    },
+    "edit": {
+      "*": "allow"
+    },
+    "glob": {
+      "*": "allow"
+    },
+    "grep": {
+      "*": "allow"
+    },
+    "Monitor": {
+      "*": "allow"
+    },
+    "read": {
+      "*": "allow"
+    },
+    "ScheduleWakeup": {
+      "*": "allow"
+    },
+    "Skill": {
+      "*": "allow"
+    },
+    "Task": {
+      "*": "allow"
+    },
+    "TaskCreate": {
+      "*": "allow"
+    },
+    "TaskList": {
+      "*": "allow"
+    },
+    "TaskUpdate": {
+      "*": "allow"
+    },
+    "webfetch": {
+      "*": "allow"
+    },
+    "websearch": {
+      "*": "allow"
+    },
+    "write": {
+      "*": "allow"
+    },
+    "mcp__plugin_context7_context7__query-docs": {
+      "*": "allow"
+    },
+    "mcp__plugin_context7_context7__resolve-library-id": {
+      "*": "allow"
+    },
+    "mcp__plugin_serena_serena__find_file": {
+      "*": "allow"
+    },
+    "mcp__plugin_serena_serena__find_referencing_symbols": {
+      "*": "allow"
+    },
+    "mcp__plugin_serena_serena__find_symbol": {
+      "*": "allow"
+    },
+    "mcp__plugin_serena_serena__get_symbols_overview": {
+      "*": "allow"
+    },
+    "mcp__plugin_serena_serena__list_dir": {
+      "*": "allow"
+    },
+    "mcp__plugin_serena_serena__read_file": {
+      "*": "allow"
+    },
+    "mcp__plugin_serena_serena__search_for_pattern": {
+      "*": "allow"
+    }
+  }
+}

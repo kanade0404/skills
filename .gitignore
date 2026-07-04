@@ -1,0 +1,12 @@
+# rulesync staging dir (throwaway; recreated by scripts/rulesync-sync.mjs)
+.rulesync/
+
+# node
+node_modules/
+
+# local Claude Code overrides (per-machine, not distributed)
+.claude/settings.local.json
+
+# This repo intentionally commits its generated Codex skills under .agents/
+# (dogfooding). Override a personal global ~/.gitignore that ignores .agents/.
+!.agents/
