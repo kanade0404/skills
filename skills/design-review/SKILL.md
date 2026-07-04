@@ -1,22 +1,23 @@
 ---
 name: design-review
 description: ソフトウェア設計の成果物（ADR、ドメインモデル、モジュール構造、アーキテクチャ提案、設計差分、`software-design` skill の提案）を、書き手バイアスのない別エージェントに白紙で読ませて構造化された指摘を返すレビュー専用スキル。philosophy of software design (Ousterhout)、immutable data model (kawasima)、TM法 (佐藤正美)、関数型プログラミング、DDD (Vlad Khononov)、TDD (Kent Beck)、Railway Oriented Programming (Scott Wlaschin)、Fundamentals of Software Architecture、xUnit Test Patterns、CQRS、Event Sourcing、ADR (Nygard)、Secure by Design の 13 レンズを checklist で当てる。「設計レビューして」「ADR レビューして」「設計で抜け落ちている観点ない?」「別エージェントで読み直して」「設計の最終チェック」「この提案で行く?」「集約境界これで OK?」「Result への置き換え、抜けない?」「Secure by Design 観点で監査して」「ADR の Negative consequences 薄い」のような要請、`software-design` の Proposal/ADR 最終確認、PR の設計関連ドキュメント / コード境界の妥当性確認、設計セッション後の「セルフレビューでない外部視点」が必要な場面で必ず起動する。Agent ツールで subagent を dispatch して評価し、書き手（同セッションの主エージェント）にレビューさせない。テスト本体のレビューは `test-review`、調査は `research-practices`、Skill 本体の作成・トリガ調整は `skill-builder` 担当のため、それらの目的が明確な依頼ではこのスキルを起動しない。実装を書き換える作業（コード修正、リファクタリング実施、lint 違反対応）は範囲外で、本スキルは「読んで指摘する」レビュー専用である。
-allowed-tools:
-  - Read
-  - Glob
-  - Grep
-  - Bash
-  - Agent
-  - TaskCreate
-  - TaskUpdate
-  - TaskList
-  - AskUserQuestion
-  - mcp__plugin_serena_serena__find_symbol
-  - mcp__plugin_serena_serena__get_symbols_overview
-  - mcp__plugin_serena_serena__search_for_pattern
-  - mcp__plugin_serena_serena__list_dir
-  - mcp__plugin_serena_serena__find_file
-  - mcp__plugin_serena_serena__read_file
+claudecode:
+  allowed-tools:
+    - Read
+    - Glob
+    - Grep
+    - Bash
+    - Agent
+    - TaskCreate
+    - TaskUpdate
+    - TaskList
+    - AskUserQuestion
+    - mcp__plugin_serena_serena__find_symbol
+    - mcp__plugin_serena_serena__get_symbols_overview
+    - mcp__plugin_serena_serena__search_for_pattern
+    - mcp__plugin_serena_serena__list_dir
+    - mcp__plugin_serena_serena__find_file
+    - mcp__plugin_serena_serena__read_file
 ---
 
 # Design Review

@@ -1,20 +1,21 @@
 ---
 name: product-discovery
 description: 要求定義 (PM フェーズ) を進め、ユーザの「やりたい / 困っている」を Outcome > Output で言語化して Lean PRD を docs/prd/<slug>.md に書き出す skill。INSPIRED の 4 リスク (value / usability / feasibility / viability)、Continuous Discovery Habits の Opportunity Solution Tree と Riskiest Assumption Test、Escape the Build Trap の outcome 重視・feature factory 回避を doctrine とする。顧客が自分自身であるパターンも一級扱いし、自己ヒアリングのバイアス除去プロトコルを内蔵する。発火例 — 「〜を作りたい」「〜が欲しい」「アイデアがある」「〜って作るべき?」「PM 視点で整理して」「要求まとめて」「PRD 書いて」「PRD ドラフト」「discovery 回したい」「opportunity 整理」「outcome 何にする?」「riskiest assumption は?」「自分用ツール作りたい」。要件定義 (spec / 要件) を直接書く依頼、実装方針の検討、UI 仕様の確定、コード生成、API 設計、データモデル詳細は本スキル範囲外で、それぞれ requirements skill / design / data-modeling skill 等に委ねる。ドラフト後は別 agent の prd-review skill にレビューを渡し、合意済み PRD を入力に requirements skill を起動する想定。アドホックに要求整理するより本スキルを優先する理由は、build trap を防ぎ outcome / opportunity / assumption の三層を欠落なく PRD に揃え、下流レビュー・要件定義への引き継ぎ品質を担保するため。
-allowed-tools:
-  - Read
-  - Write
-  - Edit
-  - Glob
-  - Grep
-  - Bash
-  - WebFetch
-  - WebSearch
-  - AskUserQuestion
-  - TaskCreate
-  - TaskUpdate
-  - TaskList
-  - Agent
+claudecode:
+  allowed-tools:
+    - Read
+    - Write
+    - Edit
+    - Glob
+    - Grep
+    - Bash
+    - WebFetch
+    - WebSearch
+    - AskUserQuestion
+    - TaskCreate
+    - TaskUpdate
+    - TaskList
+    - Agent
 ---
 
 # product-discovery

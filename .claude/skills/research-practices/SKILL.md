@@ -12,6 +12,22 @@ description: >-
   tagging (S0-S5), and structured reporting. Use even when the user just says
   "check", "look into", "compare", "which should we use", "ちょっと調べて", or mentions
   specific library/technology names for assessment.
+allowed-tools:
+  - Read
+  - Write
+  - Edit
+  - Grep
+  - Glob
+  - WebFetch
+  - WebSearch
+  - Bash
+  - TaskCreate
+  - TaskUpdate
+  - TaskList
+  - Agent
+  - AskUserQuestion
+  - mcp__plugin_context7_context7__resolve-library-id
+  - mcp__plugin_context7_context7__query-docs
 ---
 # Research Practices
 

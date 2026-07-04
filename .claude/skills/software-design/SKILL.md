@@ -16,6 +16,28 @@ description: >-
   の担当のため、それらの目的が明確な依頼ではこのスキルを起動しない。実装そのものを書き下すだけの作業（タイポ修正、lint
   違反対応、単純なバグ修正、純粋なパフォーマンスチューニング）は本スキルの範囲外で、本スキルは「どう設計すべきか」を構造化して提示・指摘するためのレンズ集である。設計後の最終レビューは
   `design-review` を併用する。
+allowed-tools:
+  - Read
+  - Write
+  - Edit
+  - Glob
+  - Grep
+  - Bash
+  - WebFetch
+  - WebSearch
+  - TaskCreate
+  - TaskUpdate
+  - TaskList
+  - AskUserQuestion
+  - mcp__plugin_context7_context7__resolve-library-id
+  - mcp__plugin_context7_context7__query-docs
+  - mcp__plugin_serena_serena__find_symbol
+  - mcp__plugin_serena_serena__find_referencing_symbols
+  - mcp__plugin_serena_serena__get_symbols_overview
+  - mcp__plugin_serena_serena__search_for_pattern
+  - mcp__plugin_serena_serena__list_dir
+  - mcp__plugin_serena_serena__find_file
+  - mcp__plugin_serena_serena__read_file
 ---
 # Software Design
 

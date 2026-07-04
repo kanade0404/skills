@@ -14,6 +14,17 @@ description: >-
   commit→push→PR だけは `commit-push-pr`、コードレビューだけは `code-review`、既存 PR のコメント対応だけは
   `pr-review-respond`、CI 修復だけは `ci-self-heal`、完了確認だけは `verify-done`、実装そのもの
   (設計/コーディング/未 GREEN/WIP) は上流が担い範囲外。PR は merge せず merge-ready で停止する。
+allowed-tools:
+  - Read
+  - Task
+  - Bash(gh pr view *)
+  - Bash(gh pr list *)
+  - Bash(gh pr checks *)
+  - Bash(git status *)
+  - Bash(git diff *)
+  - Bash(git log *)
+  - Bash(git rev-parse *)
+  - Bash(git push *)
 ---
 # Shipping
 

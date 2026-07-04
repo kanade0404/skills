@@ -1,10 +1,11 @@
 ---
 name: tidy-first
 description: 既存コードに振る舞いの変更 (機能追加・バグ修正・リファクタを伴う仕様変更) を入れる **直前** に、まず構造の整理 (tidying) が必要かを判定し、必要なら tidying だけを先に独立コミットするスキル。Kent Beck の Tidy First? の規律に従い、structural change (rename / extract / inline / guard clause / dead code 削除 / explaining variable / reading order 等) と behavioral change を **絶対に同一コミットに混ぜない**。新機能を書く前・テストを書く前・PR レビュー指摘の修正前・「リファクタしてから直す」「先に整理」「読みづらいから整える」「巨大関数を分割」「dead code 消す」「ガード節に直す」「変数名を意味あるものに」「先に rename」のような発話、いずれでも必ず起動すること。本スキルは「整理が必要かを判定する → 必要な tidying を 1 つずつ独立 commit する → 振る舞い変更フェーズに渡す」門番で、振る舞いを変える編集は一切しない。pre-commit で混在を物理的に block する hook 設定の指示も含む。
-allowed-tools:
-  - Read
-  - Edit
-  - Bash
+claudecode:
+  allowed-tools:
+    - Read
+    - Edit
+    - Bash
 ---
 
 # Tidy First

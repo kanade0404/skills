@@ -1,17 +1,18 @@
 ---
 name: shipping
 description: 実装が上流スキル (`design`/`software-design` → `tdd`/`tidy-first`) で GREEN になった後の **出荷専用ターミナルステージ**を、各フェーズを fresh subagent に dispatch して構成するオーケストレータスキル。品質ゲート (`code-review`) → 完了ゲート (`verify-done`) → PR materialize (open PR が無ければ `commit-commands:commit-push-pr`、あれば push) → CI 緑化 (`ci-self-heal`) と自動レビュー対応 (`pr-review-respond`、CodeRabbit/Devin/Copilot/人間) を、CI 全 pass かつ全コメント終端まで回し、行き詰まったら escalate する。要するコード修正は behavioral→`tdd` / structural→`tidy-first` の subagent にルーティングし、本スキルはコードを書かずループ制御と収束/escalation 判定だけを main で持つ。「ship して」「実装できたから後は全部やって PR 出して CI もレビュー対応も全部通してマージできる状態にして」「commit-push-pr の検証付き版で」「赤と指摘を全部潰して merge-ready に」のような実装後に出荷まで丸ごと任せる要請で必ず起動すること。commit だけは `commit-commands:commit`、検証ループ不要の commit→push→PR だけは `commit-push-pr`、コードレビューだけは `code-review`、既存 PR のコメント対応だけは `pr-review-respond`、CI 修復だけは `ci-self-heal`、完了確認だけは `verify-done`、実装そのもの (設計/コーディング/未 GREEN/WIP) は上流が担い範囲外。PR は merge せず merge-ready で停止する。
-allowed-tools:
-  - Read
-  - Task
-  - Bash(gh pr view *)
-  - Bash(gh pr list *)
-  - Bash(gh pr checks *)
-  - Bash(git status *)
-  - Bash(git diff *)
-  - Bash(git log *)
-  - Bash(git rev-parse *)
-  - Bash(git push *)
+claudecode:
+  allowed-tools:
+    - Read
+    - Task
+    - Bash(gh pr view *)
+    - Bash(gh pr list *)
+    - Bash(gh pr checks *)
+    - Bash(git status *)
+    - Bash(git diff *)
+    - Bash(git log *)
+    - Bash(git rev-parse *)
+    - Bash(git push *)
 ---
 
 # Shipping

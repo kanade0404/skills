@@ -10,6 +10,11 @@ description: >-
   にして」「決定記録残して」「architecture decision」「設計判断のドキュメント」のような要請、いずれでも必ず起動すること。本スキルは
   ADR 単体の生成と判定までで、設計検討自体や実装には関与しない。詳細仕様や API ドキュメントの代わりに ADR を使うことは推奨しない (ADR
   は「決定」の記録、「使い方」のドキュメントではない)。adr-tools が未インストールの場合は導入手順を提示し、勝手に install しない。
+allowed-tools:
+  - Read
+  - Write
+  - Edit
+  - Bash
 ---
 # ADR Writer
 

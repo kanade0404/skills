@@ -20,13 +20,14 @@ description: |
   (claude-md-improver 等)、いま起きているバグの根本原因分析 (systematic-debugging)、
   skill 本文のチューニング (skill-builder)、コードレビュー (code-review)。出力は全て
   **提案まで** — CLAUDE.md 書き換え・golden set 追加・issue 起票は人間の承認を経る。
-allowed-tools:
-  - Read
-  - Grep
-  - Glob
-  - Bash
-  - Write
-  - Edit
+claudecode:
+  allowed-tools:
+    - Read
+    - Grep
+    - Glob
+    - Bash
+    - Write
+    - Edit
 ---
 
 # session-retro

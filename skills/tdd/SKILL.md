@@ -1,11 +1,12 @@
 ---
 name: tdd
 description: 振る舞いを変えるコード (新機能 / バグ修正 / 仕様変更) を書く際に必ず Test-Driven Development の RED-GREEN-REFACTOR サイクルを強制するスキル。production code は **必ず先に失敗するテストを書いてから** でしか書かない。「Verify RED」ゲートで失敗理由が typo / import error ではなく「機能が未実装」であることを確認してから実装に進む。先にコードを書いてしまった場合は **そのコードを削除してテストから書き直す**。Tidy First と併用するときは structural change は本スキル対象外 (テスト不要)、behavioral change のみ TDD を適用する。新機能を実装する時、バグ修正を当てる時、API の仕様変更を加える時、`pr-review-respond` Phase C で VALID 修正を behavioral に当てる時、「TDD で」「先にテスト」「赤にしてから」「失敗するテスト書いて」「実装する前に」のような要請、いずれでも必ず起動すること。本スキル単体でカバーするのは 1 振る舞い 1 サイクル。複数振る舞いの設計や ADR 化は対象外。
-allowed-tools:
-  - Read
-  - Edit
-  - Write
-  - Bash
+claudecode:
+  allowed-tools:
+    - Read
+    - Edit
+    - Write
+    - Bash
 ---
 
 # TDD (Test-Driven Development)

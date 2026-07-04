@@ -1,15 +1,16 @@
 ---
 name: feature-loop
 description: 1 つの変更要求を、受け入れ条件の確定から実装・出荷・PR 決着の監視・ハーネス自己改善まで一気通貫で回す最上位オーケストレータスキル。入口で要求の複雑さを**観測可能な決定表**で判定し、明確で小さければ受け入れ条件を 1 ショット確認して即実装へ、曖昧/大きければ `grill-with-docs` で詰める。以降 `tdd`/`tidy-first` で実装 → `shipping` で品質ゲート〜CI〜レビュー対応を merge-ready まで収束 → `pr-monitor` で merge/close を監視 → 決着で `retro` が自己改善提案、と各段を fresh subagent / skill に委譲する。本スキルはコードを書かず、段の順序と handoff と決定表の告知だけを main で持つ。「最初から最後まで回して」「受け入れ条件決めて実装して PR 決着まで面倒見て」「feature を頭から ship・監視・振り返りまで」、さらに口語の丸投げ「これ実装したいんだけど全部やっといて」「あとは丸ごとまかせる」のような、1 つの変更要求を実装＋後工程まで委任する意図で必ず起動する。設計だけ・実装だけ・出荷だけ・監視だけ・振り返りだけの単機能要請、および「バグ直して」「このタイポ直して」のような単発修正は該当する個別 skill (`grill-with-docs` / `tdd` / `shipping` / `pr-monitor` / `retro`) を名指しで使い、本スキルは起動しない。PR の merge 操作はせず、決着 (merge/close) を監視で待つ。
-allowed-tools:
-  - Read
-  - Task
-  - Skill
-  - AskUserQuestion
-  - Bash(git status *)
-  - Bash(git rev-parse *)
-  - Bash(git branch *)
-  - Bash(gh pr view *)
+claudecode:
+  allowed-tools:
+    - Read
+    - Task
+    - Skill
+    - AskUserQuestion
+    - Bash(git status *)
+    - Bash(git rev-parse *)
+    - Bash(git branch *)
+    - Bash(gh pr view *)
 ---
 
 # feature-loop — 入口から PR 決着・自己改善までの最上位ループ
