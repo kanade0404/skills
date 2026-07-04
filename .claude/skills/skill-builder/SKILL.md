@@ -10,6 +10,17 @@ description: >-
   作って」「メタスキル」「skill の品質測りたい」のような要請に該当する。プロジェクト規約 (CLAUDE.md / `rules/` /
   `AGENTS.md` 等)
   との整合確認も兼ね、特定プロジェクトには依存せず本スキルが置かれたリポジトリと配布先の双方で機能する。プラグインスキル（`plugins/<plugin>/skills/...`）の編集は範囲外。
+allowed-tools:
+  - Read
+  - Write
+  - Edit
+  - Glob
+  - Grep
+  - Bash
+  - TaskCreate
+  - TaskUpdate
+  - TaskList
+  - AskUserQuestion
 ---
 # Skill Builder
 

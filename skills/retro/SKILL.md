@@ -1,10 +1,11 @@
 ---
 name: retro
 description: 完了したセッション (PR が merge / close された後、長時間セッションの後、新 skill を運用した直後) のトランスクリプトを **バイアスを排した fresh subagent** に網羅解析させ、ハーネス自身の改善提案を返すスキル。tool 統計・権限拒否・subagent 結果・ループ/stall/escalation・skill の不発や暴発・token 浪費・blocking 待ちを洗い、各 finding を「どのレバー (hook / settings allow-deny / skill 編集 / 新規 skill / CLAUDE.md・rule / empirical-prompt-tuning への handoff / none) で直すか」「なぜ局所パッチでは再発するか (class レベルの根本原因)」付きで構造化する。`pr-monitor` が merge / close を検出した直後の主経路、「振り返り」「retro」「セッション分析」「ハーネス改善したい」「allow リスト見直したい」「hooks 候補ある?」「なんでこの skill 起動しなかった?」のような要請で必ず起動する。本スキルは**提案のみ**で、settings / skill / rule / hook の編集・コミットは一切せず、すべて人間承認を待つ。改善の実体 (skill 編集や trigger 調整) は承認後に `skill-builder` / `empirical-prompt-tuning` 等が担う。コードレビューやバグ修正のセッション分析ではなく、**エージェント運用 (harness) の改善**に閉じる。
-allowed-tools:
-  - Read
-  - Bash
-  - Task
+claudecode:
+  allowed-tools:
+    - Read
+    - Bash
+    - Task
 ---
 
 # retro — セッション振り返り & ハーネス自己改善 (提案のみ)

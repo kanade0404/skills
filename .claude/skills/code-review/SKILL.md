@@ -9,6 +9,10 @@ description: >-
   での修正完了直後、いずれでも必ず起動すること。本スキルは subagent によるセルフ・コードレビューで、CodeRabbit / Devin /
   人間レビュアーの代替ではなく **PR 起票前のセーフティネット**。findings は実装者 (= 本スキル呼出側) に返り、修正後に
   `verify-done` を経て PR 起票へ。subagent には書き手の前提知識を持ち込ませない。
+allowed-tools:
+  - Read
+  - Bash
+  - Task
 ---
 # Code Review
 

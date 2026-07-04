@@ -9,6 +9,18 @@ description: >-
   `shipping`(検証ループ付き)または `commit-commands:commit-push-pr` に、リリースタグは RELEASING.md
   の手順に、structural / behavioral の分割判断は `tidy-first` に渡す。履歴書き換え (amend / rebase /
   squash / reset / revert) と commit 取り消しは範囲外 — 新規 commit を作る要請だけを扱う。
+allowed-tools:
+  - Read
+  - Write
+  - Bash(git status *)
+  - Bash(git diff *)
+  - Bash(git log *)
+  - Bash(git ls-files *)
+  - Bash(git add *)
+  - Bash(git commit *)
+  - Bash(git rev-parse *)
+  - Bash(git branch *)
+  - Bash(git switch *)
 ---
 # Commit
 

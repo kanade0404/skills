@@ -1,12 +1,13 @@
 ---
 name: design
 description: 要件が確定した後、実装に入る前に、構造選択・I/O 境界・依存方向・外部制約を**会話 / 一時ファイル**で検討するスキル。設計ドキュメントを永続化することは目的としない — コードを読めばわかる範囲は書かず、**コードを読んでもわからない外部要因・制約・選択肢と却下理由のみ ADR に蒸留**する (ADR 化は `adr-writer` の責務)。設計の検討内容は temp scratchpad (`<work-dir>/design-scratch.md` 等、配布先で gitignore 推奨) に書き、PR マージ後は破棄。要件 → 実装の間、`pr-review-respond` で VALID_DEFER を新規 issue 化する時、「設計どうする」「アーキ考えて」「どこに置く」「依存方向は」「I/O 境界どこ」「先にデザインして」のような要請、いずれでも必ず起動すること。本スキルは設計の **検討と決定の蒸留** までで、実装・テスト・ADR 文面化は別スキルに渡す。詳細仕様の永続化や spec ファイル化は意図的にしない。
-allowed-tools:
-  - Read
-  - Write
-  - Edit
-  - Bash
-  - Task
+claudecode:
+  allowed-tools:
+    - Read
+    - Write
+    - Edit
+    - Bash
+    - Task
 ---
 
 # Design

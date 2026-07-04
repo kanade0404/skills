@@ -15,6 +15,22 @@ description: >-
   `research-practices`、Skill 本体の作成・トリガ調整は `skill-builder`
   担当のため、それらの目的が明確な依頼ではこのスキルを起動しない。実装を書き換える作業（コード修正、リファクタリング実施、lint
   違反対応）は範囲外で、本スキルは「読んで指摘する」レビュー専用である。
+allowed-tools:
+  - Read
+  - Glob
+  - Grep
+  - Bash
+  - Agent
+  - TaskCreate
+  - TaskUpdate
+  - TaskList
+  - AskUserQuestion
+  - mcp__plugin_serena_serena__find_symbol
+  - mcp__plugin_serena_serena__get_symbols_overview
+  - mcp__plugin_serena_serena__search_for_pattern
+  - mcp__plugin_serena_serena__list_dir
+  - mcp__plugin_serena_serena__find_file
+  - mcp__plugin_serena_serena__read_file
 ---
 # Design Review
 

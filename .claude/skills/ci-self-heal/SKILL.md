@@ -9,6 +9,12 @@ description: >-
   緑にして」のような要請、いずれでも必ず起動すること。本スキルは CI ログ取得 → root cause 仮説 → 修正 → 再 push → 再
   watch のループ駆動と、停止判断を担う。修正コード自体は呼出側スキル (`tdd` / `tidy-first` / `code-review`)
   を経由する。flaky / 環境問題と判定したら retry-to-green は禁止 — 原因分類してユーザに返す。
+allowed-tools:
+  - Read
+  - Bash
+  - Edit
+  - Task
+  - Monitor
 ---
 # CI Self-Heal
 

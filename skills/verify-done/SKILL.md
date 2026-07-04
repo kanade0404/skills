@@ -1,9 +1,10 @@
 ---
 name: verify-done
 description: 「完了した」「動いた」「直した」「pass している」「動くはず」「いけそう」のような完了宣言・成功報告をする直前に必ず起動するゲート用スキル。最後に実際に検証コマンド (test / build / typecheck / lint / smoke) を実行してから何分経ったか、その出力を本セッション内で目視確認したか、未保存変更が無いか、を順番に潰し、満たさなければ完了報告を差し戻す。Iron Law は「NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION EVIDENCE」— 過去の green、推測、伝聞、`should work` 系の語彙では完了と認めない。実装スキル (tdd / tidy-first / pr-review-respond / ci-self-heal 等) の終端、PR 作成前、merge 直前、ユーザに「できました」「修正しました」「これで OK です」と返す直前、いずれでも必ず起動すること。本スキル自身は修正もコード生成もしない — 検証実行と判定だけを行う門番。
-allowed-tools:
-  - Read
-  - Bash
+claudecode:
+  allowed-tools:
+    - Read
+    - Bash
 ---
 
 # Verify Done

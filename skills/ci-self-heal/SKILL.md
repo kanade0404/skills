@@ -1,12 +1,13 @@
 ---
 name: ci-self-heal
 description: PR 作成後・push 後の CI が失敗した際に、ログから root cause を特定し、修正コミットを当てて再 push する自己修復ループを駆動するスキル。**root cause 不明なまま再試行しない** (NO FIXES WITHOUT ROOT CAUSE)。3 連続失敗で停止し、architecture を疑ってユーザに escalate (3-failure architecture gate)。`pr-review-respond` Phase E から呼ばれる主経路、`gh pr create` 直後で CI が回り始めた時、CI が赤になった時、「CI 直して」「ビルド失敗してる」「テストが落ちてる on CI」「pipeline 緑にして」のような要請、いずれでも必ず起動すること。本スキルは CI ログ取得 → root cause 仮説 → 修正 → 再 push → 再 watch のループ駆動と、停止判断を担う。修正コード自体は呼出側スキル (`tdd` / `tidy-first` / `code-review`) を経由する。flaky / 環境問題と判定したら retry-to-green は禁止 — 原因分類してユーザに返す。
-allowed-tools:
-  - Read
-  - Bash
-  - Edit
-  - Task
-  - Monitor
+claudecode:
+  allowed-tools:
+    - Read
+    - Bash
+    - Edit
+    - Task
+    - Monitor
 ---
 
 # CI Self-Heal

@@ -1,11 +1,12 @@
 ---
 name: adr-writer
 description: 設計検討から出てきた決定について「これは ADR (Architecture Decision Record) に値するか」を判定し、値する場合のみ [adr-tools](https://github.com/npryce/adr-tools) の `adr new` コマンドで Michael Nygard 形式の ADR を生成するスキル。**コードを読めばわかる決定は ADR にしない**。値する基準は (1) 将来「なぜこうした?」と疑問になりうる (2) 容易に変更できない one-way door (3) 別の選択肢があり却下した のいずれか。番号採番・slug 生成・テンプレ展開・supersede リンクの相互更新は全て `adr new` / `adr new -s` / `adr new -l` に委譲する。`design` Step 4 から呼ばれる主経路、設計判断を残したい時、「これ ADR にして」「決定記録残して」「architecture decision」「設計判断のドキュメント」のような要請、いずれでも必ず起動すること。本スキルは ADR 単体の生成と判定までで、設計検討自体や実装には関与しない。詳細仕様や API ドキュメントの代わりに ADR を使うことは推奨しない (ADR は「決定」の記録、「使い方」のドキュメントではない)。adr-tools が未インストールの場合は導入手順を提示し、勝手に install しない。
-allowed-tools:
-  - Read
-  - Write
-  - Edit
-  - Bash
+claudecode:
+  allowed-tools:
+    - Read
+    - Write
+    - Edit
+    - Bash
 ---
 
 # ADR Writer

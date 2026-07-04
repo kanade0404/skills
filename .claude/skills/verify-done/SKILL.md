@@ -10,6 +10,9 @@ description: >-
   pr-review-respond / ci-self-heal 等) の終端、PR 作成前、merge
   直前、ユーザに「できました」「修正しました」「これで OK です」と返す直前、いずれでも必ず起動すること。本スキル自身は修正もコード生成もしない —
   検証実行と判定だけを行う門番。
+allowed-tools:
+  - Read
+  - Bash
 ---
 # Verify Done
 

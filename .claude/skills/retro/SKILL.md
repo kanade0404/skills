@@ -12,6 +12,10 @@ description: >-
   rule / hook の編集・コミットは一切せず、すべて人間承認を待つ。改善の実体 (skill 編集や trigger 調整) は承認後に
   `skill-builder` / `empirical-prompt-tuning`
   等が担う。コードレビューやバグ修正のセッション分析ではなく、**エージェント運用 (harness) の改善**に閉じる。
+allowed-tools:
+  - Read
+  - Bash
+  - Task
 ---
 # retro — セッション振り返り & ハーネス自己改善 (提案のみ)
 

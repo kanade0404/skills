@@ -20,6 +20,13 @@ description: |
   (session-retro 等の生成元)、単一プロジェクト固有の permissions / settings 変更
   (update-config 系)、リリース手順単体の質問 (RELEASING.md)。本スキルが持つのは
   「配布判定 → 枠選択 → canonical 収録 → リリース → consumer 反映」の経路のみ。
+allowed-tools:
+  - Read
+  - Grep
+  - Glob
+  - Bash
+  - Write
+  - Edit
 ---
 # harness-distribution
 
