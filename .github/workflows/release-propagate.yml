@@ -35,8 +35,17 @@ jobs:
           PROMPT="$(printf 'kanade0404/skills のリリースタグ %s が発行された。\n\n%s' "$TAG" "$(cat .github/devin/consumer-update.md)")"
           jq -n --arg p "$PROMPT" --arg t "skills $TAG consumer update" \
             '{prompt: $p, title: $t, tags: ["skills-release-propagate"]}' > body.json
-          # -f: API エラー時に非ゼロ exit (エラー本文をデータ扱いしない)
-          curl -sS -f -X POST "https://api.devin.ai/v3/organizations/${DEVIN_ORG_ID}/sessions" \
+          # exit code でなく HTTP status で成否判定し、失敗時は API のエラー本文を
+          # ログに出す (本文は secret を含まない診断情報)。
+          status=$(curl -sS -o resp.json -w '%{http_code}' -X POST \
+            "https://api.devin.ai/v3/organizations/${DEVIN_ORG_ID}/sessions" \
             -H "Authorization: Bearer $DEVIN_API_KEY" \
             -H "Content-Type: application/json" \
-            -d @body.json | jq '{session_id, url}'
+            -d @body.json)
+          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+            echo "::error::Devin API returned HTTP $status"
+            echo "--- response body ---"
+            jq . resp.json 2>/dev/null || head -c 2000 resp.json
+            exit 1
+          fi
+          jq '{session_id, url}' resp.json
