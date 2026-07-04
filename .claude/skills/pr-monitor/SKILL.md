@@ -10,6 +10,16 @@ description: >-
   監視して」「マージされるまで見張って」「マージ/クローズしたら振り返りまで回して」のような要請で必ず起動する。CI 完了までの短時間監視は
   `ci-self-heal` (秒〜分)、本スキルは merge / close までの長時間監視 (分〜時間〜日) で責務分離する。PR の merge
   操作そのものは行わない — 人間 (または別の自動化) が merge / close した事実を待つだけ。
+allowed-tools:
+  - Read
+  - Write
+  - Bash(gh pr view *)
+  - Bash(gh pr list *)
+  - Bash(git rev-parse *)
+  - Bash(git branch *)
+  - ScheduleWakeup
+  - Skill
+  - Task
 ---
 # pr-monitor — PR ライフサイクル終端監視
 

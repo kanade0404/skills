@@ -24,14 +24,15 @@ description: |
   conflict 解消単体 (`pr-conflict-resolver`)、PR の merge (人間ゲート — 本スキルは
   merge しない)。実行環境はクラウド (Actions runner / Anthropic sandbox) を想定し、
   素の `git` / `gh` だけで動くこと。
-allowed-tools:
-  - Read
-  - Grep
-  - Glob
-  - Bash
-  - Write
-  - Edit
-  - Task
+claudecode:
+  allowed-tools:
+    - Read
+    - Grep
+    - Glob
+    - Bash
+    - Write
+    - Edit
+    - Task
 ---
 
 # issue-driven-development

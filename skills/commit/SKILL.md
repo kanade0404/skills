@@ -1,18 +1,19 @@
 ---
 name: commit
 description: git commit を「観測 → ガード → 明示パス staging → ファイル経由メッセージ → 検証」の固定順で作る skill。`git add -A` / `git add .` / heredoc を使わないため、permission / hook で汎用コマンドが拒否される環境でもブロックされずに完走する。「commit して」「コミット作って」「この変更コミットしといて」「stage して commit」「きりのいいところで commit 切って」「一区切りだから記録して」のような要請、および tdd / tidy-first / shipping の各サイクル終端の commit 作成で必ず起動すること。commit までが責務 — push・PR 作成は `shipping`(検証ループ付き)または `commit-commands:commit-push-pr` に、リリースタグは RELEASING.md の手順に、structural / behavioral の分割判断は `tidy-first` に渡す。履歴書き換え (amend / rebase / squash / reset / revert) と commit 取り消しは範囲外 — 新規 commit を作る要請だけを扱う。
-allowed-tools:
-  - Read
-  - Write
-  - Bash(git status *)
-  - Bash(git diff *)
-  - Bash(git log *)
-  - Bash(git ls-files *)
-  - Bash(git add *)
-  - Bash(git commit *)
-  - Bash(git rev-parse *)
-  - Bash(git branch *)
-  - Bash(git switch *)
+claudecode:
+  allowed-tools:
+    - Read
+    - Write
+    - Bash(git status *)
+    - Bash(git diff *)
+    - Bash(git log *)
+    - Bash(git ls-files *)
+    - Bash(git add *)
+    - Bash(git commit *)
+    - Bash(git rev-parse *)
+    - Bash(git branch *)
+    - Bash(git switch *)
 ---
 
 # Commit

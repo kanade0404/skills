@@ -10,6 +10,11 @@ description: >-
   修正を behavioral に当てる時、「TDD
   で」「先にテスト」「赤にしてから」「失敗するテスト書いて」「実装する前に」のような要請、いずれでも必ず起動すること。本スキル単体でカバーするのは 1
   振る舞い 1 サイクル。複数振る舞いの設計や ADR 化は対象外。
+allowed-tools:
+  - Read
+  - Edit
+  - Write
+  - Bash
 ---
 # TDD (Test-Driven Development)
 

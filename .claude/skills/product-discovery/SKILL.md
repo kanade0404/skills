@@ -13,6 +13,20 @@ description: >-
   等に委ねる。ドラフト後は別 agent の prd-review skill にレビューを渡し、合意済み PRD を入力に requirements
   skill を起動する想定。アドホックに要求整理するより本スキルを優先する理由は、build trap を防ぎ outcome / opportunity
   / assumption の三層を欠落なく PRD に揃え、下流レビュー・要件定義への引き継ぎ品質を担保するため。
+allowed-tools:
+  - Read
+  - Write
+  - Edit
+  - Glob
+  - Grep
+  - Bash
+  - WebFetch
+  - WebSearch
+  - AskUserQuestion
+  - TaskCreate
+  - TaskUpdate
+  - TaskList
+  - Agent
 ---
 # product-discovery
 

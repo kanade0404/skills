@@ -1,28 +1,29 @@
 ---
 name: software-design
 description: ソフトウェア設計の判断・指示・成果物（モデル / モジュール境界 / エラー戦略 / アーキテクチャ決定 / セキュリティ）を扱う際に起動するスキル。philosophy of software design (Ousterhout)、immutable data model (kawasima)、TM法 (佐藤正美)、関数型プログラミング、Domain-Driven Design (Vlad Khononov)、TDD (Kent Beck)、Railway Oriented Programming (Scott Wlaschin)、Fundamentals of Software Architecture、xUnit Test Patterns、CQRS、Event Sourcing、ADR (Nygard)、Secure by Design の 13 本を一貫したレンズ群として適用する。「設計どうする」「ドメインモデル作って」「集約をどこで切る」「Result 型に直したい」「例外やめて Railway で」「CQRS 入れる?」「Event Sourcing 採用する?」「ADR 書く」「アーキテクチャ決定を残す」「immutable データモデルに直して」「TM法でモデル化して」「TDD で進めたい」「Deep Module になってる?」「サブドメイン分けたい」「Secure by Design 観点で見て」のような要請のほか、コードを書く前のモデル設計フェーズ、既存設計の妥当性レビュー、トランザクション境界・副作用境界・データ整合性の議論、技術的負債の優先度判断、セキュリティ設計レビューでも必ず起動する。テスト本体のレビューは `test-review`、調査作業は `research-practices`、Skill 自体の新規作成は `skill-builder` の担当のため、それらの目的が明確な依頼ではこのスキルを起動しない。実装そのものを書き下すだけの作業（タイポ修正、lint 違反対応、単純なバグ修正、純粋なパフォーマンスチューニング）は本スキルの範囲外で、本スキルは「どう設計すべきか」を構造化して提示・指摘するためのレンズ集である。設計後の最終レビューは `design-review` を併用する。
-allowed-tools:
-  - Read
-  - Write
-  - Edit
-  - Glob
-  - Grep
-  - Bash
-  - WebFetch
-  - WebSearch
-  - TaskCreate
-  - TaskUpdate
-  - TaskList
-  - AskUserQuestion
-  - mcp__plugin_context7_context7__resolve-library-id
-  - mcp__plugin_context7_context7__query-docs
-  - mcp__plugin_serena_serena__find_symbol
-  - mcp__plugin_serena_serena__find_referencing_symbols
-  - mcp__plugin_serena_serena__get_symbols_overview
-  - mcp__plugin_serena_serena__search_for_pattern
-  - mcp__plugin_serena_serena__list_dir
-  - mcp__plugin_serena_serena__find_file
-  - mcp__plugin_serena_serena__read_file
+claudecode:
+  allowed-tools:
+    - Read
+    - Write
+    - Edit
+    - Glob
+    - Grep
+    - Bash
+    - WebFetch
+    - WebSearch
+    - TaskCreate
+    - TaskUpdate
+    - TaskList
+    - AskUserQuestion
+    - mcp__plugin_context7_context7__resolve-library-id
+    - mcp__plugin_context7_context7__query-docs
+    - mcp__plugin_serena_serena__find_symbol
+    - mcp__plugin_serena_serena__find_referencing_symbols
+    - mcp__plugin_serena_serena__get_symbols_overview
+    - mcp__plugin_serena_serena__search_for_pattern
+    - mcp__plugin_serena_serena__list_dir
+    - mcp__plugin_serena_serena__find_file
+    - mcp__plugin_serena_serena__read_file
 ---
 
 # Software Design

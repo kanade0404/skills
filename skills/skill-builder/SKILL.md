@@ -1,17 +1,18 @@
 ---
 name: skill-builder
 description: Claude Code skill を新規作成・既存 skill のトリガ精度を測定/改善するためのメタスキル。プロジェクトの skill ディレクトリ（`.claude/skills/<name>/SKILL.md` または top-level `<name>/SKILL.md` の両形式に対応）に新しい skill を scaffold したい時、既存 skill が適切なときに発火しない / 余計な時に発火するのを直したい時、description を eval ベースで最適化したい時、trigger 性能をベースライン測定したい時、Mode C で起動後の本文品質を subagent dispatch で測りたい時、いずれでも必ず起動すること。「skill 作って」「このスキルなんで起動しない」「スキルが暴発する」「skill description 最適化」「skill の eval 作って」「メタスキル」「skill の品質測りたい」のような要請に該当する。プロジェクト規約 (CLAUDE.md / `rules/` / `AGENTS.md` 等) との整合確認も兼ね、特定プロジェクトには依存せず本スキルが置かれたリポジトリと配布先の双方で機能する。プラグインスキル（`plugins/<plugin>/skills/...`）の編集は範囲外。
-allowed-tools:
-  - Read
-  - Write
-  - Edit
-  - Glob
-  - Grep
-  - Bash
-  - TaskCreate
-  - TaskUpdate
-  - TaskList
-  - AskUserQuestion
+claudecode:
+  allowed-tools:
+    - Read
+    - Write
+    - Edit
+    - Glob
+    - Grep
+    - Bash
+    - TaskCreate
+    - TaskUpdate
+    - TaskList
+    - AskUserQuestion
 ---
 
 # Skill Builder

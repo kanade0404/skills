@@ -13,6 +13,18 @@ description: >-
   `scripts/prr` (subcommand: `fetch` / `reply` / `resolve` / `summary` /
   `wait-ci`) に集約しており、`allowed-tools` で `Bash(bash *prr *)` を auto-grant するため
   consumer 側で permission を追加する必要は無い。
+allowed-tools:
+  - Read
+  - Write
+  - Edit
+  - Bash(bash *prr *)
+  - Bash(git add *)
+  - Bash(git commit *)
+  - Bash(git diff *)
+  - Bash(git log *)
+  - Bash(git status *)
+  - Bash(jq *)
+  - Task
 ---
 # PR Review Respond
 

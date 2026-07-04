@@ -11,6 +11,15 @@ description: >-
   つの変更要求を実装＋後工程まで委任する意図で必ず起動する。設計だけ・実装だけ・出荷だけ・監視だけ・振り返りだけの単機能要請、および「バグ直して」「このタイポ直して」のような単発修正は該当する個別
   skill (`grill-with-docs` / `tdd` / `shipping` / `pr-monitor` / `retro`)
   を名指しで使い、本スキルは起動しない。PR の merge 操作はせず、決着 (merge/close) を監視で待つ。
+allowed-tools:
+  - Read
+  - Task
+  - Skill
+  - AskUserQuestion
+  - Bash(git status *)
+  - Bash(git rev-parse *)
+  - Bash(git branch *)
+  - Bash(gh pr view *)
 ---
 # feature-loop — 入口から PR 決着・自己改善までの最上位ループ
 

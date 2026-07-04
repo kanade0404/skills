@@ -1,10 +1,11 @@
 ---
 name: code-review
 description: 実装が完了した後・PR 作成前に、変更差分を白紙の subagent にレビューさせて Critical / Important / Minor の三分類で findings を返すゲート用スキル。観点は spec 準拠、責務逸脱、依存方向違反、null/error handling、命名、test coverage、副作用混入、unused code、performative comment / dead code 残し、AI 生成パターン (self-consistent assertion 等は `test-review` 参照)。実装直後・「コードレビューして」「PR 出す前にチェック」「実装見て」「これで OK?」「マージ前確認」のような要請、`pr-review-respond` での修正完了直後、いずれでも必ず起動すること。本スキルは subagent によるセルフ・コードレビューで、CodeRabbit / Devin / 人間レビュアーの代替ではなく **PR 起票前のセーフティネット**。findings は実装者 (= 本スキル呼出側) に返り、修正後に `verify-done` を経て PR 起票へ。subagent には書き手の前提知識を持ち込ませない。
-allowed-tools:
-  - Read
-  - Bash
-  - Task
+claudecode:
+  allowed-tools:
+    - Read
+    - Bash
+    - Task
 ---
 
 # Code Review
