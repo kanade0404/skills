@@ -24,7 +24,7 @@ byte-for-byte copy of the upstream at that commit:
 untouched. To audit, diff the file under `skills/to-prd/` against the pinned
 upstream URL:
 
-```
+```text
 https://raw.githubusercontent.com/mattpocock/skills/272f99b22574f50e4266791c86b9302682970e23/skills/engineering/to-prd/SKILL.md
 ```
 
