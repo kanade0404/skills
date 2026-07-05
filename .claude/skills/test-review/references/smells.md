@@ -203,3 +203,9 @@ Gerard Meszaros『xUnit Test Patterns』(2007) の 17 smells（#1〜#17）を、
 ## 横断的なレビュー技法
 
 迷ったらこう問う： *「このテストを明日削除したら、どの現実のバグをすり抜けさせるか?」* 具体的な回帰を名指しできないなら、そのテストは装飾品。近隣のテストと統合するか削除する方が健全なことが多い。
+
+**手動 mutation の次の段階**: PR に mutation testing のスコア（Stryker / mutmut / pitest / cosmic-ray 等）が既に付いている場合、見るべきは score の絶対値ではなく **survived mutant の中身**。score が 90% でも、生き残りが認可判定や金額計算のような critical path に集中していれば要修正。逆に score が低くても、生き残りが equivalent mutant（意味的に元コードと等価な変異）ばかりなら許容してよい。
+
+**Goodhart 対策**: mutation score を CI ゲートの KPI として固定値で強制しない。score を上げること自体が目的化すると、assertion を水増しするだけのテストが増え、`#1 Eager test` や `#17 Lonely assertion` を誘発する。
+
+**本スキルの範囲外**: mutation testing の実行自体（テストスイートを実際に回して変異を注入する）は「テストを実行しない」宣言と整合させ、本スキルでは行わない。自動 mutation の実行・ゲート化は `test-mutation-gate` を参照。
