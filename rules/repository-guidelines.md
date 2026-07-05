@@ -1,3 +1,10 @@
+---
+root: true
+targets: ["*"]
+description: "この skill カタログ / rulesync 配布元リポジトリの構造・規約・不変条件。全エージェントがセッション開始時に読む root rule。"
+globs: ["**/*"]
+---
+
 # Repository Guidelines
 
 ## Project Structure & Module Organization
@@ -52,41 +59,3 @@ Pull requests should describe the skill changed, why the change is needed, and a
 ## Agent-Specific Instructions
 
 Treat this as a skill-content / distribution-source repository, not an application. Avoid unrelated refactors, and do not rename skill directories without updating internal references and the dir-name = frontmatter `name` invariant.
-
-# Bash / API discipline
-
-- ファイルの閲覧・検索・加工は専用ツール (Read / Glob / Grep / Edit) を優先し、Bash の
-  汎用テキストコマンドで代用しない。専用ツールの方が行番号表示・出力制御の点で優れており、
-  環境によっては permission / hook が汎用コマンドを拒否する。
-- コマンドが permission / hook にブロックされたら、**同型のコマンドを再試行しない**:
-  1. エラーメッセージに代替手段が提示されていればそれに従う
-  2. 提示が無い・不明瞭なら、その環境の permissions 設定 (`/permissions`、
-     `.claude/settings.json` 等) を確認してから続行する
-  3. カレント repo 外への git 操作が拒否される環境では GitHub API
-     (contents / git database) で代替する
-  (どのコマンドが禁止かは環境設定に依存して変わるため、このルールは個別コマンドを
-  列挙しない。設定が真実であり、ルールはその読み方だけを定める)
-- `gh api` / `curl` の出力をデータとして扱う前に、必ず exit code で成功を確認する。
-  失敗時はエラー本文が stdout に混ざるため、そのままパースすると誤検知する
-  (例: 404 のエラー JSON を「データが存在する」と誤認する)。ポーリング・監視・
-  収集スクリプトを書くときは特に。
-
-# PR push discipline
-
-PR ブランチへ push したら、以下を完了するまでその PR を離れない。
-「push して報告」で終わらせない。
-
-1. **CI の帰結を確認する** — 起動した checks の完了まで追う (対話セッションでは
-   監視プロセスの設置で代替してよい)。赤なら root cause の特定に入る
-   (推測修正の連投はしない)
-2. **未解決レビュースレッドを終端する** — 各スレッドに**個別に**返信する:
-   修正したなら「Fixed in <SHA>」+ 対応内容、対応しないなら根拠を書いて
-   resolve しない。最後に「何を直し・何を直さず・なぜか」を 1 箇所で追える
-   **集約サマリコメントを 1 件**投稿する (個別返信とサマリは両方必須)
-3. **監視を残してから離れる** — merge / close・新規レビューコメント・checks
-   失敗を検知する手段 (イベントトリガ、無ければ監視プロセス) を設置する
-
-なぜ必要か: push で終わると、レビュー bot の指摘や CI の失敗が無応答のまま滞留し、
-作った本人だけが PR の現在状態を知らない状態になる (実例: push 後に P2 指摘 7 件が
-半日放置された)。個別返信はレビュアー (人間・bot) への応答性を、集約サマリは
-後から読む人の追跡可能性を、それぞれ担保する。

@@ -1,12 +1,54 @@
-# CLAUDE.md
+# Repository Guidelines
 
-Skill カタログ兼 **rulesync 配布元**。consumer は
-`rulesync fetch kanade0404/skills@<tag> --features skills,...` → `rulesync generate`
-で各エージェントの設定を生成して使う。
+## Project Structure & Module Organization
 
-- **コードでなく `skills/<name>/SKILL.md` を編集する場所**。build/test/lint は無い。
-- **source of truth は `skills/<name>/`**。README / CLAUDE.md に skill 一覧・件数を重複させない。
-- **配布の不変条件**: ディレクトリ名 = frontmatter `name`。
-- **リリースは git タグ `vX.Y.Z`**（手順は [RELEASING.md](RELEASING.md)）。consumer は `@<tag>` で固定取得。
-- **skill 作成・編集・trigger 評価の規範は `skills/skill-builder/SKILL.md`**（frontmatter / 500行 / negative space / eval ループの一次情報）。
-- **サードパーティ skill は vendor しない**。copy-in 例外は skill ディレクトリ内に出典 + LICENSE を残す。
+This repository is a catalog and **rulesync distribution source** for Claude Code / Codex (and other rulesync-supported tools). Distribution is done with [rulesync](https://github.com/dyoshikawa/rulesync): consumers run `rulesync fetch kanade0404/skills@<tag> --features skills,rules,...` then `rulesync generate`.
+
+`rulesync fetch` reads top-level feature directories at the repository root (not `.rulesync/`):
+
+- `skills/<name>/`: Agent Skills. The directories and `SKILL.md` frontmatter are the inventory source of truth.
+- `rules/`: cross-cutting rules (this file included). `README.md` is documentation, not a rule.
+- `subagents/`, `commands/`, `hooks/`: distribution feature slots, currently placeholders (README only).
+
+Each skill directory uses this layout:
+
+- `SKILL.md`: required frontmatter plus the primary instructions.
+- `references/*.md`: detailed supporting material for progressive disclosure.
+- `evals/*.{json,jsonl}`: trigger evaluation cases and result files.
+- `scripts/*`: helper tools.
+- `assets/*`: templates and other reusable artifacts.
+
+Generated outputs (`.claude/`, `.agents/`, `.codex/`, root `AGENTS.md` / `CLAUDE.md`) are materialized by `node scripts/rulesync-sync.mjs` and verified by the drift CI — edit the sources under `skills/` / `rules/`, never the generated files.
+
+Third-party skills are generally not vendored here; consumers `rulesync fetch` upstream repositories directly. Explicit copy-in exceptions must record source and license information inside the skill directory. Do not maintain a duplicated skill inventory in `README.md` or rules.
+
+## Invariants
+
+- Skill directory names must match the `name` field in `SKILL.md` frontmatter (lowercase letters, numbers, hyphens only; ≤64 chars).
+- Frontmatter `description` must be ≤1024 characters (other agents' skill loaders reject longer ones), specific, third-person, and describe both what the skill does and when to use it.
+- Keep each `SKILL.md` under 500 lines; move detail into `references/<topic>.md`.
+- The authoring / trigger-eval norms live in `skills/skill-builder/SKILL.md` (source of truth for skill creation).
+- These invariants are machine-checked by `tests/` (run via `python3 -m unittest discover -s tests`) and the trigger-evals CI.
+
+## Build, Test, and Development Commands
+
+There is no project-wide build. Useful commands:
+
+- `python3 -m unittest discover -s tests`: frontmatter invariants + CI checker unit tests.
+- `uv run python .github/scripts/check_trigger_evals.py`: full trigger-eval scan (known failures live in `.github/trigger-evals-known-failures.json`).
+- `uv run python skills/skill-builder/scripts/score_triggers.py --cases <cases> --preds <results>`: score one skill's trigger predictions.
+- `node scripts/rulesync-sync.mjs [--check]`: regenerate (or verify) generated agent configs.
+
+## Testing Guidelines
+
+For trigger evals, place cases in `skills/<skill>/evals/<skill>-trigger.json` and predictions in `skills/<skill>/evals/<skill>-trigger-results-YYYY-MM-DD.jsonl`. Include both should-trigger and should-skip prompts, with tags such as `explicit`, `ambiguous`, `adjacent`, and `distractor`. When a skill's frontmatter (trigger surface) changes, re-measure and add a new dated results file — CI enforces this.
+
+## Commit & Pull Request Guidelines
+
+Use concise, imperative commit subjects such as `Add postgres skill references` or `Tune test-review trigger evals`.
+
+Pull requests should describe the skill changed, why the change is needed, and any eval results. Releases are git tags `vX.Y.Z` (semver; see RELEASING.md) — consumers pin via `kanade0404/skills@<tag>`.
+
+## Agent-Specific Instructions
+
+Treat this as a skill-content / distribution-source repository, not an application. Avoid unrelated refactors, and do not rename skill directories without updating internal references and the dir-name = frontmatter `name` invariant.

@@ -8,7 +8,7 @@
 //
 // Uses node:fs for staging so it needs no shell `cp`/`rm`/`cd`. `.rulesync/` is the
 // throwaway staging dir (gitignored) rulesync's `generate` reads from.
-import { rmSync, mkdirSync, cpSync, copyFileSync } from 'node:fs';
+import { rmSync, mkdirSync, cpSync, copyFileSync, readdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -18,18 +18,26 @@ const RULESYNC_VERSION = '9.1.1';
 const check = process.argv.includes('--check');
 
 // Stage the source-of-truth feature content into `.rulesync/` for `generate`.
-// Only features with real content are staged; commands/hooks/rules/subagents are
+// Only features with real content are staged; commands/hooks/subagents are
 // placeholder-only (README without frontmatter) and would fail rulesync parsing.
+// rules/ は実コンテンツを持つため staging する (README.md は frontmatter を
+// 持たない説明ファイルなので除外)。
 const stage = join(ROOT, '.rulesync');
 rmSync(stage, { recursive: true, force: true });
 mkdirSync(stage, { recursive: true });
 cpSync(join(ROOT, 'skills'), join(stage, 'skills'), { recursive: true });
 copyFileSync(join(ROOT, 'permissions.json'), join(stage, 'permissions.json'));
+mkdirSync(join(stage, 'rules'), { recursive: true });
+for (const entry of readdirSync(join(ROOT, 'rules'))) {
+  if (entry.endsWith('.md') && entry !== 'README.md') {
+    copyFileSync(join(ROOT, 'rules', entry), join(stage, 'rules', entry));
+  }
+}
 
 const args = [
   '-y', `rulesync@${RULESYNC_VERSION}`, 'generate',
   '--targets', 'claudecode,codexcli',
-  '--features', 'skills,permissions',
+  '--features', 'skills,permissions,rules',
   '--simulate-skills',
 ];
 if (check) args.push('--check');
