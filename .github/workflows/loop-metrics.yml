@@ -1,5 +1,11 @@
 # loop-ops への計測イベント送信。PR クローズごとに pr_closed イベントを 1 件記録する。
-# 収集ロジック本体は kanade0404/loop-ops 側の reusable workflow が持つ。
+#
+# 本来は kanade0404/loop-ops 側の reusable workflow (collect-metrics.yml) を uses: で
+# 呼ぶ設計だが、GitHub の制約で private リポジトリの reusable workflow は
+# 「同一オーナーの他の private リポジトリ」からしか呼べず、public な本リポジトリからは
+# 解決できない ("workflow was not found" で startup failure になる)。
+# そのためここでは収集ジョブをインライン化している。ロジックの原本は
+# loop-ops/.github/workflows/collect-metrics.yml — 変更時は両方を手動で同期すること。
 name: loop-metrics
 
 on:
@@ -7,13 +13,65 @@ on:
     types: [closed]
 
 jobs:
-  collect:
-    # デフォルト workflow 権限が read (restricted) のため明示付与が必須。
-    # reusable workflow は caller の token 権限を下げることしかできない
+  pr-closed:
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: read
       issues: read
-    uses: kanade0404/loop-ops/.github/workflows/collect-metrics.yml@master
-    secrets:
-      LOOP_OPS_TOKEN: ${{ secrets.LOOP_OPS_TOKEN }}
+    steps:
+      - name: Emit pr_closed event
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LOOP_OPS_TOKEN: ${{ secrets.LOOP_OPS_TOKEN }}
+          OPS_REPO: kanade0404/loop-ops
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          MERGED: ${{ github.event.pull_request.merged }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          set -euo pipefail
+
+          labels_json="$(gh api "repos/${REPO}/issues/${PR}/labels" --jq '[.[].name]')"
+          ci_iter="$(jq '[.[] | capture("^claude-loop:(?<n>[0-9]+)$")? | .n | tonumber] | max // 0' <<<"$labels_json")"
+          escalated="$(jq 'index("needs-human") != null' <<<"$labels_json")"
+
+          review_cycles="$(gh api "repos/${REPO}/pulls/${PR}/reviews?per_page=100" --jq 'length')"
+
+          # 構造化エスカレーションコメント (docs/escalation-format.md) から reason を抽出
+          esc_body="$(gh api "repos/${REPO}/issues/${PR}/comments?per_page=100" \
+            --jq '[.[] | select(.body | contains("<!-- loop-escalation:v1 -->")) | .body] | last // ""')"
+          reason="$(printf '%s\n' "$esc_body" \
+            | awk '/^```json/{f=1;next} /^```/{f=0} f' \
+            | jq -r '.reason // empty' 2>/dev/null || true)"
+
+          # PR body から closing keyword で issue 番号を best effort 抽出
+          pr_body="$(gh api "repos/${REPO}/pulls/${PR}" --jq '.body // ""')"
+          issue="$(printf '%s' "$pr_body" \
+            | grep -oiE '(closes?|fixe?[sd]?|resolves?|refs?)[: ]+#[0-9]+' \
+            | head -1 | grep -oE '[0-9]+' || true)"
+
+          ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          event_json="$(jq -n \
+            --arg ts "$ts" --arg repo "$REPO" --arg author "$AUTHOR" \
+            --argjson pr "$PR" --argjson issue "${issue:-null}" \
+            --arg outcome "$([ "$MERGED" = "true" ] && echo merged || echo closed)" \
+            --argjson ci "$ci_iter" --argjson rc "$review_cycles" --argjson esc "$escalated" \
+            --arg reason "${reason:-}" \
+            '{v: 1, ts: $ts, event: "pr_closed", repo: $repo, pr: $pr, issue: $issue,
+              outcome: $outcome, author: $author,
+              ci_fix_iterations: $ci, review_cycles: $rc, escalated: $esc,
+              escalation_reason: (if $reason == "" then null else $reason end)}')"
+
+          month="${ts:0:7}"
+          path="metrics/events/${month}/pr_closed-$(date -u +%s)-${GITHUB_RUN_ID}.json"
+          content_b64="$(jq -c . <<<"$event_json" | base64 | tr -d '\n')"
+
+          curl -sS -f -X PUT \
+            -H "Authorization: Bearer ${LOOP_OPS_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${OPS_REPO}/contents/${path}" \
+            -d "$(jq -n --arg msg "event: pr_closed ${REPO}#${PR}" --arg content "$content_b64" \
+                  '{message: $msg, content: $content}')" >/dev/null
+
+          echo "wrote ${path}"
