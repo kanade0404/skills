@@ -15,7 +15,8 @@ upstream tooling (supply-chain hardening).
 - **Commit pinned**: `272f99b22574f50e4266791c86b9302682970e23` (`main`)
 - **Retrieved**: 2026-07-05
 
-The following files are byte-for-byte copies of the upstream at that commit:
+In the **source-of-truth** directory `skills/setup-matt-pocock-skills/`, the following
+files are byte-for-byte copies of the upstream at that commit:
 
 - `SKILL.md`
 - `domain.md`
@@ -25,11 +26,23 @@ The following files are byte-for-byte copies of the upstream at that commit:
 - `triage-labels.md`
 
 `LICENSE` and this `PROVENANCE.md` are added by the vendoring; everything else is
-untouched. To audit, diff against the pinned upstream URL:
+untouched. To audit, diff the files under `skills/setup-matt-pocock-skills/` against
+the pinned upstream URL:
 
 ```
 https://raw.githubusercontent.com/mattpocock/skills/272f99b22574f50e4266791c86b9302682970e23/skills/engineering/setup-matt-pocock-skills/<file>
 ```
+
+### Generated mirrors are not byte-for-byte
+
+The byte-for-byte claim above is about `skills/setup-matt-pocock-skills/` only. This
+repo also commits **rulesync-generated** mirrors under `.claude/skills/` and
+`.agents/skills/` (see `scripts/rulesync-sync.mjs`; regenerate, don't hand-edit). Those
+are derived artifacts and rulesync transforms frontmatter per target — notably the
+`codexcli` target (`.agents/`) drops fields Codex CLI doesn't support, so
+`.agents/skills/setup-matt-pocock-skills/SKILL.md` omits `disable-model-invocation:
+true` while the source and the `.claude/` (Claude Code) mirror keep it. Verify the
+mirrors with `node scripts/rulesync-sync.mjs --check`, not by diffing against upstream.
 
 ## Caveat: sibling-skill dependencies
 
