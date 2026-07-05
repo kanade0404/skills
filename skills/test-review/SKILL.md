@@ -66,6 +66,8 @@ rulesync で `kanade0404/skills@<tag>` から `skills/test-review/` として配
 
 Eager test · Mystery guest · Fragile test · Obscure test · Assertion roulette · Conditional test logic · Test code duplication · Resource optimism · Indirect testing · Sensitive equality · For testers only · The free ride · Silent catcher · Erratic (flaky) · Slow test · Guarded assertion · Lonely assertion.
 
+境界値・同値クラス・状態遷移のケース欠落（`coverage-gap`）に気づいた場合は、本ステップでは smell として指摘するに留め、テストケースの設計そのものは `test-design` スキルに委ねる。
+
 ### Step 4 — seam / 外部 I/O 境界
 
 **立場**: **test double を使う必要が出ないように設計する**ことを優先するレビューを行う。test double が欲しくなる時点で、設計が正しくない可能性を先に疑う。Classicist に Functional Core / Imperative Shell と Humble Object を強く適用した立場。詳細は `references/patterns.md §2` と `§6 Humble Object`。
@@ -122,6 +124,8 @@ consumer プロジェクトに **テストが守るべき独自原則** が明�
   - Reinforcement: golden dataset への新規ケース追加、trace replay 回帰、prompt version bump と同時の eval 更新、dataset バージョニング
 - **Reliability / Observability / Recoverability** — 分散システム・SaaS 寄りで置かれることが多い
 - **Correctness / Performance / Compatibility** — ライブラリ・SDK で置かれることが多い
+
+Google の Test Sizes（Small / Medium / Large）分類を doctrine として採用している consumer もある。その場合も Step 1 のレイヤ表と二重に体系化はしない — 既定では Step 1 の分類をそのまま使い、Test Sizes は `doctrine/small` のような doctrine タグとしてのみ追加でマッピングする。
 
 consumer プロジェクトは `references/project-doctrine.md` を追加してここに自分の doctrine を書ける（本スキルは無くても動く）。
 
