@@ -1,6 +1,6 @@
 # 契約からの導出 と Property-based Testing の taxonomy
 
-Design by Contract（Bertrand Meyer）/ Hoare 論理からの導出手順と、property-based testing で property をどう選ぶかの taxonomy。ツール固有の書き方（Hypothesis / fast-check の API）は `skills/test-review/references/python.md` に既にあるため重複させない。ここでは「何を assert すべきか」の方法論に集中する。
+Design by Contract（Bertrand Meyer）/ Hoare 論理からの導出手順と、property-based testing で property をどう選ぶかの taxonomy。Python/Hypothesis 固有の書き方は `skills/test-review/references/python.md` に既にあるため重複させない。fast-check (JS/TS) 等、本カタログに専用リファレンスが無いツールの API 詳細は各ツールの公式ドキュメントを参照する。ここでは「何を assert すべきか」の方法論に集中する。
 
 ---
 
@@ -12,7 +12,7 @@ Design by Contract（Bertrand Meyer）/ Hoare 論理からの導出手順と、p
 1. 対象のシグネチャから `P`（呼び出し側が保証すべき前提）を全て書き出す。型だけで表現できない制約（「配列は空でない」「日付は未来でない」等）を優先的に拾う。
 2. `Q`（呼び出し後に保証される性質）を書き出す。戻り値の性質だけでなく、副作用（状態変化、外部への書き込み）も含める。
 3. `invariant`（呼び出し前後で常に成り立つ性質、例: 「リストの長さは減らない」「合計金額は負にならない」）を書き出す。無ければ「なし」と明記する。
-4. 契約設計の判断: **defensive contract**（`P` 違反時に例外/エラーで防御する）か **wide contract**（`P` の範囲を広げて呼び出し側の制約を減らす）かを決める。この判断自体が設計判断であり、テスト設計はその判断の結果に従う（defensive なら (b) のエラー系テストを書く、wide なら該当入力を正常系として (a) に含める）。
+4. 契約設計の判断: **defensive contract**（`P` 違反時に例外/エラーで防御する）か **wide contract**（`P` の範囲を広げて呼び出し側の制約を減らす）かを確認する。この判断自体が API の設計判断であり、**本スキルが独自に決めるものではない**。既存の仕様・型・コードコメントから defensive/wide のどちらかが既にトレース可能ならそれに従う。トレースできない場合は SKILL.md Step 1 の規律（黙って推測しない）に従い、`AskUserQuestion` で確認するか「要確認」タグを付けて `design`/`software-design` に判断を委ねる — テスト設計側が固定するのは対応関係だけ（defensive なら (b) のエラー系テストを書く、wide なら該当入力を正常系として (a) に含める）。
 
 **ここから 3 種類のテストが導出される。**
 
@@ -67,6 +67,6 @@ Property は次の 5 分類から選ぶ。複数該当してよい。
 - 生成する入力の構造をシンプルに保つ（ネストの深いオブジェクトより、フラットな構造の組合せで表現できないか検討する）。
 - 失敗時に人間が読める最小反例が得られるよう、生成戦略はまず単純な型（整数・短い文字列）から試す。
 
-具体的なツール（Hypothesis の `@given`/`strategies`、fast-check の `fc.assert`/`fc.property` 等）の書き方は `skills/test-review/references/python.md` を参照する。ここでは重複させない。
+具体的なツールの書き方は、Hypothesis (Python) の `@given`/`strategies` なら `skills/test-review/references/python.md` を参照する（重複させない）。fast-check (JS/TS) の `fc.assert`/`fc.property` 等、本カタログに専用リファレンスが無いツールは各ツールの公式ドキュメントを参照する。
 
 **設計表への落とし方.** 技法列 = `property/<種類>`（例: `property/roundtrip`）、導出根拠列 = `<種類>: <どの代数的性質か>`。

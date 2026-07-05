@@ -134,7 +134,7 @@ Step 2 で選んだ技法ごとに、該当 reference の手順に従ってケ�
 - **既存テストコードのレビュー**: test smell・seam・AI 生成パターンの検出は `test-review` の担当。
 - **テスト diff の検出力監査**: mutation に対する検出力チェックは `test-mutation-gate` の担当。boundary-gap warn が出た場合の再導出はここに戻ってくる。
 - **仕様そのものの決定**: 対象の振る舞い自体を決めるのは `design` / `software-design`。本スキルは確定した契約からケースを導出するだけ。
-- **property-based ツールの実装詳細**: Hypothesis / fast-check 固有の書き方・shrinking 設定は `test-review` の `references/python.md` に委譲し、重複させない。本スキルは「どの property を選ぶか」の導出方法論に留める。
+- **property-based ツールの実装詳細**: Hypothesis (Python) 固有の書き方・shrinking 設定は `test-review` の `references/python.md` に委譲し、重複させない。fast-check (JS/TS) 等、本カタログに専用リファレンスが無いツールは各ツールの公式ドキュメントに委ねる。本スキルは「どの property を選ぶか」の導出方法論に留める。
 - **テストピラミッドの事後レビュー**: 書かれたテストの配分が妥当かの事後チェックは `test-review` §9。本スキルは書く前の配分判断に限定する。
 
 ---
