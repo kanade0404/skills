@@ -1,4 +1,3 @@
-# ruff: noqa: T201, INP001
 """Check trigger eval predictions with a known-failures ledger."""
 
 from __future__ import annotations

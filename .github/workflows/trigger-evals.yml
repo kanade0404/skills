@@ -4,6 +4,10 @@ on:
   pull_request:
     paths:
       - "skills/**"
+      - ".github/scripts/**"
+      - ".github/trigger-evals-known-failures.json"
+      - ".github/workflows/trigger-evals.yml"
+      - "tests/**"
   workflow_dispatch:
 
 jobs:
@@ -17,6 +21,9 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Run unit tests
+        run: python3 -m unittest discover -s tests -v
 
       - name: Score trigger evals
         run: python3 .github/scripts/check_trigger_evals.py
