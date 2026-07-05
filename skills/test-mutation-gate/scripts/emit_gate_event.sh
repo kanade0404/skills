@@ -2,7 +2,15 @@
 # emit_gate_event.sh - best-effort metrics emission for test-mutation-gate.
 #
 # Usage:
-#   emit_gate_event.sh <result_subtype: pass|block> <caller> <findings_critical> <findings_warn> [by_check_json]
+#   emit_gate_event.sh <result_subtype: pass|block> <caller> <findings_critical> <findings_warn> \
+#     [by_check_json] [mutations_caught] [mutations_total]
+#
+# The last two args (mutations_caught, mutations_total) are optional and
+# come from the Phase 2 mutation smoke (scripts/mutate_and_run.py). Callers
+# that don't run mutation smoke can omit them entirely - back-compat with
+# the pre-Phase-2 4/5-arg call sites is preserved (the fields are simply
+# left out of the payload rather than sent as 0, so "didn't run mutation
+# smoke" stays distinguishable from "ran it and caught nothing").
 #
 # Sends an agent_run event (test-mutation-gate phase, loop-ops event schema
 # v1) to kanade0404/loop-ops via the GitHub Contents API when LOOP_OPS_TOKEN
@@ -19,6 +27,8 @@ caller="${2:-unknown}"
 findings_critical="${3:-0}"
 findings_warn="${4:-0}"
 by_check_json="${5:-}"
+mutations_caught="${6:-}"
+mutations_total="${7:-}"
 
 # Guard against non-integer input rather than letting jq --argjson choke on it.
 if ! [[ "$findings_critical" =~ ^-?[0-9]+$ ]]; then
@@ -30,6 +40,21 @@ fi
 
 if [ -z "$by_check_json" ] || ! jq -e . >/dev/null 2>&1 <<<"$by_check_json"; then
   by_check_json='{}'
+fi
+
+# Unset (not just non-integer) means "mutation smoke wasn't run" - keep that
+# distinguishable from "ran it, 0 mutations". Only coerce to an int when the
+# caller passed something that isn't a valid integer.
+have_mutation_fields=1
+if [ -z "$mutations_caught" ] && [ -z "$mutations_total" ]; then
+  have_mutation_fields=0
+else
+  if ! [[ "$mutations_caught" =~ ^-?[0-9]+$ ]]; then
+    mutations_caught=0
+  fi
+  if ! [[ "$mutations_total" =~ ^-?[0-9]+$ ]]; then
+    mutations_total=0
+  fi
 fi
 
 # Derive "owner/name" from the origin remote URL (handles both
@@ -72,6 +97,9 @@ payload="$(jq -nc \
   --argjson findings_critical "$findings_critical" \
   --argjson findings_warn "$findings_warn" \
   --argjson by_check "$by_check_json" \
+  --argjson have_mutation_fields "$have_mutation_fields" \
+  --argjson mutations_caught "${mutations_caught:-0}" \
+  --argjson mutations_total "${mutations_total:-0}" \
   '{
     v: $v,
     ts: $ts,
@@ -83,7 +111,11 @@ payload="$(jq -nc \
     findings_critical: $findings_critical,
     findings_warn: $findings_warn,
     by_check: $by_check
-  }')"
+  } + (if $have_mutation_fields == 1 then
+    {mutations_caught: $mutations_caught, mutations_total: $mutations_total}
+  else
+    {}
+  end)')"
 
 sent=0
 
