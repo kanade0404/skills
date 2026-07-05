@@ -106,7 +106,11 @@ if [ -n "${LOOP_OPS_TOKEN:-}" ]; then
   # defaults to application/x-www-form-urlencoded, which the GitHub Contents
   # API does not accept for a JSON body - without it the PUT can fail and
   # this falls through to the local-file branch below silently.
-  if curl -sf -X PUT "https://api.github.com/repos/kanade0404/loop-ops/contents/${event_path}" \
+  # --connect-timeout/--max-time: this call must stay best-effort - a slow
+  # or unresponsive network must not hang the gate itself, it should fail
+  # fast and fall through to the local JSONL sink below.
+  if curl -sf --connect-timeout 5 --max-time 10 \
+      -X PUT "https://api.github.com/repos/kanade0404/loop-ops/contents/${event_path}" \
       -H "Authorization: Bearer ${LOOP_OPS_TOKEN}" \
       -H "Accept: application/vnd.github+json" \
       -H "Content-Type: application/json" \

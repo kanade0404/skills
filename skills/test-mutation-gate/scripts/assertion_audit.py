@@ -424,6 +424,12 @@ def parse_diff(text):
                         pending_each = False
                 elif MULTILINE_EACH_OPEN_RE.match(content):
                     pending_each = True
+                    # Clear scope immediately: rows inside the pending
+                    # table (and any line if the table never closes within
+                    # this diff) must not keep being attributed to whatever
+                    # test preceded this opener. MULTILINE_EACH_CLOSE_RE
+                    # re-establishes the real scope once the title is seen.
+                    current_func_name = None
                 else:
                     matched_func = try_match_test_func(content)
                     if matched_func is not None:
