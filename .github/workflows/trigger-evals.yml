@@ -4,6 +4,10 @@ on:
   pull_request:
     paths:
       - "skills/**"
+      - ".github/scripts/**"
+      - ".github/trigger-evals-known-failures.json"
+      - ".github/workflows/trigger-evals.yml"
+      - "tests/**"
   workflow_dispatch:
 
 jobs:
@@ -18,134 +22,8 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Run unit tests
+        run: python3 -m unittest discover -s tests -v
+
       - name: Score trigger evals
-        run: |
-          python3 <<'PY'
-          from __future__ import annotations
-
-          import os
-          import subprocess
-          import sys
-          from pathlib import Path
-
-          root = Path.cwd()
-          scorer = root / "skills" / "skill-builder" / "scripts" / "score_triggers.py"
-
-          def changed_paths() -> set[Path]:
-              if os.environ.get("GITHUB_EVENT_NAME") != "pull_request":
-                  return set()
-              base_ref = os.environ["GITHUB_BASE_REF"]
-              subprocess.run(["git", "fetch", "origin", base_ref, "--depth=1"], check=True)
-              output = subprocess.check_output(
-                  ["git", "diff", "--name-only", f"origin/{base_ref}...HEAD"],
-                  text=True,
-              )
-              return {Path(line) for line in output.splitlines() if line}
-
-          def skill_from_path(path: Path) -> str | None:
-              parts = path.parts
-              if len(parts) >= 2 and parts[0] == "skills":
-                  return parts[1]
-              return None
-
-          def is_trigger_input(path: Path) -> bool:
-              return (
-                  len(path.parts) == 3
-                  and path.parts[0] == "skills"
-                  and path.parts[2] == "SKILL.md"
-              ) or (
-                  len(path.parts) >= 4
-                  and path.parts[0] == "skills"
-                  and path.parts[2] == "evals"
-                  and path.name.endswith("-trigger.json")
-              )
-
-          def is_trigger_result(path: Path) -> bool:
-              return (
-                  len(path.parts) >= 4
-                  and path.parts[0] == "skills"
-                  and path.parts[2] == "evals"
-                  and "-trigger-results-" in path.name
-                  and path.suffix == ".jsonl"
-              )
-
-          changed = changed_paths()
-          changed_trigger_inputs = {path for path in changed if is_trigger_input(path)}
-          changed_trigger_results = {path for path in changed if is_trigger_result(path)}
-          changed_result_dirs = {path.parent for path in changed_trigger_results}
-          changed_trigger_skills = {
-              skill
-              for path in changed_trigger_inputs | changed_trigger_results
-              if (skill := skill_from_path(path))
-          }
-
-          all_case_files = sorted((root / "skills").glob("*/evals/*-trigger.json"))
-          if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
-              case_files = [p for p in all_case_files if p.parent.parent.name in changed_trigger_skills]
-          else:
-              case_files = all_case_files
-
-          failed = False
-          skipped = 0
-          scored = 0
-
-          if not case_files:
-              print("No changed trigger eval inputs or result files found.")
-              sys.exit(0)
-
-          for cases_path in case_files:
-              skill = cases_path.parent.parent.name
-              eval_dir = cases_path.parent
-              rel_cases = cases_path.relative_to(root)
-              rel_eval_dir = eval_dir.relative_to(root)
-              result_files = sorted(eval_dir.glob("*-trigger-results-*.jsonl"))
-
-              if not result_files:
-                  message = f"{skill}: no *-trigger-results-*.jsonl found next to {rel_cases}"
-                  if rel_eval_dir in changed_result_dirs or any(path == rel_cases or path.parent == rel_eval_dir for path in changed_trigger_inputs):
-                      failed = True
-                      print(f"::error file={rel_cases},title=Missing trigger predictions::{message}")
-                  else:
-                      skipped += 1
-                      print(f"::notice title=Skipped trigger eval::{message}")
-                  continue
-
-              if any(path == rel_cases or path.parent == rel_eval_dir for path in changed_trigger_inputs):
-                  if rel_eval_dir not in changed_result_dirs:
-                      failed = True
-                      print(
-                          f"::error file={rel_cases},title=Stale trigger predictions::"
-                          f"{skill}: update a sibling *-trigger-results-*.jsonl file when trigger inputs change"
-                      )
-                      continue
-
-              preds_path = result_files[-1]
-              rel_preds = preds_path.relative_to(root)
-              print(f"::group::{skill}: {rel_cases} vs {rel_preds}")
-              result = subprocess.run(
-                  [
-                      sys.executable,
-                      str(scorer),
-                      "--cases",
-                      str(cases_path),
-                      "--preds",
-                      str(preds_path),
-                      "--fail-on-mismatch",
-                  ],
-                  check=False,
-              )
-              scored += 1
-              if result.returncode != 0:
-                  failed = True
-                  print(
-                      f"::error file={rel_cases},title={skill} trigger mismatch::"
-                      f"{rel_preds} contains mismatched or missing predictions"
-                  )
-              else:
-                  print(f"No trigger prediction mismatches for {skill}.")
-              print("::endgroup::")
-
-          print(f"Scored {scored} trigger eval file(s); skipped {skipped} without result JSONL.")
-          if failed:
-              sys.exit(1)
-          PY
+        run: python3 .github/scripts/check_trigger_evals.py
