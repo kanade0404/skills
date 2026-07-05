@@ -125,7 +125,7 @@ consumer プロジェクトに **テストが守るべき独自原則** が明�
 - **Reliability / Observability / Recoverability** — 分散システム・SaaS 寄りで置かれることが多い
 - **Correctness / Performance / Compatibility** — ライブラリ・SDK で置かれることが多い
 
-Google の Test Sizes（Small / Medium / Large）分類を doctrine として採用している consumer もある。その場合も Step 1 のレイヤ表と二重に体系化はしない — 既定では Step 1 の分類をそのまま使い、Test Sizes は `doctrine/small` のような doctrine タグとしてのみ追加でマッピングする。
+Google の Test Sizes（Small / Medium / Large）分類を doctrine として採用している consumer もある。Size は Step 1 のレイヤ（scope）とは別の軸 — プロセス/スレッド数、sleep・ネットワーク・ディスク I/O の有無などの **リソース制約** で決まるため、レイヤから自動導出しない（例: レイヤが unit でも sleep やディスク I/O があれば small ではない）。既定では Step 1 の分類は変えず、この制約を実際に満たすかを別途確認したうえで `doctrine/small` のような doctrine タグとして追加マッピングする。満たさない場合はレイヤはそのままに、size 違反として指摘する。
 
 consumer プロジェクトは `references/project-doctrine.md` を追加してここに自分の doctrine を書ける（本スキルは無くても動く）。
 
