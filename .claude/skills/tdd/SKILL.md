@@ -75,6 +75,14 @@ TDD が解くのは「動くコードの保証」だけではなく、**仕様 (
 - **既に書いてあったコード** に対する誘惑があれば、それは「先にコードを書いた」サイン → 削除して Step 1 からやり直す。
 - 全テスト pass を確認。**新規テストだけでなく既存テストも全 pass** であること。
 
+### Step 3.5 — Detection Gate (`test-mutation-gate`)
+
+GREEN 確認後・commit 前に、**非自明な分岐・比較・変換を含むテスト**は `test-mutation-gate` を必ず通す。同一セッションで実装とテストを書くと self-consistent assertion (冒頭参照) に陥りやすく、GREEN はテストの検出力を保証しないため。
+
+- 対象外: 自明な scaffolding テスト (存在確認・型チェックのみ)。
+- BLOCK が返ったら **commit せず Step 1 に戻り** RED から書き直す。
+- 結果 1 行 (`gate: PASS (0 critical / 1 warn)` 等) を Step 5 の TDD Cycle レポート Verify 節に含める。
+
 ### Step 4 — REFACTOR: 構造を整える
 
 - GREEN 状態を維持したまま、重複削除 / 命名改善 / 抽出 を行う。
@@ -130,6 +138,7 @@ RED テストと GREEN 実装は **同一 commit** に入れる (片方だけ re
 
 ### Verify
 - All tests: <command> → <passed>/<total>
+- Gate: test-mutation-gate → <PASS/BLOCK> (<critical>/<warn>)
 ```
 
 ---
