@@ -1,0 +1,20 @@
+{"id":"t01","predicted":true,"actual":true,"reason":"CodeRabbit 指摘対応は主機能"}
+{"id":"t02","predicted":true,"actual":true,"reason":"レビューコメント対応の直接要請"}
+{"id":"t03","predicted":true,"actual":true,"reason":"Devin 指摘対応を明示列挙"}
+{"id":"t04","predicted":true,"actual":true,"reason":"PR 指摘を捌く = 「PR のコメント全部捌いて」に一致"}
+{"id":"t05","predicted":true,"actual":true,"reason":"人間レビュアーの新規コメント対応を明示"}
+{"id":"t06","predicted":true,"actual":true,"reason":"PR コメント対応文脈"}
+{"id":"t07","predicted":true,"actual":true,"reason":"指摘対応の口語形"}
+{"id":"t08","predicted":true,"actual":true,"reason":"resolve 運用は本スキルの手順"}
+{"id":"t09","predicted":true,"actual":true,"reason":"review feedback = レビューコメント"}
+{"id":"t10","predicted":true,"actual":true,"reason":"PR コメント片付け"}
+{"id":"t11","predicted":false,"actual":false,"reason":"PR 起票前は code-review (「既にレビュー済みの PR に後追い」の明示)"}
+{"id":"t12","predicted":false,"actual":false,"reason":"CI 修復は ci-self-heal。push 直後トリガはスレッド対応であり CI 修理ではない"}
+{"id":"t13","predicted":false,"actual":false,"reason":"tdd の領域"}
+{"id":"t14","predicted":false,"actual":false,"reason":"design-review の領域"}
+{"id":"t15","predicted":false,"actual":false,"reason":"test-review の領域"}
+{"id":"t16","predicted":false,"actual":false,"reason":"レビュー実行は範囲外を明示"}
+{"id":"t17","predicted":false,"actual":false,"reason":"概念照会"}
+{"id":"t18","predicted":false,"actual":false,"reason":"自分発コメントの追加は対応ではない"}
+{"id":"t19","predicted":true,"actual":true,"reason":"「push した直後」「push したのでスレッド対応して」を新規に明示列挙"}
+{"id":"t20","predicted":true,"actual":true,"reason":"再 push 後のスレッド終端 = 「未解決スレッドが残る PR を離れる前に必ず一度起動」"}
