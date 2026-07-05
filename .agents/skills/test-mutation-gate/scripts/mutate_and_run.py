@@ -31,6 +31,14 @@ Safety:
   - After the last restore, the impl file's bytes are compared against the
     backup; a mismatch is a hard error (exit 2), never a silent partial
     mutation left behind.
+  - Before scoring any mutant, --test-cmd is run once against the pristine
+    (unmutated) impl file; a non-zero baseline aborts with exit 2 instead of
+    silently reporting every mutation as "caught" against a suite that was
+    never green in the first place.
+  - --test-cmd runs in its own process group (start_new_session=True); a
+    timeout kills the whole group, not just the shell's own PID, so a
+    command that forks/backgrounds a child before hanging doesn't leave
+    that child running past the timeout.
 
 Known limitation (documented in notes, always): string/comment detection is
 line-based and regex-driven, not a real tokenizer/AST. Multi-line
@@ -63,13 +71,20 @@ BOOL_FLIP = {"True": "False", "False": "True", "true": "false", "false": "true"}
 # Longest-alternative-first so "==", "!=", "<=", ">=" are consumed before the
 # single-char "<"/">" alternatives are tried at the same position. The
 # lookarounds on the single-char forms avoid mutating Go's "<-" channel
-# operator and "->" return-type arrows - a known regex-vs-AST gap, not a
-# full fix (see references/mutation-recipes.md).
-COMPARISON_RE = re.compile(r"==|!=|<=|>=|<(?!-)|(?<!-)>")
+# operator, "->" return-type arrows, and "=>" arrow functions (TS/JS) - a
+# known regex-vs-AST gap, not a full fix (see references/mutation-recipes.md).
+COMPARISON_RE = re.compile(r"==|!=|<=|>=|<(?!-)|(?<![=-])>")
 COMPARISON_FLIP = {"==": "!=", "!=": "==", "<=": "<", ">=": ">", "<": "<=", ">": ">="}
 
 INT_RIGHT_RE = re.compile(r"\s*(-?\d+)")
 INT_LEFT_RE = re.compile(r"(-?\d+)\s*$")
+
+# Narrow heuristic for TS/TSX type-alias declarations, e.g.
+# `type Flag = true | false;` or `export type X = { a: true } | { a: false }`.
+# Only used to guard bool-flip (see discover_candidates' skip_type_alias_bools
+# docstring for why this doesn't attempt to cover interface/parameter type
+# positions too).
+TS_TYPE_ALIAS_LINE_RE = re.compile(r"^\s*(export\s+)?(declare\s+)?type\s+\w+\b[^=]*=")
 
 # Generic, cross-language markers that a non-zero exit was a syntax/parse
 # failure caused by the mutation breaking the file, rather than a real
@@ -88,6 +103,9 @@ SYNTAX_ERROR_MARKERS_RE = re.compile(
 # docstring "Known limitation")
 # ---------------------------------------------------------------------------
 
+BLOCK_COMMENT_EXTS = (".js", ".jsx", ".ts", ".tsx", ".go", ".java", ".c", ".cc", ".cpp", ".rs")
+
+
 def comment_prefixes_for(path):
     """Return the comment-start token(s) to treat as "rest of line is a
     comment" for this file's extension. Unknown extensions get both '#' and
@@ -95,17 +113,37 @@ def comment_prefixes_for(path):
     ext = Path(path).suffix.lower()
     if ext in (".py", ".rb", ".sh", ".bash", ".yml", ".yaml"):
         return ("#",)
-    if ext in (".js", ".jsx", ".ts", ".tsx", ".go", ".java", ".c", ".cc", ".cpp", ".rs"):
+    if ext in BLOCK_COMMENT_EXTS:
         return ("//",)
     return ("#", "//")
 
 
-def mask_line(line, comment_prefixes):
+def block_comment_markers_for(path):
+    """Return the (start, end) marker pair for C-style block comments
+    (`/* ... */`) for this file's extension, or None if the language has no
+    such construct (Python/Ruby/shell/YAML use only line comments).
+    Unknown extensions get the markers too, matching the conservative
+    "masks more, never mutates less safely" policy of comment_prefixes_for."""
+    ext = Path(path).suffix.lower()
+    if ext in (".py", ".rb", ".sh", ".bash", ".yml", ".yaml"):
+        return None
+    return ("/*", "*/")
+
+
+def mask_line(line, comment_prefixes, block_comment=None):
     """Return a same-length copy of `line` where string-literal interiors
     become 'x' and comment text becomes '#', so mutation regexes never match
     inside a string or comment. Quote/comment delimiters and all other
     characters keep their original position and value, so match spans found
     on the masked line can be applied directly to the original line.
+
+    `block_comment`, if given, is a (start, end) marker pair (e.g.
+    `("/*", "*/")`) for C-style block comments. A block comment that opens
+    and closes on this same line is masked in place, without ending the
+    scan, so code following `*/` on the same line is still scanned. One
+    that opens but never closes on this line is treated the same as a line
+    comment (rest of line masked) - the conservative, single-line-only
+    behavior documented below.
 
     Single-line only: a string or comment that started on a previous line
     (Python triple-quoted strings, C-style /* */ spanning lines) is NOT
@@ -130,6 +168,19 @@ def mask_line(line, comment_prefixes):
                 chars[i] = "x"
             i += 1
             continue
+        if block_comment is not None:
+            start_marker, end_marker = block_comment
+            if line[i:i + len(start_marker)] == start_marker:
+                end_idx = line.find(end_marker, i + len(start_marker))
+                if end_idx != -1:
+                    span_end = end_idx + len(end_marker)
+                    for j in range(i, span_end):
+                        chars[j] = "#"
+                    i = span_end
+                    continue
+                for j in range(i, n):
+                    chars[j] = "#"
+                break
         if any(line[i:i + len(p)] == p for p in comment_prefixes):
             for j in range(i, n):
                 chars[j] = "#"
@@ -162,19 +213,34 @@ def find_adjacent_int(masked_line, op_start, op_end):
     return None
 
 
-def discover_candidates(lines, comment_prefixes):
+def discover_candidates(lines, comment_prefixes, block_comment=None, skip_type_alias_bools=False):
     """Scan every added-nothing (this is a whole-file scan, not a diff) line
     of `lines` (as returned by readlines(), terminators included) and return
     an ordered, deduplicated list of mutation candidate dicts:
     {"line": 1-based int, "kind": ..., "col": 0-based int, "before": ..., "after": ...}
+
+    `skip_type_alias_bools`, when True (TS/TSX files only - see call site),
+    skips bool-flip candidates on lines that are TypeScript type-alias
+    declarations (`type Flag = true | false;`). Bool literals there are
+    compile-time type positions, not runtime values: mutating them either
+    produces a harmless type-level no-op (survived mutant, false BLOCK) or,
+    if the test command also typechecks, a compiler error indistinguishable
+    from a real assertion catching a behavioral change. This is a narrow,
+    line-level heuristic (see references/mutation-recipes.md) - it does not
+    attempt to distinguish object/interface field type positions from
+    runtime literals, since that would risk suppressing real runtime bool
+    literals (e.g. `{ enabled: true }`) which are far more common.
     """
     candidates = []
     seen = set()
     for lineno, raw in enumerate(lines, start=1):
         line = raw.rstrip("\r\n")
-        masked = mask_line(line, comment_prefixes)
+        masked = mask_line(line, comment_prefixes, block_comment)
 
+        skip_bools = skip_type_alias_bools and TS_TYPE_ALIAS_LINE_RE.match(line)
         for m in BOOL_RE.finditer(masked):
+            if skip_bools:
+                continue
             key = (lineno, "bool-flip", m.start())
             if key in seen:
                 continue
@@ -311,25 +377,54 @@ def install_signal_restorer(backup):
 # Test execution
 # ---------------------------------------------------------------------------
 
-def run_test_cmd(test_cmd, timeout_sec):
-    """Run test_cmd via the shell. Returns (returncode, stderr_text).
-    A timeout is treated as a caught mutation (the run did not cleanly
-    finish GREEN) with a synthetic returncode of 124 (matches the common
-    `timeout(1)` convention) and is called out in notes by the caller."""
+def _kill_process_group(proc):
+    """Best-effort: terminate the whole process group `proc`'s shell was
+    started in (not just the shell's own PID). If test_cmd forks/backgrounds
+    a child before its own foreground command hangs, killing only the shell
+    leaves that child running past the timeout - corrupting later mutation
+    results (stale process still touching files/ports) and leaking
+    processes. Falls back to proc.kill() on platforms without process
+    groups (e.g. Windows) or if the group is already gone."""
+    killpg = getattr(os, "killpg", None)
+    if killpg is None:
+        proc.kill()
+        return
     try:
-        proc = subprocess.run(
-            test_cmd,
-            shell=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=timeout_sec,
-        )
-        return proc.returncode, proc.stderr.decode("utf-8", errors="replace")
-    except subprocess.TimeoutExpired as exc:
-        stderr = ""
-        if exc.stderr:
-            stderr = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else str(exc.stderr)
-        return 124, stderr
+        killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        proc.kill()
+
+
+def run_test_cmd(test_cmd, timeout_sec):
+    """Run test_cmd via the shell, in its own process group. Returns
+    (returncode, stderr_text). A timeout is treated as a caught mutation
+    (the run did not cleanly finish GREEN) with a synthetic returncode of
+    124 (matches the common `timeout(1)` convention) and is called out in
+    notes by the caller.
+
+    `start_new_session=True` puts the shell (and anything it forks) in a
+    fresh process group so a timeout can kill the whole tree via
+    _kill_process_group instead of just the shell's own PID."""
+    proc = subprocess.Popen(
+        test_cmd,
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    try:
+        _, stderr = proc.communicate(timeout=timeout_sec)
+        return proc.returncode, stderr.decode("utf-8", errors="replace")
+    except subprocess.TimeoutExpired:
+        pass
+
+    _kill_process_group(proc)
+    try:
+        _, stderr = proc.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        _, stderr = proc.communicate()
+    return 124, stderr.decode("utf-8", errors="replace") if isinstance(stderr, bytes) else ""
 
 
 # ---------------------------------------------------------------------------
@@ -372,7 +467,11 @@ def main(argv=None):
             original_lines = f.readlines()
 
         comment_prefixes = comment_prefixes_for(impl_path)
-        all_candidates = discover_candidates(original_lines, comment_prefixes)
+        block_comment = block_comment_markers_for(impl_path)
+        skip_type_alias_bools = impl_path.suffix.lower() in (".ts", ".tsx")
+        all_candidates = discover_candidates(
+            original_lines, comment_prefixes, block_comment, skip_type_alias_bools
+        )
         selected = all_candidates[: args.max_mutations]
 
         if not selected:
@@ -393,6 +492,19 @@ def main(argv=None):
             }
             print(json.dumps(result, ensure_ascii=False))
             return 0
+
+        baseline_rc, baseline_stderr = run_test_cmd(args.test_cmd, args.timeout_sec)
+        if baseline_rc != 0:
+            print(
+                "mutate_and_run: baseline --test-cmd failed against the "
+                "*unmutated* impl file (exit {}) - refusing to score mutants "
+                "against a suite that was never green (every mutation would "
+                "trivially count as 'caught' and the gate would report a "
+                "false PASS). Fix --test-cmd or the suite itself first. "
+                "stderr: {}".format(baseline_rc, baseline_stderr.strip()[:2000]),
+                file=sys.stderr,
+            )
+            return 2
 
         survived = []
         caught = 0
