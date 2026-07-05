@@ -77,9 +77,12 @@ jobs:
           for month in "$CUR_MONTH" "$PREV_MONTH"; do
             path="metrics/events/${month}"
             err_file="$RUNNER_TEMP/gh_list_err.$month"
-            resp=$(gh api "repos/${LOOP_OPS_REPO}/contents/${path}" 2>"$err_file")
-            rc=$?
-            if [ $rc -ne 0 ]; then
+            # `resp=$(...)` を素の代入文のまま書くと、既定シェル (unspecified => `bash -e {0}`)
+            # の下で gh api が非 0 を返した瞬間に、後続の rc=$? へ到達する前にスクリプトごと
+            # abort してしまい、意図している「404 は空扱い」分岐が実行されない
+            # (bash の -e は if/while/until の条件式内のコマンドだけを例外扱いする)。
+            # 代入自体を if の条件式に含めることで -e の対象外にする。
+            if ! resp=$(gh api "repos/${LOOP_OPS_REPO}/contents/${path}" 2>"$err_file"); then
               # 404 = そのディレクトリがまだ存在しない (イベント未発生) なので空扱いにする。
               if grep -qi "not found\|HTTP 404" "$err_file"; then
                 echo "no directory for $month (404, treating as empty)"
@@ -103,12 +106,18 @@ jobs:
 
           # 1 event = 1 file を全部連結したものを --slurpfile で 1 つの JSON 配列にまとめ、
           # window (直近 WINDOW_DAYS 日) 内だけを対象に ts を fromdateiso8601 で比較する。
-          RESULT=$(jq -n --argjson window_days "$WINDOW_DAYS" --slurpfile events "$EVENTS_FILE" '
+          # loop-ops (kanade0404/loop-ops) は複数リポジトリが同じ metrics/events/<month>/ に
+          # 書き込む共有ストアであり (emit_gate_event.sh の repo フィールドは呼び出し元の
+          # git remote から決まる)、.repo でこのリポジトリ ($GITHUB_REPOSITORY, GitHub Actions
+          # が既定で提供する env var) に絞らないと、他リポジトリの gate_events/merged_prs が
+          # 混入して検知漏れ・誤検知の両方向にブレる。
+          RESULT=$(jq -n --argjson window_days "$WINDOW_DAYS" --arg repo "$GITHUB_REPOSITORY" --slurpfile events "$EVENTS_FILE" '
             ($events) as $all
             | now as $now_epoch
             | ($all | map(select(
                 (.ts // null) != null
                 and (($now_epoch - (.ts | fromdateiso8601)) <= ($window_days * 86400))
+                and ((.repo // null) == $repo)
               ))) as $win
             | {
                 merged_prs: ($win | map(select(.event=="pr_closed" and .outcome=="merged")) | length),
@@ -221,8 +230,18 @@ jobs:
             echo "_gate-heartbeat workflow により自動生成 (run: ${GITHUB_RUN_ID})_"
           } > "$BODY_FILE"
 
-          existing=$(gh issue list --search "in:title \"$ISSUE_TITLE\"" --state open --json number,title \
-            | jq --arg t "$ISSUE_TITLE" '[.[] | select(.title == $t)] | first // empty')
+          # `gh issue list | jq ...` をそのままパイプで繋ぐと、既定シェル (unspecified =>
+          # `bash -e {0}`) には pipefail が無い (pipefail は `shell: bash` を明示した場合のみ
+          # 付く) ため、パイプの終了ステータスは最後のコマンド (jq) のものになる。gh issue
+          # list が失敗しても jq が空 stdin から `empty` を返して 0 終了すれば existing が
+          # 空のまま else 分岐 (issue 新規作成) に流れ、検索失敗を「既存 issue 無し」と誤認
+          # して重複 issue を作ってしまう。gh issue list の失敗を明示的にチェックしてから jq
+          # に渡すことで、パイプの exit code 合成に依存しない。
+          if ! issue_list_json=$(gh issue list --search "in:title \"$ISSUE_TITLE\"" --state open --json number,title); then
+            echo "::error::failed to list issues for dedup check"
+            exit 1
+          fi
+          existing=$(echo "$issue_list_json" | jq --arg t "$ISSUE_TITLE" '[.[] | select(.title == $t)] | first // empty')
 
           if [ -n "$existing" ] && [ "$existing" != "null" ]; then
             number=$(echo "$existing" | jq -r '.number')
