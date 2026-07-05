@@ -2,12 +2,14 @@
   {
     "skill": "retro",
     "case_id": "t04",
+    "kind": "FN",
     "reason": "harness 改善の相談は retro 対象だが最新結果は未発火している",
     "recorded": "2026-07-05"
   },
   {
     "skill": "verify-done",
     "case_id": "t15",
+    "kind": "FP",
     "reason": "PR 前のコードレビュー要請は code-review 領域だが最新結果は誤発火している",
     "recorded": "2026-07-05"
   }
