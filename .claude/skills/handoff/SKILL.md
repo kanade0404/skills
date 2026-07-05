@@ -18,8 +18,7 @@ allowed-tools:
   - Bash(git log *)
   - Bash(git diff *)
   - Bash(git branch *)
-  - Bash(printenv *)
-  - Bash(echo *)
+  - Bash(printenv TMPDIR)
 ---
 # Handoff — 引き継ぎ文書の生成
 
@@ -61,7 +60,8 @@ context window は有限で、長いセッションはいずれ圧縮・中断�
 - commit と diff → `git log --oneline -n 20` と `git status` / `git diff --stat` で現在地を確認し、SHA やブランチ名で参照
 
 ### Step 3 — 一時ディレクトリのパスを決める
-- OS の一時ディレクトリを使う (`$TMPDIR`、無ければ `/tmp`)。ワークスペース配下には**絶対に置かない**。
+- **プラットフォームの temp を解決する**。Unix / macOS は `$TMPDIR` → 無ければ `/tmp`。Windows は `%TEMP%` → `%TMP%`。どれも取れなければユーザに保存先を確認する。
+- **ワークスペース配下を弾く**。解決した temp パスが現在のリポジトリ / ワークスペース配下に入る場合 (CI 等で `TMPDIR` がリポジトリ内に設定されているケース) は使わず、リポジトリ外の明示的な temp を選ぶ。handoff 文書はコミット対象にしない — 書き込む**前に**パスがワークスペース外であることを確認する。
 - ファイル名は内容が分かる形: `handoff-<slug>-<YYYY-MM-DD>.md`。
 
 ### Step 4 — 文書を書く (下記テンプレ)
