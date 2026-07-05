@@ -22,9 +22,19 @@ Keep `<seam>` `grep`-able (file/function name, not "the S3 stuff"); keep
 
 No counter file. Detection is a manual grep before waiving again:
 
+```bash
+git log --all --all-match -F \
+  --grep='mutation-gate: WAIVED' \
+  --grep='<seam>'
 ```
-git log --grep='mutation-gate: WAIVED' --all -- <path-or-seam-substring>
-```
+
+`<seam>` is text inside the commit message (the trailer template above), not
+a file path — the `-- <pathspec>` form used previously filters commits by
+*touched files*, so a function-name seam that doesn't literally appear in
+any file path (e.g. `aws_sdk_s3::Client::put_object`) silently matches
+nothing even when matching waiver commits exist. `--all-match -F` with two
+`--grep` patterns instead ANDs both against the message text itself, which
+is where `<seam>` actually lives.
 
 On the **3rd** waiver for the same seam, stop and invoke `adr-writer` to
 distill the platform constraint into an ADR instead of waiving a 4th time —
