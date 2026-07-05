@@ -1,0 +1,97 @@
+name: trigger-evals
+
+on:
+  pull_request:
+    paths:
+      - "skills/**"
+  workflow_dispatch:
+
+jobs:
+  score-trigger-evals:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Score trigger evals
+        run: |
+          python3 <<'PY'
+          from __future__ import annotations
+
+          import json
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          root = Path.cwd()
+          scorer = root / "skills" / "skill-builder" / "scripts" / "score_triggers.py"
+          case_files = sorted((root / "skills").glob("*/evals/*-trigger.json"))
+          failed = False
+          skipped = 0
+
+          if not case_files:
+              print("No trigger eval case files found under skills/*/evals/*-trigger.json")
+              sys.exit(0)
+
+          for cases_path in case_files:
+              skill = cases_path.parent.parent.name
+              eval_dir = cases_path.parent
+              result_files = sorted(eval_dir.glob("*-trigger-results-*.jsonl"))
+              rel_cases = cases_path.relative_to(root)
+
+              if not result_files:
+                  skipped += 1
+                  print(f"::notice title=Skipped trigger eval::{skill}: no *-trigger-results-*.jsonl found next to {rel_cases}")
+                  continue
+
+              preds_path = result_files[-1]
+              rel_preds = preds_path.relative_to(root)
+              print(f"::group::{skill}: {rel_cases} vs {rel_preds}")
+              subprocess.run(
+                  [sys.executable, str(scorer), "--cases", str(cases_path), "--preds", str(preds_path)],
+                  check=True,
+              )
+
+              cases_data = json.loads(cases_path.read_text(encoding="utf-8"))["cases"]
+              predictions = {}
+              for raw_line in preds_path.read_text(encoding="utf-8").splitlines():
+                  line = raw_line.strip()
+                  if not line:
+                      continue
+                  prediction = json.loads(line)
+                  predictions[prediction["id"]] = prediction
+
+              mismatches = []
+              for case in cases_data:
+                  case_id = case["id"]
+                  prediction = predictions.get(case_id)
+                  actual = bool(case["should_trigger"])
+                  if prediction is None:
+                      mismatches.append((case_id, case["prompt"], actual, "<missing>"))
+                      continue
+                  predicted = bool(prediction["predicted"])
+                  if predicted != actual:
+                      mismatches.append((case_id, case["prompt"], actual, predicted))
+
+              if mismatches:
+                  failed = True
+                  print("## Trigger prediction mismatches")
+                  for case_id, prompt, actual, predicted in mismatches:
+                      print(
+                          f"::error file={rel_cases},title={skill} trigger mismatch::"
+                          f"id={case_id} should_trigger={actual} predicted={predicted} prompt={prompt}"
+                      )
+                      print(f"  id: {case_id}")
+                      print(f"  should_trigger: {actual}")
+                      print(f"  predicted: {predicted}")
+                      print(f"  prompt: {prompt}")
+              else:
+                  print(f"No trigger prediction mismatches for {skill}.")
+              print("::endgroup::")
+
+          print(f"Scored {len(case_files) - skipped} trigger eval file(s); skipped {skipped} without result JSONL.")
+          if failed:
+              sys.exit(1)
+          PY
