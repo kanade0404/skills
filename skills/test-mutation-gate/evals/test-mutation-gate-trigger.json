@@ -125,7 +125,21 @@
       "id": "t18",
       "prompt": "mutation testing のツール選定を調査して。",
       "should_trigger": false,
-      "rationale": "Stryker / mutmut 等の外部ツール選定調査は research-practices の領域。本スキルは実コード変異を行わず、ツール導入も範囲外。",
+      "rationale": "Stryker / mutmut 等の外部ツール選定調査は research-practices の領域。本スキルは Phase 2 で unit テスト限定の mutation smoke (scripts/mutate_and_run.py) を実行するが、外部ツールの選定・導入検討そのものは行わない。",
+      "tags": ["distractor"]
+    },
+    {
+      "id": "t22",
+      "prompt": "このテスト mutation testing して",
+      "should_trigger": true,
+      "rationale": "description に明記された口語トリガーの直接一致。Phase 2 (unit テスト限定の mutation smoke) が実装済みで範囲内になったため、明示的な mutation testing 要請は起動対象。",
+      "tags": ["explicit"]
+    },
+    {
+      "id": "t23",
+      "prompt": "mutation score を CI で強制したい",
+      "should_trigger": false,
+      "rationale": "テストスイート全体の mutation score 算出・CI 強制運用は Stryker/mutmut 相当の網羅的計測であり、本スキルの変更 diff 周辺の unit テスト smoke とはスコープが異なる distractor。「このスキルがやらないこと」に明記済み。",
       "tags": ["distractor"]
     },
     {

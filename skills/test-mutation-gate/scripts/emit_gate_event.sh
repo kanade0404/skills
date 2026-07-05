@@ -2,7 +2,15 @@
 # emit_gate_event.sh - best-effort metrics emission for test-mutation-gate.
 #
 # Usage:
-#   emit_gate_event.sh <result_subtype: pass|block> <caller> <findings_critical> <findings_warn> [by_check_json]
+#   emit_gate_event.sh <result_subtype: pass|block> <caller> <findings_critical> <findings_warn> \
+#     [by_check_json] [mutations_caught] [mutations_total]
+#
+# The last two args (mutations_caught, mutations_total) are optional and
+# come from the Phase 2 mutation smoke (scripts/mutate_and_run.py). Callers
+# that don't run mutation smoke can omit them entirely - back-compat with
+# the pre-Phase-2 4/5-arg call sites is preserved (the fields are simply
+# left out of the payload rather than sent as 0, so "didn't run mutation
+# smoke" stays distinguishable from "ran it and caught nothing").
 #
 # Sends an agent_run event (test-mutation-gate phase, loop-ops event schema
 # v1) to kanade0404/loop-ops via the GitHub Contents API when LOOP_OPS_TOKEN
@@ -23,6 +31,8 @@ caller="${2:-unknown}"
 findings_critical="${3:-0}"
 findings_warn="${4:-0}"
 by_check_json="${5:-}"
+mutations_caught="${6:-}"
+mutations_total="${7:-}"
 
 # Guard against non-integer input rather than letting jq --argjson choke on it.
 if ! [[ "$findings_critical" =~ ^-?[0-9]+$ ]]; then
@@ -34,6 +44,21 @@ fi
 
 if [ -z "$by_check_json" ] || ! jq -e . >/dev/null 2>&1 <<<"$by_check_json"; then
   by_check_json='{}'
+fi
+
+# Unset (not just non-integer) means "mutation smoke wasn't run" - keep that
+# distinguishable from "ran it, 0 mutations". Only coerce to an int when the
+# caller passed something that isn't a valid integer.
+have_mutation_fields=1
+if [ -z "$mutations_caught" ] && [ -z "$mutations_total" ]; then
+  have_mutation_fields=0
+else
+  if ! [[ "$mutations_caught" =~ ^-?[0-9]+$ ]]; then
+    mutations_caught=0
+  fi
+  if ! [[ "$mutations_total" =~ ^-?[0-9]+$ ]]; then
+    mutations_total=0
+  fi
 fi
 
 # Derive "owner/name" from the origin remote URL (handles both
@@ -76,6 +101,9 @@ payload="$(jq -nc \
   --argjson findings_critical "$findings_critical" \
   --argjson findings_warn "$findings_warn" \
   --argjson by_check "$by_check_json" \
+  --argjson have_mutation_fields "$have_mutation_fields" \
+  --argjson mutations_caught "${mutations_caught:-0}" \
+  --argjson mutations_total "${mutations_total:-0}" \
   '{
     v: $v,
     ts: $ts,
@@ -87,21 +115,25 @@ payload="$(jq -nc \
     findings_critical: $findings_critical,
     findings_warn: $findings_warn,
     by_check: $by_check
-  }')"
+  } + (if $have_mutation_fields == 1 then
+    {mutations_caught: $mutations_caught, mutations_total: $mutations_total}
+  else
+    {}
+  end)')"
 
 sent=0
 
-if [ -n "${LOOP_OPS_TOKEN:-}" ]; then
-  month="$(date -u +%Y-%m)"
-  # $$ adds process-level uniqueness alongside epoch+RANDOM so concurrent
-  # invocations in the same second don't collide on the same event path.
-  event_path="metrics/events/${month}/agent_run-$(date +%s)-${RANDOM}-$$.json"
-  content_b64="$(printf '%s' "$payload" | base64 | tr -d '\n')"
-  body="$(jq -n \
-    --arg message "metrics: test-mutation-gate ${result_subtype}" \
-    --arg content "$content_b64" \
-    '{message: $message, content: $content}')"
+month="$(date -u +%Y-%m)"
+# $$ adds process-level uniqueness alongside epoch+RANDOM so concurrent
+# invocations in the same second don't collide on the same event path.
+event_path="metrics/events/${month}/agent_run-$(date +%s)-${RANDOM}-$$.json"
+content_b64="$(printf '%s' "$payload" | base64 | tr -d '\n')"
+body="$(jq -n \
+  --arg message "metrics: test-mutation-gate ${result_subtype}" \
+  --arg content "$content_b64" \
+  '{message: $message, content: $content}')"
 
+if [ -n "${LOOP_OPS_TOKEN:-}" ]; then
   # -H "Content-Type: application/json" is required: curl -d otherwise
   # defaults to application/x-www-form-urlencoded, which the GitHub Contents
   # API does not accept for a JSON body - without it the PUT can fail and
@@ -115,6 +147,19 @@ if [ -n "${LOOP_OPS_TOKEN:-}" ]; then
       -H "Accept: application/vnd.github+json" \
       -H "Content-Type: application/json" \
       -d "$body" >/dev/null 2>&1; then
+    sent=1
+  fi
+fi
+
+# Middle tier: developer machines usually have no LOOP_OPS_TOKEN exported but
+# do have an authenticated `gh` (the same account that owns loop-ops). Without
+# this tier every local gate invocation lands in the local JSONL only, loop-ops
+# sees zero agent_run events, and the gate-heartbeat monitor would alarm
+# forever. GH_PROMPT_DISABLED prevents gh from blocking on interactive auth.
+if [ "$sent" -ne 1 ] && command -v gh >/dev/null 2>&1; then
+  if printf '%s' "$body" | GH_PROMPT_DISABLED=1 gh api -X PUT \
+      "repos/kanade0404/loop-ops/contents/${event_path}" \
+      --input - >/dev/null 2>&1; then
     sent=1
   fi
 fi
