@@ -1,0 +1,232 @@
+name: gate heartbeat
+
+# test-mutation-gate skill (skills/test-mutation-gate) はテスト変更のたびに強制起動され、
+# kanade0404/loop-ops (private) へ agent_run イベント (phase=test-mutation-gate) を送る。
+# skill が不発になっても「イベントが来ないだけ」で誰も気づけないため、週次で
+# 「merged PR はあるのに gate イベントが 1 件も無い」状態を検知して issue を立てる。
+#
+# なぜ actions/checkout が不要か:
+#   このワークフローがやることは (a) loop-ops の metrics/events を gh api で読む、
+#   (b) 閾値判定し、このリポジトリに issue を作る/コメントする、の 2 つだけで、
+#   どちらも gh CLI だけで完結する。リポジトリ内のファイルやスクリプトには一切
+#   依存しない自己完結設計にしてあるため checkout は不要 (checkout したコードが
+#   secrets の載った job で実行される経路自体を無くす)。
+#
+# なぜ token を 2 つ使い分けるか:
+#   LOOP_OPS_TOKEN は他 private repo (loop-ops) を読むための PAT で、このリポジトリ
+#   (skills) への書き込み権限は持たせない。issue の作成/コメントはこのワークフローに
+#   付与した issues: write を使う既定の `${{ github.token }}` で行い、loop-ops への
+#   読み取り権限は持たせない。「読む token」と「書く token」を分離し、どちらかが
+#   漏れても被害範囲を repo 1 つ分に限定する。
+on:
+  schedule:
+    # UTC 21:00 日曜 = JST 06:00 月曜。週次で先週分の状況を月曜朝に拾う想定。
+    - cron: '0 21 * * 0'
+  workflow_dispatch:
+    inputs:
+      window_days:
+        description: '集計 window (日数、既定 14)'
+        required: false
+        default: '14'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    env:
+      WINDOW_DAYS: ${{ inputs.window_days || '14' }}
+      # 閾値の根拠: merged PR が 1 件だけだと「たまたまテスト差分を含まない変更
+      # だった」可能性が残り誤検知になりやすい。2 件以上 merge されてなお gate
+      # イベントが 0 件なら偶然では説明しづらく、不発を疑うのに十分な件数と判断した。
+      MIN_MERGED_PRS: '2'
+      LOOP_OPS_REPO: kanade0404/loop-ops
+      ISSUE_TITLE: '[gate-heartbeat] test-mutation-gate が沈黙しています'
+    steps:
+      - name: Fetch loop-ops events and aggregate
+        id: aggregate
+        env:
+          GH_TOKEN: ${{ secrets.LOOP_OPS_TOKEN }}
+        run: |
+          set -u
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::LOOP_OPS_TOKEN secret is not set"
+            exit 1
+          fi
+
+          # 当月 + 前月の 2 ディレクトリを見る (window が月境界をまたぐケースの取りこぼし防止)。
+          # date -d 依存の月計算は月末日 (31 日等) の overflow で壊れやすいので、
+          # 純粋な整数演算で前月を求める。
+          CUR_YEAR=$(date -u +%Y)
+          CUR_MON=$(date -u +%m)
+          CUR_MON10=$((10#$CUR_MON))
+          if [ "$CUR_MON10" -eq 1 ]; then
+            PREV_YEAR=$((CUR_YEAR - 1)); PREV_MON10=12
+          else
+            PREV_YEAR=$CUR_YEAR; PREV_MON10=$((CUR_MON10 - 1))
+          fi
+          CUR_MONTH=$(printf '%04d-%02d' "$CUR_YEAR" "$CUR_MON10")
+          PREV_MONTH=$(printf '%04d-%02d' "$PREV_YEAR" "$PREV_MON10")
+
+          EVENTS_FILE="$RUNNER_TEMP/gate-heartbeat-events.ndjson"
+          : > "$EVENTS_FILE"
+
+          for month in "$CUR_MONTH" "$PREV_MONTH"; do
+            path="metrics/events/${month}"
+            err_file="$RUNNER_TEMP/gh_list_err.$month"
+            resp=$(gh api "repos/${LOOP_OPS_REPO}/contents/${path}" 2>"$err_file")
+            rc=$?
+            if [ $rc -ne 0 ]; then
+              # 404 = そのディレクトリがまだ存在しない (イベント未発生) なので空扱いにする。
+              if grep -qi "not found\|HTTP 404" "$err_file"; then
+                echo "no directory for $month (404, treating as empty)"
+                continue
+              fi
+              echo "::error::failed to list $path"
+              cat "$err_file" >&2
+              exit 1
+            fi
+
+            files=$(echo "$resp" | jq -r '.[] | select(.type=="file") | .path')
+            if [ -z "$files" ]; then
+              continue
+            fi
+            while IFS= read -r filepath; do
+              [ -z "$filepath" ] && continue
+              gh api -H "Accept: application/vnd.github.raw" "repos/${LOOP_OPS_REPO}/contents/${filepath}" >> "$EVENTS_FILE"
+              printf '\n' >> "$EVENTS_FILE"
+            done <<< "$files"
+          done
+
+          # 1 event = 1 file を全部連結したものを --slurpfile で 1 つの JSON 配列にまとめ、
+          # window (直近 WINDOW_DAYS 日) 内だけを対象に ts を fromdateiso8601 で比較する。
+          RESULT=$(jq -n --argjson window_days "$WINDOW_DAYS" --slurpfile events "$EVENTS_FILE" '
+            ($events) as $all
+            | now as $now_epoch
+            | ($all | map(select(
+                (.ts // null) != null
+                and (($now_epoch - (.ts | fromdateiso8601)) <= ($window_days * 86400))
+              ))) as $win
+            | {
+                merged_prs: ($win | map(select(.event=="pr_closed" and .outcome=="merged")) | length),
+                gate_events: ($win | map(select(.event=="agent_run" and .phase=="test-mutation-gate")) | length),
+                gate_blocks: ($win | map(select(.event=="agent_run" and .phase=="test-mutation-gate" and .result_subtype=="block")) | length)
+              }
+          ')
+
+          merged_prs=$(echo "$RESULT" | jq '.merged_prs')
+          gate_events=$(echo "$RESULT" | jq '.gate_events')
+          gate_blocks=$(echo "$RESULT" | jq '.gate_blocks')
+
+          is_alert=false
+          if [ "$merged_prs" -ge "$MIN_MERGED_PRS" ] && [ "$gate_events" -eq 0 ]; then
+            is_alert=true
+          fi
+
+          stale_note=""
+          if [ "$gate_events" -ge 10 ] && [ "$gate_blocks" -eq 0 ]; then
+            stale_note="形骸化の疑い (BLOCK 率 0%): gate_events=${gate_events} 件動いているが gate_blocks=0。ゲートが常に pass しているだけで実質何もチェックしていない可能性がある。"
+          fi
+
+          {
+            echo "## gate-heartbeat 集計結果"
+            echo ""
+            echo "- window: 直近 ${WINDOW_DAYS} 日 (対象月: ${CUR_MONTH} + ${PREV_MONTH})"
+            echo "- 閾値: merged_prs >= ${MIN_MERGED_PRS} かつ gate_events == 0 でアラート"
+            echo ""
+            echo "| 指標 | 値 |"
+            echo "|---|---|"
+            echo "| merged_prs | ${merged_prs} |"
+            echo "| gate_events (test-mutation-gate) | ${gate_events} |"
+            echo "| gate_blocks | ${gate_blocks} |"
+            echo ""
+            if [ "$is_alert" = "true" ]; then
+              echo "**ALERT**: test-mutation-gate が沈黙しています。issue を作成/更新します。"
+            else
+              echo "OK: 沈黙は検知されませんでした。"
+            fi
+            if [ -n "$stale_note" ]; then
+              echo ""
+              echo "> ${stale_note}"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          {
+            echo "merged_prs=${merged_prs}"
+            echo "gate_events=${gate_events}"
+            echo "gate_blocks=${gate_blocks}"
+            echo "is_alert=${is_alert}"
+            echo "cur_month=${CUR_MONTH}"
+            echo "prev_month=${PREV_MONTH}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create or update alert issue
+        if: steps.aggregate.outputs.is_alert == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          MERGED_PRS: ${{ steps.aggregate.outputs.merged_prs }}
+          GATE_EVENTS: ${{ steps.aggregate.outputs.gate_events }}
+          GATE_BLOCKS: ${{ steps.aggregate.outputs.gate_blocks }}
+          CUR_MONTH: ${{ steps.aggregate.outputs.cur_month }}
+          PREV_MONTH: ${{ steps.aggregate.outputs.prev_month }}
+        run: |
+          set -u
+
+          # heredoc (<<EOF) は使わない: YAML の run: | ブロックはインデントを保つ必要が
+          # あり、ヒアドキュメントの終端行だけ行頭に戻すと YAML パースが壊れる。
+          # 代わりに { echo ...; } > file で本文ファイルを組み立てる (GITHUB_STEP_SUMMARY
+          # と同じパターン)。ダブルクォート内のバッククォートはコマンド置換とみなされる
+          # ため \` でエスケープしてリテラル文字として出す。
+          BODY_FILE="$RUNNER_TEMP/gate-heartbeat-issue-body.md"
+          {
+            echo "## 集計値 (window: 直近 ${WINDOW_DAYS} 日, 対象月: ${CUR_MONTH} + ${PREV_MONTH})"
+            echo ""
+            echo "| 指標 | 値 |"
+            echo "|---|---|"
+            echo "| merged_prs | ${MERGED_PRS} |"
+            echo "| gate_events (test-mutation-gate) | ${GATE_EVENTS} |"
+            echo "| gate_blocks | ${GATE_BLOCKS} |"
+            echo ""
+            echo "merged PR が ${MIN_MERGED_PRS} 件以上あるのに、test-mutation-gate の agent_run"
+            echo "イベントが loop-ops (kanade0404/loop-ops) に 1 件も届いていません。"
+            echo ""
+            echo "## 考えられる原因"
+            echo ""
+            echo "1. 呼び出し元 skill (tdd / pr-review-respond / verify-done 等) からゲート呼び出し"
+            echo "   自体が剥がれた、または条件分岐でスキップされている。"
+            echo "2. 開発マシンから loop-ops への送信が全段失敗し、ローカル fallback"
+            echo "   (\`.cache/test-mutation-gate/gate-events.jsonl\`) に溜まったまま送信されていない。"
+            echo ""
+            echo "## 確認手順"
+            echo ""
+            echo "1. 該当期間 (直近 ${WINDOW_DAYS} 日) に merge された PR に、実際にテストファイルの"
+            echo "   diff が含まれているか確認する (\`gh pr list --repo kanade0404/skills --state merged --search \"merged:>=<date>\"\`"
+            echo "   などで対象 PR を洗い出し、\`gh pr diff <number> --name-only\` でテストファイルの"
+            echo "   有無を見る)。テスト変更を含む PR が無ければ gate 不発は正常。"
+            echo "2. 開発マシン側の \`.cache/test-mutation-gate/gate-events.jsonl\` を確認し、"
+            echo "   未送信イベントが滞留していないか見る。"
+            echo "3. 滞留イベントがあれば DuckDB で内容を確認できる:"
+            echo ""
+            echo "   \`\`\`sql"
+            echo "   SELECT ts, phase, result_subtype, caller"
+            echo "   FROM read_json_auto('.cache/test-mutation-gate/gate-events.jsonl')"
+            echo "   ORDER BY ts DESC"
+            echo "   LIMIT 20;"
+            echo "   \`\`\`"
+            echo ""
+            echo "_gate-heartbeat workflow により自動生成 (run: ${GITHUB_RUN_ID})_"
+          } > "$BODY_FILE"
+
+          existing=$(gh issue list --search "in:title \"$ISSUE_TITLE\"" --state open --json number,title \
+            | jq --arg t "$ISSUE_TITLE" '[.[] | select(.title == $t)] | first // empty')
+
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            number=$(echo "$existing" | jq -r '.number')
+            gh issue comment "$number" --body-file "$BODY_FILE"
+          else
+            gh issue create --title "$ISSUE_TITLE" --body-file "$BODY_FILE"
+          fi
