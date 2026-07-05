@@ -19,6 +19,8 @@
     {"id":"t15","prompt":"テストコードのレビューしてほしい","should_trigger":false,"rationale":"test-review の領域、PR コメントへの対応ではない","tags":["adjacent"]},
     {"id":"t16","prompt":"PR のレビューを CodeRabbit で実行して","should_trigger":false,"rationale":"レビュー実行は本スキル外 (coderabbit-review skill 等)、本スキルは既存コメントへの後追い","tags":["distractor"]},
     {"id":"t17","prompt":"PR とは何か説明して","should_trigger":false,"rationale":"概念照会、コメント対応ではない","tags":["distractor"]},
-    {"id":"t18","prompt":"PR にコメントを追加して、リリースノート書いて","should_trigger":false,"rationale":"自分発のコメント追加であり既存指摘対応ではない","tags":["distractor"]}
+    {"id":"t18","prompt":"PR にコメントを追加して、リリースノート書いて","should_trigger":false,"rationale":"自分発のコメント追加であり既存指摘対応ではない","tags":["distractor"]},
+    {"id":"t19","prompt":"修正を push したので PR のスレッド対応と監視お願い","should_trigger":true,"rationale":"push 直後のスレッド終端は本スキルの起動点 (2026-07-05 の放置事例由来)","tags":["explicit"]},
+    {"id":"t20","prompt":"レビュー対応を push した。残ってるスレッド閉じておいて","should_trigger":true,"rationale":"再 push 後の未解決スレッド終端","tags":["ambiguous"]}
   ]
 }
