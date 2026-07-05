@@ -80,7 +80,7 @@ untracked な新規テストファイルは `--diff-file` にそのまま渡さ�
   "findings": [
     {"check": "tautology-literal-sharing", "severity": "critical", "file": "...", "test_name": "...", "message": "...", "evidence": "..."}
   ],
-  "summary": {"critical": 0, "warn": 0, "by_check": {}}
+  "summary": {"critical": 0, "warn": 0, "by_check": {}, "notes": []}
 }
 ```
 
@@ -142,7 +142,7 @@ waiver: <理由 1 行 または "-">
 
 `scripts/emit_gate_event.sh` は kanade0404/loop-ops の event schema v1 に既存する `agent_run` イベント種別を再利用する (`phase="test-mutation-gate"`, `result_subtype="pass"|"block"`, `caller`, `findings_critical`, `findings_warn` 等をフィールドに載せる)。専用の `gate_result` のようなイベント種別を新設していない理由は、loop-ops 側の `schema/event.v1.schema.json` と `docs/schema.md` の更新を待たずに計測を開始できるため。専用種別が本当に必要になった場合は、loop-ops リポジトリの schema とドキュメントを**同一 PR で**更新する必要がある。
 
-送信先は環境変数 `LOOP_OPS_TOKEN` の有無で切り替わる: あれば GitHub Contents API `PUT` で `metrics/events/YYYY-MM/` 配下に 1 event = 1 file として送信する。無ければカレントリポジトリの `.claude/test-gate-events.jsonl` に 1 行 append する (consumer 側で gitignore することを推奨)。**送信失敗はゲート判定に一切影響させない** — best-effort。
+送信先は環境変数 `LOOP_OPS_TOKEN` の有無で切り替わる: あれば GitHub Contents API `PUT` で `metrics/events/YYYY-MM/` 配下に 1 event = 1 file として送信する。無ければカレントリポジトリの `.cache/test-mutation-gate/gate-events.jsonl` に 1 行 append する。エージェント設定ディレクトリ (`.claude/`) ではなく専用のキャッシュパスに書くことで、本ゲートが commit 前の必須サブステップとして毎回走っても未追跡ファイルが residual に残らないようにしている (この配布元リポジトリでは `.gitignore` の `.cache/` で既にカバー済み、consumer 側でも同様に gitignore することを推奨)。**送信失敗はゲート判定に一切影響させない** — best-effort。
 
 計測の目的は成績集計そのものではなく、**「ゲートが呼ばれているか自体を観測すること」**にある。`test-review` が 100 セッション超で 0 回しか呼ばれなかった実測を踏まえると、本スキルについても同じ劣化 (呼び出し元の本文からサブステップ呼び出しが削られる、スキップされる) が起きうる。イベントログの発火率そのものが「強制ゲートとして機能しているか」の一次シグナルになる。
 
