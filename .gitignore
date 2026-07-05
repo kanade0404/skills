@@ -4,6 +4,9 @@
 # node
 node_modules/
 
+# python bytecode (skills ship stdlib scripts; consumers run them in place)
+__pycache__/
+
 # local Claude Code overrides (per-machine, not distributed)
 .claude/settings.local.json
 

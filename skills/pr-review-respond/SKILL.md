@@ -127,6 +127,8 @@ Refs: https://github.com/<owner>/<repo>/pull/<n>#discussion_r<id>
 
 これにより返信時に `<SHA>` を貼ればトレースが完結する。
 
+- 修正が **既存テストの assertion / 期待値そのものを書き換える**場合 (新規テスト追加ではなく、緩い・誤った assertion の訂正)、Phase D で「Fixed in `<SHA>`」を返信する **前に** `test-mutation-gate` を必ず通す。レビュー起点のテスト修正が本当に検出力を持つかを機械的に裏取りするため。BLOCK なら修正をやり直し、返信しない。
+
 **Devin の re-review は commit push に任せる**。`@devin` メンションでの再依頼はしない（push を検知して自動再評価するため）。
 
 ### Phase D — 返信 (reply)

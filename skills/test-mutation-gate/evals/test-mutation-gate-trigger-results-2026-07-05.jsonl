@@ -1,0 +1,21 @@
+{"id":"t01","predicted":true,"actual":true,"reason":"description記載の口語例に完全一致"}
+{"id":"t02","predicted":true,"actual":true,"reason":"description記載の口語例に完全一致"}
+{"id":"t03","predicted":true,"actual":true,"reason":"description記載の口語例に完全一致"}
+{"id":"t04","predicted":true,"actual":true,"reason":"description記載の口語例に完全一致"}
+{"id":"t05","predicted":true,"actual":true,"reason":"description記載の口語例に完全一致"}
+{"id":"t06","predicted":true,"actual":true,"reason":"description記載の口語例に完全一致"}
+{"id":"t07","predicted":true,"actual":true,"reason":"GREEN確認後・commit前のテスト確認はtdd Step3.5の主経路そのもの"}
+{"id":"t08","predicted":true,"actual":true,"reason":"PR指摘のテスト側diff修正確認はpr-review-respond Phase Cの主経路"}
+{"id":"t09","predicted":true,"actual":true,"reason":"完了宣言直前のテスト確認はverify-done Step4に組み込まれた主経路"}
+{"id":"t10","predicted":true,"actual":true,"reason":"実装の戻り値をexpectedにコピペはtautology-literal-sharing(critical)の典型例"}
+{"id":"t11","predicted":true,"actual":true,"reason":"0件・空配列などの境界ケース有無はboundary-gapチェックそのもの"}
+{"id":"t12","predicted":false,"actual":false,"reason":"テストスイート全体の網羅的レビューはtest-reviewの範囲"}
+{"id":"t13","predicted":false,"actual":false,"reason":"CI赤の原因究明・修正はci-self-healの範囲"}
+{"id":"t14","predicted":false,"actual":false,"reason":"新規テスト追加はtddの範囲であり静的監査ではない"}
+{"id":"t15","predicted":false,"actual":false,"reason":"skill trigger evalの採点はskill-builder Mode Bと明記され範囲外"}
+{"id":"t16","predicted":false,"actual":false,"reason":"flaky原因調査はtest-reviewのflakiness分類の範囲"}
+{"id":"t17","predicted":false,"actual":false,"reason":"実装コードの一般レビューはcode-reviewの範囲でテストdiff監査ではない"}
+{"id":"t18","predicted":false,"actual":false,"reason":"mutation testingツール選定調査はresearch-practicesの範囲、かつmutation smokeは本skill未実装と明記"}
+{"id":"t19","predicted":false,"actual":false,"reason":"gateの意味を尋ねる情報質問であり監査実行の要請ではない"}
+{"id":"t20","predicted":false,"actual":false,"reason":"assertion libraryの選定相談はresearch-practicesの範囲"}
+{"id":"t21","predicted":false,"actual":false,"reason":"テスト名の分かりやすさへのrenameは振る舞いを変えないtidy-firstの範囲"}

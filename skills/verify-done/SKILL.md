@@ -79,6 +79,7 @@ UI / フロントエンドの変更は **typecheck と test の green では完�
 - 未保存ファイルが無い（IDE バッファに残っていない）
 - 修正と無関係な変更が紛れ込んでいない
 - 検証後に編集を加えていない
+- diff がテストファイル (`*_test.*` / `*.test.*` / `*.spec.*` / `tests/` 配下) を含む場合、`test-mutation-gate` を本セッション内で実行済みであること。未実行なら完了宣言を保留し、先にゲートを通す
 
 検証後に追加編集が必要だった場合は **Step 2 から再実行**。短絡しない。
 
@@ -104,6 +105,7 @@ UI / フロントエンドの変更は **typecheck と test の green では完�
 - test: <command> → <exit> (<passed>/<total> passed, <skipped> skipped)
 - lint: <command> → <exit> (<n> issues)
 - (smoke: <手順> → <観測結果>)
+- (gate: test-mutation-gate → <PASS/BLOCK>、テストファイル変更時のみ)
 
 最終出力ブロック:
 \`\`\`
