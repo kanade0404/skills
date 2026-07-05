@@ -4,14 +4,17 @@
 Reads a unified diff, splits added (+) lines into "test file" vs
 "implementation file" buckets, and runs four regex-based checks:
 
-1. tautology-literal-sharing (critical) - a literal that appears in a test
-   assertion also appears in an implementation addition, suggesting the test
-   was written by copying the (possibly buggy) implementation value rather
-   than asserting an independently-derived expectation. Literals that only
-   appear on an implementation line in exception/error or log/print context
-   (e.g. `raise ValueError("...")`) are excluded from the comparison pool -
-   asserting on an error message is legitimate state verification, not a
-   copy-pasted tautology. Exclusions are always recorded in summary.notes.
+1. tautology-literal-sharing (critical) - a literal that appears anywhere in
+   an added test-file line (assertion or setup, e.g. `expected = "..."`)
+   also appears in an implementation addition, suggesting the test was
+   written by copying the (possibly buggy) implementation value rather than
+   asserting an independently-derived expectation. Literals that only appear
+   on an implementation line in exception/error, log/print, or comment
+   context (e.g. `raise ValueError("...")`, `# ... "READY" ...`) are
+   excluded from the comparison pool - asserting on an error message is
+   legitimate state verification, and a comment isn't executable
+   implementation logic, so neither is a copy-pasted tautology. Exclusions
+   are always recorded in summary.notes.
 2. assertion-roulette (warn)            - too many *messageless* assertions
    in one test function to tell which one failed. Assertions that already
    carry an explicit failure message (Python `assert expr, "msg"`, Go
@@ -41,8 +44,13 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 # Which added lines count as "an assertion" across Python/JS/TS/Go.
+# `assert[A-Z]\w*\(` covers unittest-style camelCase assertion methods
+# (assertTrue, assertIn, assertIsNone, assertRaises, ...) beyond the single
+# `assertEqual` name called out explicitly below; `\bassert\b` alone doesn't
+# match them because "assert" is immediately followed by a word character
+# (no boundary) in e.g. "assertTrue".
 ASSERTION_RE = re.compile(
-    r"\bassert\b|expect\s*\(|assertEqual|toBe\(|toEqual\(|require\.\w+\(|assert\.\w+\("
+    r"\bassert\b|expect\s*\(|assert[A-Z]\w*\s*\(|toBe\(|toEqual\(|require\.\w+\(|assert\.\w+\("
     r"|t\.Errorf\(|t\.Fatalf\(",
     re.IGNORECASE,
 )
@@ -60,16 +68,33 @@ TEST_FUNC_DEFS = (
     re.compile(r"^\s*func\s+(Test\w+)\s*\("),
 )
 
+# `it.each`/`test.each` openers whose table spans multiple lines, e.g.:
+#   test.each([
+#     [1, 2, 3],
+#   ])('adds %i + %i to equal %i', (a, b, expected) => { ... });
+# TEST_FUNC_DEFS's single-line `.each(...)(...)` pattern can't see the title
+# in this common Jest/Vitest shape because the array and the title aren't on
+# the same added line. These two patterns bracket that shape: the opener
+# marks "we're inside a pending parameter table", and the closer (matched
+# once we're pending) extracts the title the same way a single-line match
+# would.
+MULTILINE_EACH_OPEN_RE = re.compile(r"^\s*(?:it|test)\.each\(\s*\[\s*$")
+MULTILINE_EACH_CLOSE_RE = re.compile(r"^\s*\]\s*\)\s*\(\s*['\"](.+?)['\"]")
+
 # Implementation-side function openers (Python/JS/Go + JS arrow-const form,
-# plus their `export`/`async` variants).
+# plus their `export`/`async` variants). The arrow-const alternatives allow
+# an optional `: ReturnType` annotation between the params and `=>` (e.g.
+# `export const parseDate = (s: string): Date => ...`) - `[^=]+?` stops
+# before the `=` in `=>` itself so it can't run past the arrow.
 IMPL_FUNC_RE = re.compile(
     r"^\s*def\s+(\w+)\s*\("
     r"|^\s*async\s+def\s+(\w+)\s*\("
     r"|^\s*function\s+(\w+)\s*\("
     r"|^\s*func\s+(\w+)\s*\("
-    r"|^\s*const\s+(\w+)\s*=\s*(?:\([^)]*\)|\w+)\s*=>"
-    r"|^\s*export\s+const\s+(\w+)\s*=\s*(?:\([^)]*\)|\w+)\s*=>"
+    r"|^\s*const\s+(\w+)\s*=\s*(?:\([^)]*\)(?:\s*:\s*[^=]+?)?|\w+)\s*=>"
+    r"|^\s*export\s+const\s+(\w+)\s*=\s*(?:\([^)]*\)(?:\s*:\s*[^=]+?)?|\w+)\s*=>"
     r"|^\s*export\s+function\s+(\w+)\s*\("
+    r"|^\s*export\s+async\s+function\s+(\w+)\s*\("
     r"|^\s*export\s+default\s+function\s+(\w+)?\s*\("
 )
 
@@ -90,6 +115,14 @@ LOG_CONTEXT_RE = re.compile(
     r"\blog\.|\blogger\.|\bconsole\.|\bprint\s*\(",
     re.IGNORECASE,
 )
+
+# Implementation-side lines that are pure comments/docstring decoration
+# (Python/shell `#`, JS/TS/Go `//`, or inside a `/* ... */` block). A
+# literal that only ever appears in a comment (e.g. `# The UI used to show
+# "READY" here.`) isn't executable implementation logic being copy-pasted -
+# comments often carry examples or stale/legacy values, so this would
+# otherwise create false-positive criticals that users have to waive.
+COMMENT_CONTEXT_RE = re.compile(r"^\s*(?:#|//|/\*|\*(?!/))")
 
 # Assertion lines that already carry an explicit failure message, and so are
 # excluded from the assertion-roulette messageless count: Python
@@ -213,14 +246,27 @@ def try_match_impl_func(line):
     return None
 
 
+def _blank_string_spans(line):
+    """Replace quoted-string contents (including the quotes) with spaces of
+    the same length, so numeric-literal extraction never picks up digits
+    that live *inside* a string literal as an independent numeric literal."""
+    return STRING_LITERAL_RE.sub(lambda m: " " * len(m.group(0)), line)
+
+
 def extract_literals(line):
     """Return the set of "interesting" literals (quoted strings length>=3,
-    non-trivial numbers) found in a single line of code."""
+    non-trivial numbers) found in a single line of code. Numeric extraction
+    runs against a copy of `line` with string-literal spans blanked out, so
+    a number embedded inside a string (e.g. "released-in-2024") isn't also
+    recorded as the standalone numeric literal "2024" - two unrelated
+    strings that merely share an embedded year/version/id shouldn't
+    false-positive as a shared numeric literal."""
     literals = set()
     for m in STRING_LITERAL_RE.finditer(line):
         literal = m.group(1) if m.group(1) is not None else m.group(2)
         literals.add(literal)
-    for m in NUMERIC_LITERAL_RE.finditer(line):
+    numeric_scan_line = _blank_string_spans(line)
+    for m in NUMERIC_LITERAL_RE.finditer(numeric_scan_line):
         num = m.group(0)
         if num in TRIVIAL_NUMERIC_LITERALS:
             continue
@@ -229,11 +275,15 @@ def extract_literals(line):
 
 
 def is_excluded_literal_context(line):
-    """True if `line` is exception/error-message or log/print output
-    context, in which case any literal on it is excluded from
+    """True if `line` is exception/error-message, log/print output, or
+    comment context, in which case any literal on it is excluded from
     tautology-literal-sharing comparisons (see EXCEPTION_CONTEXT_RE /
-    LOG_CONTEXT_RE docstrings)."""
-    return bool(EXCEPTION_CONTEXT_RE.search(line) or LOG_CONTEXT_RE.search(line))
+    LOG_CONTEXT_RE / COMMENT_CONTEXT_RE docstrings)."""
+    return bool(
+        EXCEPTION_CONTEXT_RE.search(line)
+        or LOG_CONTEXT_RE.search(line)
+        or COMMENT_CONTEXT_RE.match(line)
+    )
 
 
 def assertion_has_message(line):
@@ -281,6 +331,22 @@ def test_related_stem(test_path):
     return base
 
 
+def looks_like_unified_diff(text):
+    """True if `text` contains at least one unified-diff structural marker
+    (`+++ `, `--- `, or `diff --git `). Used to fail closed (exit 2) on raw
+    file content passed in place of a diff, instead of silently returning a
+    findings-free PASS - `parse_diff()` can't tell "an empty/no-op diff" from
+    "not a diff at all" on its own, since both produce an empty `files` dict."""
+    for line in text.splitlines():
+        if (
+            line.startswith("+++ ")
+            or line.startswith("--- ")
+            or line.startswith("diff --git ")
+        ):
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Diff parsing
 # ---------------------------------------------------------------------------
@@ -292,12 +358,23 @@ def parse_diff(text):
         "is_test": bool,
         "added_lines": [line, ...],                       # in diff order
         "funcs": OrderedDict(name -> {"all_lines": [...], "assert_lines": [...]}),
-        "assert_records": [(line, func_name_or_None), ...],
+        "literal_scan_records": [(line, func_name_or_None), ...],
     }
+
+    `literal_scan_records` holds every added line in a test file (not just
+    ones that match ASSERTION_RE) so tautology-literal-sharing can catch a
+    literal introduced in test *setup* (e.g. `expected = "buggy-value"`
+    followed by `assert actual == expected`), not only literals that appear
+    directly inside an assertion line.
     """
     files = collections.OrderedDict()
     current_path = None
     current_func_name = None
+    pending_each = False
+
+    def start_func(name, info):
+        if name not in info["funcs"]:
+            info["funcs"][name] = {"all_lines": [], "assert_lines": []}
 
     for raw_line in text.splitlines():
         if raw_line.startswith("+++ "):
@@ -307,15 +384,17 @@ def parse_diff(text):
             if path in ("/dev/null", ""):
                 current_path = None
                 current_func_name = None
+                pending_each = False
                 continue
             current_path = path
             current_func_name = None
+            pending_each = False
             if current_path not in files:
                 files[current_path] = {
                     "is_test": is_test_file(current_path),
                     "added_lines": [],
                     "funcs": collections.OrderedDict(),
-                    "assert_records": [],
+                    "literal_scan_records": [],
                 }
             continue
 
@@ -330,30 +409,62 @@ def parse_diff(text):
         if current_path is None:
             continue
 
+        info = files[current_path]
+
         if raw_line.startswith("+"):
             content = raw_line[1:]
-            info = files[current_path]
             info["added_lines"].append(content)
 
             if info["is_test"]:
-                matched_func = try_match_test_func(content)
-                if matched_func is not None:
-                    current_func_name = matched_func
-                    if current_func_name not in info["funcs"]:
-                        info["funcs"][current_func_name] = {
-                            "all_lines": [],
-                            "assert_lines": [],
-                        }
+                if pending_each:
+                    m = MULTILINE_EACH_CLOSE_RE.match(content)
+                    if m:
+                        current_func_name = m.group(1)
+                        start_func(current_func_name, info)
+                        pending_each = False
+                elif MULTILINE_EACH_OPEN_RE.match(content):
+                    pending_each = True
+                    # Clear scope immediately: rows inside the pending
+                    # table (and any line if the table never closes within
+                    # this diff) must not keep being attributed to whatever
+                    # test preceded this opener. MULTILINE_EACH_CLOSE_RE
+                    # re-establishes the real scope once the title is seen.
+                    current_func_name = None
+                else:
+                    matched_func = try_match_test_func(content)
+                    if matched_func is not None:
+                        current_func_name = matched_func
+                        start_func(current_func_name, info)
+
                 if current_func_name is not None:
                     info["funcs"][current_func_name]["all_lines"].append(content)
                     if ASSERTION_RE.search(content):
                         info["funcs"][current_func_name]["assert_lines"].append(content)
-                if ASSERTION_RE.search(content):
-                    info["assert_records"].append((content, current_func_name))
+                info["literal_scan_records"].append((content, current_func_name))
             continue
 
-        # Removed ("-") and context (" ") lines don't affect added-line
-        # collection; diff metadata lines are already handled above.
+        if raw_line.startswith(" ") and info["is_test"] and not pending_each:
+            # Context line: never an added line, so it never contributes to
+            # literal-sharing / assertion-roulette / overstated-coverage
+            # bodies. But when it's the (unmodified) `def test_foo(...):`
+            # line enclosing an edit deeper in the function - the common
+            # shape when only an existing test's assertions are rewritten -
+            # it's still needed to scope subsequently ADDED lines to the
+            # right function. Without this, editing assertions inside an
+            # existing test (without also touching the def line itself)
+            # leaves current_func_name at None/stale and silently drops
+            # those added assertions from assertion-roulette /
+            # overstated-coverage (tautology-literal-sharing is unaffected -
+            # it doesn't require func scoping).
+            content = raw_line[1:]
+            matched_func = try_match_test_func(content)
+            if matched_func is not None:
+                current_func_name = matched_func
+                start_func(current_func_name, info)
+            continue
+
+        # Removed ("-") lines don't affect added-line collection; diff
+        # metadata lines are already handled above.
         continue
 
     return files
@@ -386,11 +497,12 @@ def check_tautology_literal_sharing(files, findings, notes):
             impl_literal_sources[literal].append((path, line, excluded_ctx))
 
     # A literal is a real tautology candidate only if it appears on at least
-    # one impl line that ISN'T exception/log-message context. A literal that
-    # appears exclusively inside raise/throw/Error(/log/print lines is a
-    # legitimate error-message/log-message value being verified, not a
-    # copy-pasted implementation value - exclude it from the comparison pool
-    # (but always record the exclusion in notes; never a silent skip).
+    # one impl line that ISN'T exception/log-message/comment context. A
+    # literal that appears exclusively inside raise/throw/Error(/log/print/
+    # comment lines is a legitimate error-message/log-message value being
+    # verified (or just comment prose), not a copy-pasted implementation
+    # value - exclude it from the comparison pool (but always record the
+    # exclusion in notes; never a silent skip).
     impl_literals = {}
     excluded_only_literals = set()
     for literal, sources in impl_literal_sources.items():
@@ -405,7 +517,7 @@ def check_tautology_literal_sharing(files, findings, notes):
     for path, info in files.items():
         if not info["is_test"]:
             continue
-        for line, func_name in info["assert_records"]:
+        for line, func_name in info["literal_scan_records"]:
             for literal in extract_literals(line):
                 if literal in excluded_only_literals:
                     excluded_shared.add(literal)
@@ -424,7 +536,7 @@ def check_tautology_literal_sharing(files, findings, notes):
                         "file": path,
                         "test_name": func_name,
                         "message": (
-                            "literal {!r} appears in both a test assertion in {} and an "
+                            "literal {!r} appears in both a test addition in {} and an "
                             "implementation addition in {} - the test may be locking in a "
                             "copy-pasted value instead of independently verifying behavior"
                         ).format(literal, path, impl_path),
@@ -438,7 +550,7 @@ def check_tautology_literal_sharing(files, findings, notes):
 
     if excluded_shared:
         notes.append(
-            "excluded {} shared literal(s) in exception/log message context".format(
+            "excluded {} shared literal(s) in exception/log/comment context".format(
                 len(excluded_shared)
             )
         )
@@ -629,6 +741,16 @@ def main(argv=None):
             text = Path(args.diff_file).read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
         print("assertion_audit: failed to read diff file: {}".format(exc), file=sys.stderr)
+        return 2
+
+    if text.strip() and not looks_like_unified_diff(text):
+        print(
+            "assertion_audit: input does not look like a unified diff (no +++/---/"
+            "diff --git markers found); refusing to silently PASS on what may be raw "
+            "file content. Convert untracked files to a unified diff first, e.g. "
+            "`git diff --no-index /dev/null <file>`.",
+            file=sys.stderr,
+        )
         return 2
 
     try:

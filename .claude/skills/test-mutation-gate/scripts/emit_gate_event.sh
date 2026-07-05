@@ -14,9 +14,13 @@
 #
 # Sends an agent_run event (test-mutation-gate phase, loop-ops event schema
 # v1) to kanade0404/loop-ops via the GitHub Contents API when LOOP_OPS_TOKEN
-# is set, otherwise appends the event to .claude/test-gate-events.jsonl in
-# the current repo. Metrics emission is best-effort and must never affect
-# the gate's own PASS/BLOCK verdict, so this script always exits 0.
+# is set, otherwise appends the event to
+# .cache/test-mutation-gate/gate-events.jsonl in the current repo (a
+# dedicated cache path, not the agent config directory, and covered by this
+# repo's distributed .gitignore so the mandatory gate never leaves an
+# untracked file behind for commit-cleanliness / verify-done checks to trip
+# over). Metrics emission is best-effort and must never affect the gate's
+# own PASS/BLOCK verdict, so this script always exits 0.
 #
 # Intentionally no `set -e`: every step below has an explicit fallback, and
 # a mid-script abort would defeat that (best-effort) design.
@@ -130,17 +134,26 @@ if [ -n "${LOOP_OPS_TOKEN:-}" ]; then
     --arg content "$content_b64" \
     '{message: $message, content: $content}')"
 
-  if curl -sf -X PUT "https://api.github.com/repos/kanade0404/loop-ops/contents/${event_path}" \
+  # -H "Content-Type: application/json" is required: curl -d otherwise
+  # defaults to application/x-www-form-urlencoded, which the GitHub Contents
+  # API does not accept for a JSON body - without it the PUT can fail and
+  # this falls through to the local-file branch below silently.
+  # --connect-timeout/--max-time: this call must stay best-effort - a slow
+  # or unresponsive network must not hang the gate itself, it should fail
+  # fast and fall through to the local JSONL sink below.
+  if curl -sf --connect-timeout 5 --max-time 10 \
+      -X PUT "https://api.github.com/repos/kanade0404/loop-ops/contents/${event_path}" \
       -H "Authorization: Bearer ${LOOP_OPS_TOKEN}" \
       -H "Accept: application/vnd.github+json" \
+      -H "Content-Type: application/json" \
       -d "$body" >/dev/null 2>&1; then
     sent=1
   fi
 fi
 
 if [ "$sent" -ne 1 ]; then
-  mkdir -p .claude
-  printf '%s\n' "$payload" >> .claude/test-gate-events.jsonl
+  mkdir -p .cache/test-mutation-gate
+  printf '%s\n' "$payload" >> .cache/test-mutation-gate/gate-events.jsonl
 fi
 
 exit 0
