@@ -54,7 +54,7 @@ class TestDistributableRules(unittest.TestCase):
                 self.assertIsNotNone(fm)
                 self.assertNotRegex(
                     fm.group(1),
-                    r"^root:\s*true\s*$",
+                    re.compile(r"^root:\s*true\s*$", re.M),
                     f"{rel}: root rule は配布しない (rules-local/ へ)",
                 )
 
