@@ -17,10 +17,11 @@ FRONTMATTER_RE = re.compile(r"^---\r?\n(.*?)\r?\n---\r?\n", re.S)
 
 
 def rule_files(directory: str) -> list[Path]:
+    # nested rule (rules/**/*.md) も staging・fetch の対象なので再帰的に検証する
     path = REPO_ROOT / directory
     if not path.is_dir():
         return []
-    return sorted(p for p in path.iterdir() if p.is_file())
+    return sorted(p for p in path.rglob("*") if p.is_file())
 
 
 class TestDistributableRules(unittest.TestCase):

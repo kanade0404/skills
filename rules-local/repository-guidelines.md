@@ -26,7 +26,7 @@ Each skill directory uses this layout:
 - `scripts/*`: helper tools.
 - `assets/*`: templates and other reusable artifacts.
 
-Generated outputs (`.claude/`, `.agents/`, `.codex/`, root `AGENTS.md` / `CLAUDE.md`) are materialized by `node scripts/rulesync-sync.mjs` and verified by the drift CI — edit the sources under `skills/` / `rules/`, never the generated files.
+Generated outputs (`.claude/`, `.agents/`, `.codex/`, root `AGENTS.md` / `CLAUDE.md`) are materialized by `node scripts/rulesync-sync.mjs` and verified by the drift CI — edit the sources under `skills/` / `rules/` / `rules-local/`, never the generated files. Catalog-specific guidance belongs in `rules-local/`, distributable rules in `rules/`.
 
 Third-party skills are generally not vendored here; consumers `rulesync fetch` upstream repositories directly. Explicit copy-in exceptions must record source and license information inside the skill directory. Do not maintain a duplicated skill inventory in `README.md` or rules.
 
