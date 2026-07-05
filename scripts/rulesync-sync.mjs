@@ -20,17 +20,19 @@ const check = process.argv.includes('--check');
 // Stage the source-of-truth feature content into `.rulesync/` for `generate`.
 // Only features with real content are staged; commands/hooks/subagents are
 // placeholder-only (README without frontmatter) and would fail rulesync parsing.
-// rules/ は実コンテンツを持つため staging する (README.md は frontmatter を
-// 持たない説明ファイルなので除外)。
+// rules/ は配布用 (consumer が fetch で丸ごと受け取る)、rules-local/ はこの repo
+// 専用 (root rule 等。配布 feature には含まれない) — 自前生成では両方を staging する。
 const stage = join(ROOT, '.rulesync');
 rmSync(stage, { recursive: true, force: true });
 mkdirSync(stage, { recursive: true });
 cpSync(join(ROOT, 'skills'), join(stage, 'skills'), { recursive: true });
 copyFileSync(join(ROOT, 'permissions.json'), join(stage, 'permissions.json'));
 mkdirSync(join(stage, 'rules'), { recursive: true });
-for (const entry of readdirSync(join(ROOT, 'rules'))) {
-  if (entry.endsWith('.md') && entry !== 'README.md') {
-    copyFileSync(join(ROOT, 'rules', entry), join(stage, 'rules', entry));
+for (const dir of ['rules', 'rules-local']) {
+  for (const entry of readdirSync(join(ROOT, dir))) {
+    if (entry.endsWith('.md') && entry !== 'README.md') {
+      copyFileSync(join(ROOT, dir, entry), join(stage, 'rules', entry));
+    }
   }
 }
 

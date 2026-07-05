@@ -14,7 +14,8 @@ This repository is a catalog and **rulesync distribution source** for Claude Cod
 `rulesync fetch` reads top-level feature directories at the repository root (not `.rulesync/`):
 
 - `skills/<name>/`: Agent Skills. The directories and `SKILL.md` frontmatter are the inventory source of truth.
-- `rules/`: cross-cutting rules (this file included). `README.md` is documentation, not a rule.
+- `rules/`: **distributable** cross-cutting rules. Consumers fetch every file in this directory, so it must contain only frontmattered rule files (no README, no repo-local content) — machine-checked by `tests/`.
+- `rules-local/`: repo-local rules (this file included). Staged into this repo's own generated configs by `scripts/rulesync-sync.mjs` but **not** part of the fetched `rules` feature.
 - `subagents/`, `commands/`, `hooks/`: distribution feature slots, currently placeholders (README only).
 
 Each skill directory uses this layout:
