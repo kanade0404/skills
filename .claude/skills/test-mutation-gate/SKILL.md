@@ -1,18 +1,19 @@
 ---
 name: test-mutation-gate
 description: >-
-  テスト変更を含む diff に対して静的 assertion 監査を行い、PASS/BLOCK
+  テスト変更を含む diff に対して静的 assertion 監査 (Phase 1) と unit テスト限定の mutation smoke
+  (Phase 2、実コードへの変異注入 + 再実行) を行い、PASS/BLOCK
   を判定するゲート用スキル。tautology-literal-sharing (critical) / assertion-roulette /
   overstated-coverage / boundary-gap の 4 チェックを正規表現ベースで実行し、critical が 1 件でもあれば
-  BLOCK として呼び出し元に差し戻す。主経路は `tdd` Step 3.5 (GREEN 確認後・commit
-  前)・`pr-review-respond` Phase C (VALID 修正のテスト側 diff)・`verify-done` Step 4
-  (完了宣言直前)
+  BLOCK として呼び出し元に差し戻す。加えて対象が unit テスト (プロセス内で完結・外部 I/O 無し) の場合のみ
+  `scripts/mutate_and_run.py` で変異注入を行い、survived mutant が 1 件でもあれば BLOCK にする。主経路は
+  `tdd` Step 3.5 (GREEN 確認後・commit 前)・`pr-review-respond` Phase C (VALID 修正のテスト側
+  diff)・`verify-done` Step 4 (完了宣言直前)
   の各本文に組み込まれた強制サブステップ呼び出しであり、ユーザからの直接要請にも対応する。「このテスト検出力ある?」「テスト弱くない?」「assertion
-  監査して」「tautology
-  チェックして」「このテスト実装をなぞってるだけじゃない?」「テストがバグをロックインしてないか見て」のような口語、いずれでも必ず起動すること。テストコードの網羅的レビューは
-  `test-review`、push 後の CI 赤対応は `ci-self-heal`、skill の eval trigger JSON 採点は
-  `skill-builder` Mode B、mutation smoke (実コードへの変異注入 + 再実行) は Phase 2
-  未実装であり、いずれも本スキルの範囲外。
+  監査して」「tautology チェックして」「このテスト実装をなぞってるだけじゃない?」「テストがバグをロックインしてないか見て」「このテスト
+  mutation testing して」のような口語、いずれでも必ず起動すること。テストコードの網羅的レビューは `test-review`、push 後の
+  CI 赤対応は `ci-self-heal`、skill の eval trigger JSON 採点は `skill-builder` Mode
+  B、テストスイート全体の mutation score 算出 (Stryker/mutmut 相当の運用) は、いずれも本スキルの範囲外。
 allowed-tools:
   - Read
   - Bash
@@ -31,7 +32,7 @@ allowed-tools:
 2. **同一エージェントが実装とテストを同時に書くと tautological / self-consistent assertion が生まれる。** これが実測で最頻出かつ最高 severity の欠陥だった。実例: cursor のバグをそのまま expected 値として固定し、バグを仕様として lock-in した assertion。frozen dataclass 同士を同一の構成引数で構築して比較しただけの自明な等価性検証。実装側のハイフン/アンダースコア混同をテスト側にもそのまま複製し、バグを検出不能にしていたケース。いずれも実装者自身がテストを書いたときに起きる特有のパターンで、他人がレビューしない限り自己相似的に見逃される。
 3. **テスト名が主張する検証内容と実際の assertion が乖離するケースは、これまで外部 bot 頼みだった。** 例えば「callable であることを検証する」と名乗りながら実際には `Success` フラグの有無しか assert していない、といった乖離は CodeRabbit / Devin のレビューが指摘するまで気づかれなかった。本スキルはこれを PR 起票前・commit 前の内部ゲートとして先取りする。
 
-Phase 1 のスコープは **静的 assertion 監査のみ**。実コードへの変異注入と再実行で検出力を実測する mutation smoke は Phase 2 で計画中であり、現時点では範囲外 (詳細は「このスキルがやらないこと」「既知の限界」を参照)。
+Phase 1 は **静的 assertion 監査**、Phase 2 は **unit テスト限定の mutation smoke** (実コードへの変異注入 + 再実行で検出力を実測する) を担う。いずれも本スキルの範囲であり、対象がテストスイート全体の mutation score 算出やツール導入である場合のみ範囲外 (詳細は「このスキルがやらないこと」「既知の限界」を参照)。
 
 ---
 
@@ -42,16 +43,17 @@ Phase 1 のスコープは **静的 assertion 監査のみ**。実コードへ�
 - `tdd` Step 3.5: GREEN 確認後・commit 前 (実装とテストが両方揃った時点で検出力を審査する)
 - `pr-review-respond` Phase C: VALID 修正が既存テストの assertion / 期待値そのものを書き換える時 (「Fixed in `<SHA>`」返信前)
 - `verify-done` Step 4: 完了宣言の直前、対象 diff にテスト変更が含まれる時
-- ユーザから「このテスト検出力ある?」「テスト弱くない?」「assertion 監査して」「tautology チェックして」「このテスト実装をなぞってるだけじゃない?」「テストがバグをロックインしてないか見て」のような要請があった時
+- ユーザから「このテスト検出力ある?」「テスト弱くない?」「assertion 監査して」「tautology チェックして」「このテスト実装をなぞってるだけじゃない?」「テストがバグをロックインしてないか見て」「このテスト mutation testing して」のような要請があった時
 
 逆に **起動しない / 起動しても意味がない場面**:
 
 - 対象 diff にテストファイルの変更が一切含まれない (実装コードのみの変更)
 - 自明な scaffolding 変更のみ (fixture の import 追加、conftest.py のパス変更等で assert 文自体は 1 行も変わっていない)
 - テストコードの網羅的なレビュー (smell カタログ全体、seam 設計、flakiness 分類等) が欲しい場合 → `test-review`
-- push 後に CI が赤くなった場合の対応 → `ci-self-heal` (本スキルは静的読解のみで CI を実行しない)
+- push 後に CI が赤くなった場合の対応 → `ci-self-heal` (本スキルは静的読解 + mutation smoke のみで CI を実行しない)
 - skill の eval trigger JSON (should_trigger の付与が妥当か) を採点したい場合 → `skill-builder` Mode B
-- 実コードに変異を注入してテストが検出できるかを実測したい場合 → 現時点では未実装 (Phase 2 予定)
+- integration/E2E/DB テストに対する mutation smoke を実行したい場合 → Step 2.5 は unit テストのみが対象 (コスト・副作用のため対象外)
+- テストスイート全体の mutation score 算出や Stryker/mutmut 等ツールの導入を検討したい場合 → 本スキルは変更 diff 周辺の smoke のみ (`research-practices` 等の領域)
 
 ---
 
@@ -96,19 +98,29 @@ untracked な新規テストファイルは `--diff-file` にそのまま渡さ�
 
 exit code: `PASS` = 0 / `BLOCK` = 1 / 入力エラー = 2。正規表現ベースで Python / TypeScript / JavaScript / Go に対応し、AST は使わない (限界は §既知の限界を参照)。
 
+### Step 2.5 — mutation smoke (unit テストのみ)
+
+対象が **unit テスト** (プロセス内で完結・外部 I/O 無し) の場合のみ実行する。integration/E2E/DB テストはコスト・副作用の理由で対象外 — 実行するかどうか迷ったら対象外側に倒す (assertion 監査の Step 0 とは逆に、ここは安全側 = skip 側に倒す)。
+
+1. `uv run --no-project python "${CLAUDE_SKILL_DIR}/scripts/mutate_and_run.py" --impl-file <path> --test-cmd '<unit テストを実行するシェルコマンド>' [--max-mutations 3] [--timeout-sec 120]` を実行する。Step 2 と同じ uv → python3 の順で fallback するが、**手動 fallback は無い** — `python3` も無ければ手動で変異を作ることはせず `SKIP` 扱いにする (静的監査のみで判定し、その旨を notes に残す)。
+2. bool 反転 / 比較演算子反転 / off-by-one の変異を最大 `--max-mutations` 件注入し、1 件ずつ test-cmd を再実行する。全 survived を `survived: []` に列挙し、`caught`/`mutations_total` を記録する (出力形式は `scripts/mutate_and_run.py` のモジュール docstring 参照)。
+3. 変異候補が 0 件 (`SKIP`) の場合、対象コードが変異不能 seam である可能性を疑う → `references/mutation-recipes.md` の fallback (純関数抽出 → `tidy-first` の structural commit) → それも不可なら `references/waiver-fallback.md` の waiver。
+4. survived mutant が 1 件以上あれば、その行・変異種別を Step 3 の判定に持ち込む (`BLOCK`)。
+
 ### Step 3 — 判定
 
 - スクリプトの `verdict` をそのまま採用する。critical ≥ 1 なら `BLOCK`。手動チェックリスト実行時も同じ基準 (critical ≥ 1 → BLOCK) を Claude 自身が適用する。
-- `summary.notes` が非空なら、結果ブロックに必ず転記する (テストのみ diff で tautology チェックが skip された場合や、例外/ログ文脈のリテラル共有を除外した場合等、判定の前提を握りつぶさない)。
+- Step 2.5 を実行した場合、mutation smoke の survived ≥ 1 も `BLOCK` に統合する (静的監査が PASS でも mutation smoke が BLOCK なら総合判定は `BLOCK`)。
+- `summary.notes` が非空なら、結果ブロックに必ず転記する (テストのみ diff で tautology チェックが skip された場合や、例外/ログ文脈のリテラル共有を除外した場合等、判定の前提を握りつぶさない)。mutation smoke の `notes` (regex ベースの構文破壊リスク、build error による caught 等) も同様に転記する。
 - `BLOCK` の場合、呼び出し元に差し戻す:
-  - `tdd` → Step 1 (RED) に戻り、tautological / self-consistent な assertion を書き直す
+  - `tdd` → Step 1 (RED) に戻り、tautological / self-consistent な assertion を書き直す、または survived mutant の行を検出できるアサーションを追加する
   - `pr-review-respond` Phase C → 修正をやり直す。この段階では VALID スレッドへの返信・resolve は行わない
   - `verify-done` Step 4 → 完了宣言を保留し、Step 4 (未保存・未 commit 変更の点検) より前の状態として扱う
-- **waiver 手順**: critical findings を偽陽性と判断する場合のみ、実装を進めてよい。ただし gate 結果に `waiver: <理由 1 行>` を必ず残す (例: `waiver: frozen dataclass の __eq__ 契約検証であり tautology ではない`)。理由を書かずに findings を握りつぶすことは禁止。
+- **waiver 手順**: critical findings を偽陽性と判断する場合のみ、実装を進めてよい。ただし gate 結果に `waiver: <理由 1 行>` を必ず残す (例: `waiver: frozen dataclass の __eq__ 契約検証であり tautology ではない`)。理由を書かずに findings を握りつぶすことは禁止。mutation smoke の変異不能 seam に対する waiver は `references/waiver-fallback.md` のテンプレに従う。
 
 ### Step 4 — 計測 emit + 結果返却
 
-`scripts/emit_gate_event.sh` を呼び、判定結果を loop-ops へ記録する (best-effort、詳細は §loop-ops 計測)。送信の成否に関わらず、§出力フォーマットの結果ブロックを呼び出し元に返す。
+`scripts/emit_gate_event.sh` を呼び、判定結果を loop-ops へ記録する (best-effort、詳細は §loop-ops 計測)。Step 2.5 を実行した場合は `mutations_caught` / `mutations_total` の 2 引数も追加で渡す (未実行なら省略し後方互換を保つ)。送信の成否に関わらず、§出力フォーマットの結果ブロックを呼び出し元に返す。
 
 ---
 
@@ -133,24 +145,29 @@ exit code: `PASS` = 0 / `BLOCK` = 1 / 入力エラー = 2。正規表現ベー�
 - mode: static-script (uv) | static-script (python3) | manual-fallback
 - diff scope: <対象ファイル一覧>
 - findings: critical=<n> warn=<n>
+- mutation smoke: <not-run | SKIP (理由) | caught=<n>/<mutations_total> survived=<n>>
 - notes: <summary.notes を verbatim、無ければ "-">
 
 | check | severity | file | test | message |
 |---|---|---|---|---|
 | tautology-literal-sharing | critical | path/to/test.py | test_foo | <1 行要約> |
 
+| survived mutant (line) | kind | before → after |
+|---|---|---|
+| 42 | comparison-flip | `>=` → `>` |
+
 waiver: <理由 1 行 または "-">
 
 → 呼び出し元への指示: <1 行。例: "tdd Step 1 に戻り assertion を書き直す">
 ```
 
-`PASS` のときも同じ枠を使う (findings が 0 件の表は省略してよい)。呼び出し元への指示は必ず 1 行で具体的に書く (「差し戻す」だけでなく「どのステップに戻るか」まで)。
+`PASS` のときも同じ枠を使う (findings / survived mutant が 0 件の表は省略してよい)。呼び出し元への指示は必ず 1 行で具体的に書く (「差し戻す」だけでなく「どのステップに戻るか」まで)。
 
 ---
 
 ## loop-ops 計測
 
-`scripts/emit_gate_event.sh` は kanade0404/loop-ops の event schema v1 に既存する `agent_run` イベント種別を再利用する (`phase="test-mutation-gate"`, `result_subtype="pass"|"block"`, `caller`, `findings_critical`, `findings_warn` 等をフィールドに載せる)。専用の `gate_result` のようなイベント種別を新設していない理由は、loop-ops 側の `schema/event.v1.schema.json` と `docs/schema.md` の更新を待たずに計測を開始できるため。専用種別が本当に必要になった場合は、loop-ops リポジトリの schema とドキュメントを**同一 PR で**更新する必要がある。
+`scripts/emit_gate_event.sh` は kanade0404/loop-ops の event schema v1 に既存する `agent_run` イベント種別を再利用する (`phase="test-mutation-gate"`, `result_subtype="pass"|"block"`, `caller`, `findings_critical`, `findings_warn` 等をフィールドに載せる)。Step 2.5 (mutation smoke) を実行した呼び出しでは、任意の第 6・第 7 引数として `mutations_caught` / `mutations_total` も渡せる (未指定なら省略され、payload に含まれない — 「mutation smoke を実行しなかった」と「実行して 0 件だった」を区別するため、後方互換のため省略時に 0 を送ることはしない)。専用の `gate_result` のようなイベント種別を新設していない理由は、loop-ops 側の `schema/event.v1.schema.json` と `docs/schema.md` の更新を待たずに計測を開始できるため。専用種別が本当に必要になった場合は、loop-ops リポジトリの schema とドキュメントを**同一 PR で**更新する必要がある。
 
 送信先は環境変数 `LOOP_OPS_TOKEN` の有無で切り替わる: あれば GitHub Contents API `PUT` で `metrics/events/YYYY-MM/` 配下に 1 event = 1 file として送信する。無ければカレントリポジトリの `.claude/test-gate-events.jsonl` に 1 行 append する (consumer 側で gitignore することを推奨)。**送信失敗はゲート判定に一切影響させない** — best-effort。
 
@@ -177,15 +194,16 @@ group by caller;
 - **一般コードレビュー findings**: 実装コード全般の指摘は `code-review` の領域。本スキルはテスト側 assertion のみを見る。
 - **CI 修復 commit**: push 後の CI 失敗対応・root cause 特定・修正コミットは `ci-self-heal` の成果物。本スキルは commit 前の静的読解のみ。
 - **eval trigger JSON の採点結果**: skill の should_trigger 判定の妥当性採点は `skill-builder` Mode B の成果物。
-- **mutation smoke の変異 diff**: 実コードへの変異注入 + 再実行によるテスト検出力の実測は Phase 2 で計画中。現時点では静的読解のみで、変異 diff は生成しない。
+- **テストスイート全体の mutation score 算出**: Stryker / mutmut の代替はしない — 本スキルは変更 diff 周辺の unit テストに対する smoke (最大 `--max-mutations` 件の局所的な変異注入) のみで、コードベース全体を対象にした網羅的なミューテーションスコア計測は範囲外。
 - **Stryker / mutmut 等ツール導入 PR**: 外部 mutation testing ツールの導入・設定 PR は本スキルの成果物ではない (導入自体を検討する場合は `research-practices` 等の領域)。
 
 ---
 
 ## 既知の限界
 
-- **正規表現ベースの偽陽性/偽陰性**: AST を使わないため、複雑な式やマクロ、動的生成コードでは誤検出・見逃しが起きる。critical 判定であっても機械的な確信度は高くない — waiver 手順で人間 (Claude) の判断を挟む設計にしている。
+- **正規表現ベースの偽陽性/偽陰性 (Step 2 静的監査)**: AST を使わないため、複雑な式やマクロ、動的生成コードでは誤検出・見逃しが起きる。critical 判定であっても機械的な確信度は高くない — waiver 手順で人間 (Claude) の判断を挟む設計にしている。
 - **対応言語は Python / TypeScript / JavaScript / Go のみ**: それ以外の言語 (Rust, Ruby, Java 等) は §手動チェックリストへの degrade が前提で、スクリプトによる自動判定は効かない。
-- **waiver は自己申告**: critical findings を偽陽性と判断する主体が実装者自身であるため、見逃しを完全には防げない。第三者レビュー (`test-review` / `code-review`) との併用が望ましい。
-- **Phase 2 (mutation smoke) 未実装**: 実コードへの変異注入 + 再実行によるテスト検出力の実測は今後の拡張予定。
+- **waiver は自己申告**: critical findings / 変異不能 seam を偽陽性・対象外と判断する主体が実装者自身であるため、見逃しを完全には防げない。第三者レビュー (`test-review` / `code-review`) との併用が望ましい。
+- **正規表現ベースの構文破壊リスク (Step 2.5 mutation smoke)**: `scripts/mutate_and_run.py` の変異注入も行単位の regex ベースであり、AST を使わない。文字列/コメントのマスキングは 1 行内で完結するため、複数行にまたがる文字列 (Python の triple-quote docstring 等) やブロックコメントの内部を誤って変異させる可能性がある。変異が構文を壊した場合の non-zero exit は「テストが検出した (caught)」と区別が付きにくいため、スクリプトは stderr のエラーメッセージから syntax/build error らしきものを検出し、`notes` に「これは実際のアサーション失敗ではなく構文破壊による可能性がある」旨を明記する — ただし判定 (caught 扱い) 自体は変えない。
+- **mutation smoke は unit テスト限定**: integration/E2E/DB テストはコスト・副作用のため Step 2.5 の対象外。それらの検出力を実測したい場合は本スキルの範囲外 (手動またはツール導入の検討が必要)。
 - **Phase 3 (test-canon-sync) 未実装**: レビュー指摘の蓄積 (ledger) を test-review の references / evals / rules へ蒸留するフィードバックループは今後の拡張予定。
