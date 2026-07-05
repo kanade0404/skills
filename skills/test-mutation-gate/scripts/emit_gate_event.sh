@@ -123,17 +123,17 @@ payload="$(jq -nc \
 
 sent=0
 
-if [ -n "${LOOP_OPS_TOKEN:-}" ]; then
-  month="$(date -u +%Y-%m)"
-  # $$ adds process-level uniqueness alongside epoch+RANDOM so concurrent
-  # invocations in the same second don't collide on the same event path.
-  event_path="metrics/events/${month}/agent_run-$(date +%s)-${RANDOM}-$$.json"
-  content_b64="$(printf '%s' "$payload" | base64 | tr -d '\n')"
-  body="$(jq -n \
-    --arg message "metrics: test-mutation-gate ${result_subtype}" \
-    --arg content "$content_b64" \
-    '{message: $message, content: $content}')"
+month="$(date -u +%Y-%m)"
+# $$ adds process-level uniqueness alongside epoch+RANDOM so concurrent
+# invocations in the same second don't collide on the same event path.
+event_path="metrics/events/${month}/agent_run-$(date +%s)-${RANDOM}-$$.json"
+content_b64="$(printf '%s' "$payload" | base64 | tr -d '\n')"
+body="$(jq -n \
+  --arg message "metrics: test-mutation-gate ${result_subtype}" \
+  --arg content "$content_b64" \
+  '{message: $message, content: $content}')"
 
+if [ -n "${LOOP_OPS_TOKEN:-}" ]; then
   # -H "Content-Type: application/json" is required: curl -d otherwise
   # defaults to application/x-www-form-urlencoded, which the GitHub Contents
   # API does not accept for a JSON body - without it the PUT can fail and
@@ -147,6 +147,19 @@ if [ -n "${LOOP_OPS_TOKEN:-}" ]; then
       -H "Accept: application/vnd.github+json" \
       -H "Content-Type: application/json" \
       -d "$body" >/dev/null 2>&1; then
+    sent=1
+  fi
+fi
+
+# Middle tier: developer machines usually have no LOOP_OPS_TOKEN exported but
+# do have an authenticated `gh` (the same account that owns loop-ops). Without
+# this tier every local gate invocation lands in the local JSONL only, loop-ops
+# sees zero agent_run events, and the gate-heartbeat monitor would alarm
+# forever. GH_PROMPT_DISABLED prevents gh from blocking on interactive auth.
+if [ "$sent" -ne 1 ] && command -v gh >/dev/null 2>&1; then
+  if printf '%s' "$body" | GH_PROMPT_DISABLED=1 gh api -X PUT \
+      "repos/kanade0404/loop-ops/contents/${event_path}" \
+      --input - >/dev/null 2>&1; then
     sent=1
   fi
 fi
