@@ -1,28 +1,20 @@
 ---
 name: issue-driven-development
 description: |
-  GitHub issue に `claude:ready` ラベルが付いた 1 件を受け取り、排他ロック → 入口ゲート
-  (acceptance criteria 検証) → branch 作成 → 実装 → ローカルテスト green → commit →
-  push → **PR 作成まで** をヘッドレスで完遂するワークフロー。Linear 版
-  (`linear-issue-driven-development`) の GitHub 移植で、最大の設計差分は **イベント分割**:
-  本スキルは CI を watch せず PR 作成で終了し、CI 修正 (`ci-self-heal`) とレビュー対応
-  (`pr-review-respond`) は GitHub Actions の イベントトリガによる有界な反応として別途
-  走る。ループはどこにも while として存在せず、イベント連鎖として現れる。
-
-  acceptance criteria の無い issue は**実装せず** `ambiguous-issue` でエスカレートする
-  (自走ループの成否は issue の入口品質で決まるため、推測で実装しない)。エスカレーション
-  は `needs-human` ラベル + 構造化コメント (loop-escalation:v1) で行い、反復上限は
-  `claude-loop:N` ラベルで PR に永続化する。
-
-  Routine / GitHub Actions (ラベルイベント) から起動される主経路、人間が
-  `/gh-issue owner/repo#123` 相当で手動再実行する時、「この issue やっておいて」
-  「claude:ready の issue を処理して」「issue から PR まで自走して」のような要請、
-  いずれでも必ず起動すること。
-
-  範囲外: Linear issue (`linear-issue-driven-development`)、ローカルの対話的な実装後の
-  出荷 (`shipping`)、CI 修正単体 (`ci-self-heal`)、レビュー対応単体 (`pr-review-respond`)、
-  conflict 解消単体 (`pr-conflict-resolver`)、PR の merge (人間ゲート — 本スキルは
-  merge しない)。実行環境はクラウド (Actions runner / Anthropic sandbox) を想定し、
+  GitHub issue に `claude:ready` ラベルが付いた 1 件を、排他ロック → 入口ゲート
+  (acceptance criteria 検証) → branch → 実装 → ローカルテスト green → commit → push →
+  **PR 作成まで**ヘッドレスで完遂するワークフロー。`linear-issue-driven-development`
+  の GitHub 移植で、最大の差分は**イベント分割**: CI を watch せず PR 作成で終了し、
+  CI 修正 (`ci-self-heal`) とレビュー対応 (`pr-review-respond`) は Actions のイベント
+  トリガによる有界な反応として別途走る。acceptance criteria の無い issue は実装せず
+  `ambiguous-issue` でエスカレートする (推測で実装しない)。エスカレーションは
+  `needs-human` + 構造化コメント (loop-escalation:v1)、反復上限は `claude-loop:N`
+  ラベルで PR に永続化する。Routine / Actions (ラベルイベント) からの起動が主経路。
+  `owner/repo#123` 形式の手動再実行、「この issue やっておいて」「claude:ready の
+  issue を処理して」「issue から PR まで自走して」でも必ず起動すること。範囲外:
+  Linear issue (`linear-issue-driven-development`)、対話的な実装後の出荷 (`shipping`)、
+  CI 修正単体 (`ci-self-heal`)、レビュー対応単体 (`pr-review-respond`)、conflict 解消
+  単体 (`pr-conflict-resolver`)、PR の merge (人間ゲート)。実行環境はクラウドを想定し、
   素の `git` / `gh` だけで動くこと。
 allowed-tools:
   - Read
