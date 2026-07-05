@@ -53,7 +53,39 @@ setup skill only scaffolds the per-repo config (`docs/agents/*.md`, the `## Agen
 skills` block) that those skills read; it is a no-op in isolation. Vendor the sibling
 skills the same way if you intend to use the rest of the suite.
 
+## Accepted deviations from local conventions, and known upstream critiques
+
+This is a **byte-for-byte vendored copy**, so upstream content is kept verbatim even
+where it diverges from this repo's local conventions or where automated reviewers flag
+it. Editing the vendored files would break the `diff == 0`-against-pinned-upstream
+guarantee that is the whole point of the copy-in (supply-chain auditability). The items
+below are therefore **intentionally not patched here**; where they are genuine upstream
+bugs, the right fix is a PR/issue against `mattpocock/skills`, not a local fork.
+
+Deviations from *this repo's* conventions (accepted for fidelity):
+
+- **Description voice** — `SKILL.md`'s frontmatter description is imperative
+  ("Configure this repo…"), not the third-person form AGENTS.md prefers. This skill is
+  `disable-model-invocation: true` (slash-command only), so the description is never used
+  for model auto-invocation and the third-person rule's purpose (trigger matching) does
+  not apply.
+- **Flat file layout** — the seed templates (`domain.md`, `issue-tracker-*.md`,
+  `triage-labels.md`) sit at the skill root rather than under `references/`/`assets/`.
+  `SKILL.md` links them with root-relative paths (`./issue-tracker-github.md`); moving
+  them would force edits to `SKILL.md` too, breaking fidelity there as well.
+
+Upstream recipe critiques (raised by automated reviewers; upstream's to fix):
+
+- `issue-tracker-github.md` — `gh pr list --json authorAssociation` may not be a
+  supported `--json` field on current `gh`; `gh issue/pr list` default `--limit` is 30
+  (no explicit pagination in the recipe).
+- `issue-tracker-gitlab.md` — `glab issue list -F json` / `--state` flag usage may not
+  match current `glab`.
+- `SKILL.md` step 4 — when both `CLAUDE.md` and `AGENTS.md` exist it edits only
+  `CLAUDE.md`, so a Codex-side `AGENTS.md` would not receive the `## Agent skills` block.
+
 ## Updating
 
 Re-run the copy against a newer upstream commit, update the pinned commit / retrieval
-date above, and re-verify the byte-for-byte claim.
+date above, and re-verify the byte-for-byte claim. If upstream fixes any of the recipe
+critiques above, bumping the pinned commit pulls the fix in automatically.
