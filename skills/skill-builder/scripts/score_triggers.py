@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -37,9 +38,11 @@ def load_preds(path: Path) -> dict[str, dict]:
 def confusion(cases: dict, preds: dict) -> dict:
     tp = fp = tn = fn = 0
     failures: list[tuple[str, str, str]] = []
+    missing: list[tuple[str, str]] = []
     for cid, case in cases.items():
         pred = preds.get(cid)
         if pred is None:
+            missing.append((cid, case["prompt"]))
             continue
         actual = bool(case["should_trigger"])
         predicted = bool(pred["predicted"])
@@ -53,7 +56,7 @@ def confusion(cases: dict, preds: dict) -> dict:
             failures.append(("FP", cid, case["prompt"]))
         else:
             tn += 1
-    return {"tp": tp, "fp": fp, "tn": tn, "fn": fn, "failures": failures}
+    return {"tp": tp, "fp": fp, "tn": tn, "fn": fn, "failures": failures, "missing": missing}
 
 
 def metrics(c: dict) -> dict:
@@ -89,6 +92,11 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cases", required=True, type=Path)
     ap.add_argument("--preds", required=True, type=Path)
+    ap.add_argument(
+        "--fail-on-mismatch",
+        action="store_true",
+        help="Exit non-zero when predictions mismatch or are missing.",
+    )
     args = ap.parse_args()
 
     cases = load_cases(args.cases)
@@ -125,6 +133,14 @@ def main() -> None:
         print("## Failures")
         for kind, cid, prompt in overall["failures"]:
             print(f"  [{kind}] {cid}: {prompt}")
+
+    if overall["missing"]:
+        print("## Missing predictions")
+        for cid, prompt in overall["missing"]:
+            print(f"  [MISSING] {cid}: {prompt}")
+
+    if args.fail_on_mismatch and (overall["failures"] or overall["missing"]):
+        sys.exit(1)
 
 
 if __name__ == "__main__":
