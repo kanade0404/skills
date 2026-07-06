@@ -21,6 +21,24 @@
 #        report the actual error.
 set -euo pipefail
 
+# Best-effort external timeout: this runs unattended, so a network stall on
+# `git fetch` must not block the whole conflict-resolution workflow
+# indefinitely. Prefer GNU coreutils `timeout`/`gtimeout` when present; fall
+# back to running the command directly when neither exists (e.g. a bare
+# macOS shell with no coreutils installed) rather than hard-failing every
+# invocation on a missing dependency.
+run_with_timeout() {
+  local secs="$1"
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$secs" "$@"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    gtimeout "$secs" "$@"
+  else
+    "$@"
+  fi
+}
+
 if [ "$#" -ne 1 ]; then
   echo "usage: $0 <base-branch>" >&2
   exit 2
@@ -28,8 +46,8 @@ fi
 
 base="$1"
 
-if ! git fetch origin "$base"; then
-  echo "error: 'git fetch origin $base' failed" >&2
+if ! run_with_timeout 30 git fetch origin "$base"; then
+  echo "error: 'git fetch origin $base' failed (or timed out)" >&2
   exit 1
 fi
 
