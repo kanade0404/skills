@@ -73,7 +73,10 @@ gen_run_id() {
   elif command -v python3 >/dev/null 2>&1; then
     python3 -c 'import uuid; print(uuid.uuid4())'
   elif command -v node >/dev/null 2>&1; then
-    node -e 'console.log(crypto.randomUUID())'
+    # Use require("crypto") rather than the global `crypto` object: the
+    # global was only added in Node 19 (stable in 20), while
+    # require("crypto").randomUUID has worked since Node 14.17/15.6.
+    node -e 'console.log(require("crypto").randomUUID())'
   else
     printf '%s-%s-%s\n' "$(date -u +%s%N)" "$$" "$RANDOM"
   fi
@@ -122,7 +125,9 @@ if [ "${1:-}" = "--reap" ]; then
   now=$(date -u +%s)
   ensure_labels "$repo"
   reclaimed=0
-  numbers=$(gh issue list -R "$repo" --label "$LABEL_PROGRESS" --state open --json number --jq '.[].number')
+  # --limit: gh issue list defaults to 30 results, which would silently skip
+  # stale claude:in-progress issues once a repo has more open ones than that.
+  numbers=$(gh issue list -R "$repo" --label "$LABEL_PROGRESS" --state open --limit 1000 --json number --jq '.[].number')
   for num in $numbers; do
     age=$(lock_lease_age "$repo" "$num" "$now")
     if [ -z "$age" ] || [ "$age" -gt "$LEASE_TTL" ]; then

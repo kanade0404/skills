@@ -48,7 +48,7 @@ GitHub issue 1 件を「merge 可能な PR の材料」に変えるスキル。*
 
 - **A. トリガペイロード** (Actions の labeled イベント / Routine): `owner/repo` と issue 番号が渡される
 - **B. 手動**: `owner/repo#123` 形式の識別子
-- **C. 探索モード**: まず `scripts/acquire-lock.sh --reap $REPO` で失効した
+- **C. 探索モード**: まず `"${CLAUDE_SKILL_DIR}/scripts/acquire-lock.sh" --reap $REPO` で失効した
   `claude:in-progress` (crash した run) を `claude:ready` へ差し戻してから、
   対象 repo で `claude:ready` ラベルの issue を作成日昇順で 1 件取る:
   `gh issue list -R $REPO --label claude:ready --state open --json number --jq 'sort_by(.number) | .[0].number'`
@@ -75,8 +75,12 @@ Linear 版と違い**対象リポジトリの解決は不要** (issue が属す�
   のまま放置された issue は、次にこの issue へ触れたタイミング (単発呼び出し、
   または探索モードの `--reap` 事前スイープ) で自動的に `claude:ready` へ差し戻す。
 
+呼び出しは agent の作業ディレクトリ (対象リポジトリの checkout) ではなく本 skill の
+インストール先を指す `${CLAUDE_SKILL_DIR}` を起点にする — 対象リポジトリ側に
+`scripts/acquire-lock.sh` が無い consumer 環境では cwd 相対だと解決に失敗するため:
+
 ```bash
-scripts/acquire-lock.sh "$OWNER/$REPO" "$NUMBER"
+"${CLAUDE_SKILL_DIR}/scripts/acquire-lock.sh" "$OWNER/$REPO" "$NUMBER"
 ```
 
 | 終了コード | 意味 | 次のアクション |
