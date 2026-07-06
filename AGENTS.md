@@ -78,14 +78,16 @@ Treat this as a skill-content / distribution-source repository, not an applicati
 # PR push discipline
 
 PR ブランチへ push したら「push して報告」で終わらせない。次の 3 つの帰結が
-担保されるまで、その PR を離れない。手順の中身は各 skill が持つ — この rule は
-「いつ必ず起動するか」だけを定める:
+担保されるまで、その PR を離れない。rule が定めるのは帰結と「いつ必ずやるか」
+であり、手順の中身は skill が持つ (skill が無い環境でも帰結の担保は免除されない):
 
-1. **CI の帰結** — 起動した checks の完了まで追う (失敗時は root cause 特定へ。
-   `ci-self-heal` があればそれに委ねる)
-2. **レビュースレッドの終端** — 個別返信 + 集約サマリ。`pr-review-respond` を起動する
-3. **離れる前の監視** — merge / close・新規コメント・checks 失敗を検知する手段を
-   残す (イベントトリガ、無ければ `pr-monitor`)
+1. **CI の帰結** — 起動した checks の完了まで追う。失敗時は root cause 特定へ
+   (`ci-self-heal` があれば委ねる。推測修正の連投はしない)
+2. **レビュースレッドの終端** — 各スレッドへの個別返信 + 集約サマリコメント 1 件
+   (`pr-review-respond` があれば起動する)
+3. **離れる前の監視** — merge / close・新規レビューコメント・checks 失敗を検知する
+   手段を残す。イベントトリガが無ければ監視プロセスを設置する (`pr-monitor` が
+   担うのは merge / close の検知のみ。新規コメント・checks 失敗の検知は別途担保する)
 
 なぜ rule か: skill はトリガされて初めてロードされるため、「忘れずに起動する」
 保証だけは常駐する rule でしか担保できない (実例: push 後に P2 指摘 7 件が半日
