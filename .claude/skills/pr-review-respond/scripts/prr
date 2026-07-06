@@ -19,6 +19,12 @@
 
 set -euo pipefail
 
+# Force plain output even when the calling shell/CI forces ANSI color
+# (e.g. CLICOLOR_FORCE=1). `gh ... --json` must stay parseable by `jq`;
+# color codes embedded in JSON break every downstream subcommand.
+export NO_COLOR=1
+export CLICOLOR_FORCE=0
+
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 
 usage() {
