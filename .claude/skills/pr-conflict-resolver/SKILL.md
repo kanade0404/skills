@@ -84,8 +84,12 @@ push が走った可能性があるので `git status` で状態を確認し、�
 ## 2. base を merge して conflict を検出
 
 rebase ではなく **merge** を既定とする。PR の commit 履歴・署名 (Co-Authored-By 等) を
-壊さず、レビュー中の force-push による差分見失いも避けられるため。特別な指示で rebase を
-希望される場合のみ `git rebase "origin/$PR_BASE"` に切り替える。
+壊さず、レビュー中の force-push による差分見失いも避けられるため。**rebase への切り替えは
+サポートしない** — 同梱スクリプトは merge 専用に決定的な処理を組んでおり
+(`finalize.sh` は `MERGE_HEAD` の存在と非 force push を前提とする)、rebase は履歴を
+書き換えて force push が必要になる (「destructive git 禁止」のガードレールと矛盾する)
+うえ `finalize.sh` では完了処理できない。rebase を明示的に希望された場合は 4 章の手順で
+エスカレーションする。
 
 `scripts/resolve-merge.sh を正確に実行。フラグ追加禁止。`
 
@@ -128,7 +132,7 @@ bash "${CLAUDE_SKILL_DIR}/scripts/regen-lockfiles.sh" <conflict した lockfile 
 3. **import / 型定義 / API シグネチャ** は両側の変更を合算
 4. **テストファイル** は両側のケースを残し、重複は名前を変えて両立させる
 5. 解決後、conflict マーカー (`<<<<<<<`, `=======`, `>>>>>>>`) が残っていないことを
-   `grep -rnE '^<<<<<<<|^=======|^>>>>>>>' .` で確認する (`finalize.sh` も同じチェックを
+   `grep -rnE '^<<<<<<< |^=======$|^>>>>>>> ' .` で確認する (`finalize.sh` も同じチェックを
    `git add` 前に強制するが、無駄な手戻りを避けるため先に自分で確認しておく)
 
 判断が難しい場合 (相反する仕様変更、両方残すと壊れるロジック等) は **無理に解決せず**、
@@ -152,13 +156,28 @@ PASS と書かない。タイムアウトや外部依存で特定チェックが
 
 `scripts/finalize.sh を正確に実行。フラグ追加禁止。`
 
-```bash
-bash "${CLAUDE_SKILL_DIR}/scripts/finalize.sh" "$PR_HEAD" <3章で解決した全ファイルのパス...>
-```
+呼び出し方は 2 章の `resolve-merge.sh` の exit code で変わる:
+
+- **conflict あり (exit 10) で 3 章を経由した場合** — 解決した全ファイルを渡す:
+
+  ```bash
+  bash "${CLAUDE_SKILL_DIR}/scripts/finalize.sh" "$PR_HEAD" <3章で解決した全ファイルのパス...>
+  ```
+
+- **conflict なし (exit 0) で 3〜4 章を飛ばした場合** — `resolve-merge.sh` の
+  `git merge` が merge commit を作成済み (`MERGE_HEAD` は既に消えている) なので、
+  ファイル一覧を渡さず push 前チェックリストだけを実行させる:
+
+  ```bash
+  bash "${CLAUDE_SKILL_DIR}/scripts/finalize.sh" "$PR_HEAD"
+  ```
 
 このスクリプトが強制する順序 (手動での代替手順を組み立てない):
 
-1. `MERGE_HEAD` が存在すること (merge が進行中であること) の確認
+1. `MERGE_HEAD` の有無で分岐する。存在すれば 2〜5 (conflict 解決パス)、なければ
+   ファイル一覧が空であることだけ確認して 6 のチェックリストに直行する
+   (`MERGE_HEAD` なしでファイル一覧が渡されていたらエラーで停止する — exit code の
+   取り違えを検知するため)
 2. 渡されたファイル一覧が、git が把握している unmerged パス全体をカバーしていることの確認
 3. 渡された各ファイルに conflict marker が残っていないことの確認 (`git add` 前に実施 —
    `git add` 自体は marker が残っていても unmerged 状態を消してしまうため、ここでしか
@@ -178,7 +197,7 @@ push 後、PR に以下フォーマットで結果コメントを残す:
 ```markdown
 ### conflict 解決完了
 
-- 解決方針: <merge / rebase>
+- 解決方針: merge
 - 解決したファイル:
   - `path/to/file.ts` — <統合内容を 1 行で>
   - `package-lock.json` — 再生成 (`regen-lockfiles.sh`)
