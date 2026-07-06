@@ -12,6 +12,8 @@ description: |
 
   実行環境はクラウド (Anthropic 側 sandbox) を想定しているため、`gw` 等の
   dotfiles 同梱ヘルパには依存しない。素の `git` / `gh` / `curl` だけで動くこと。
+  本ループ (loop-ops 駆動) では非対象。GitHub issue は issue-driven-development
+  を使うこと — 本 skill は Linear issue 専用。
 ---
 # linear-issue-driven-development
 
@@ -25,9 +27,10 @@ Linear issue を 1 件受け取り、PR がマージ可能な状態 (CI 緑 + �
 | `LINEAR_API_KEY` | Linear GraphQL 認証 (`Settings → API → Personal API key`) |
 | `GH_TOKEN` | `gh auth login --with-token` 用 PAT (repo / workflow / write) |
 | `ANTHROPIC_API_KEY` | Routine 実行に必要 (登録時に自動設定) |
+| `LOCK_LEASE_TTL_SECONDS` | 任意。lock lease の失効秒数 (既定 3600) |
 
 Routine の secrets 欄に設定する。手元で `/linear-issue` を打つ場合は環境変数で
-渡す。未設定なら即フェイル。
+渡す。未設定なら即フェイル (`LOCK_LEASE_TTL_SECONDS` のみ未設定でも既定値で続行)。
 
 ## 入力契約
 
@@ -63,23 +66,53 @@ orchestrator (routine prompt 側) が GraphQL で 1 件選んで JSON を渡す:
 着手前に Linear ラベルを `claude:ready` → `claude:in-progress` に張り替える。
 ただしラベル付与は atomic な compare-and-set ではないため、2 つの実行 (cron と
 手動 `/linear-issue` の併走など) が同じ `claude:ready` issue をほぼ同時取得すると
-両方が処理を始める。これを防ぐため必ず以下のロック取得検証を行う:
+両方が処理を始める。これを防ぐため必ず以下のロック取得検証を行う。
+
+**Iron Law**: ラベルは最古検証に勝った run しか触らない。敗者・エラー終了は
+`claude:ready` を絶対に失わない (kanade0404/skills#31 — 旧手順はラベル張替を
+最古検証より先に行っており、敗者やクラッシュが `claude:in-progress` だけ外して
+`claude:ready` を永久に失う queue 消失バグと、lock が無期限に有効でクラッシュ
+した run の lock が未来の全 run を負けさせ続けるデッドロックの 2 つを併発させて
+いた)。
 
 0. issue の labels を取得し、`claude:done` / `claude:failed` が既に付いて
    いれば処理済み。lock marker を書く前に即終了する (無駄な API 呼び出し回避)。
+0b. **lease reap**: labels に `claude:in-progress` が既に付いている場合、
+   `comments(orderBy: { field: createdAt, direction: DESC }, first: 20)` で
+   直近の複数コメントを取得し、その中で本文が `claude-lock: ` で始まる
+   **最新の 1 件**を選ぶ (`first: 1` だけを取得して判定すると、lock コメント
+   より後に別のコメント — 監査コメントや進捗報告など — が投稿されていた場合に
+   本物の lock コメントを見逃し、稼働中の issue を lock 無しと誤判定して
+   reclaim してしまう。GitHub 版 `acquire-lock.sh` の `lock_lease_age()` も
+   同様に「先にフィルタ、次に最新を選ぶ」順序を守っている)。選んだコメントの
+   `ts=<epoch>` (下記 stage 1 参照) から経過秒数を計算する。
+   `LOCK_LEASE_TTL_SECONDS` (既定 3600) を超えている、またはそもそも
+   lock コメントが (取得した範囲に) 存在しなければ **lease 失効** とみなし、
+   `issueRemoveLabel` で `claude:in-progress` を外し `issueAddLabel` で
+   `claude:ready` を再付与 (`claude-lock-reclaim: ...` の監査コメントを添える)
+   してから続行する。失効していなければ他の生存中の run が保持中と判断し、
+   何もせず即終了する。
 1. issue に一意 lock marker を書き込む — `commentCreate` で
-   `claude-lock: <run-id>` (run-id は uuid) のコメントを 1 件付ける。
-2. `issueRemoveLabel` で `claude:ready` を外し、`issueAddLabel` で
-   `claude:in-progress` を付与する (張り替えを atomic に完了させる)。
-3. issue を再取得し、`comments(orderBy: { field: createdAt, direction: ASC })`
-   で **最古の `claude-lock:` コメントが自分の run-id か** を確認する
-   (順序を非決定にしないため orderBy は必須)。
-   - 自分が最古 → ロック取得成功、続行。
-   - 他者が最古 → 競合に負け。自分が付けた `claude:in-progress` だけ外して
-     何もせず即終了 (exit 0)。
+   `claude-lock: <run-id> ts=<epoch-seconds>` (run-id は uuid) のコメントを
+   1 件付ける。**タイムスタンプは lease の起点であり必須。**
+2. issue を再取得し、`comments(orderBy: { field: createdAt, direction: ASC })`
+   で全コメントを取得。`claude-lock: ` コメントのうち `ts` が現在時刻から
+   `LOCK_LEASE_TTL_SECONDS` 以内 (＝失効していない) のものだけを対象に、
+   **最古のコメントが自分の run-id か**を確認する (順序を非決定にしないため
+   orderBy は必須。失効済みコメントを対象から除外することで、クラッシュした
+   run の lock が未来の全 run を負けさせ続けるデッドロックを防ぐ)。
+   - 自分が最古 → ロック取得成功。**ここで初めて** `issueRemoveLabel` で
+     `claude:ready` を外し `issueAddLabel` で `claude:in-progress` を付与する。
+   - 他者が最古 → 競合に負け。**ラベルは一切触らない**まま何もせず即終了
+     (exit 0)。自分の lock コメントは監査用に残してよい (lease 失効後は
+     自動的に無視されるようになる)。
 
 完了時に `claude:done`, 失敗時に `claude:failed` に張り替える (どちらの場合も
-`claude:in-progress` は外す)。
+`claude:in-progress` は外す)。**この手続きの外 (実装フェーズ中) でクラッシュ
+した場合はここでは救えない** — 次にこの issue が選ばれた時の stage 0b (lease
+reap) が唯一の救済経路になるため、Routine 側は毎回の issue 選定前に
+`claude:in-progress` かつ lease 失効済みの issue が無いか同様のチェックを
+挟むこと (省略すると kanade0404/skills#31 のデッドロックが再発する)。
 
 ラベル ID は team 単位なので、team ごとに `claude:in-progress` / `claude:done` /
 `claude:failed` が存在するか確認し、無ければ `issueLabelCreate` で作成する。
@@ -221,8 +254,14 @@ mutation { issueLabelCreate(input: { teamId: $team, name: $name }) { issueLabel 
 mutation { issueAddLabel(id: $id, labelId: $labelId) { success } }
 mutation { issueRemoveLabel(id: $id, labelId: $labelId) { success } }
 
-# lock 検証用コメント取得 (作成時刻昇順、最古の claude-lock: を判定)
+# lock 検証用コメント取得 (作成時刻昇順、ts=<epoch> が LOCK_LEASE_TTL_SECONDS 以内の
+# claude-lock: の中で最古のものを勝者と判定する。失効済みは判定対象から除外する)
 query { issue(id: $id) { comments(orderBy: { field: createdAt, direction: ASC }) { nodes { id body createdAt } } } }
+
+# lease reap 用: 直近の複数コメントを取得し、本文が claude-lock: で始まる
+# 最新の1件をクライアント側で選んで失効判定する (first: 1 は lock 以外の
+# コメントに隠れて本物の lock コメントを見逃すため使わない)
+query { issue(id: $id) { comments(orderBy: { field: createdAt, direction: DESC }, first: 20) { nodes { id body createdAt } } } }
 
 # state 遷移 (任意)
 mutation { issueUpdate(id: $id, input: { stateId: $stateId }) { success } }

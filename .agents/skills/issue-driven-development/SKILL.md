@@ -15,7 +15,7 @@ description: |
   Linear issue (`linear-issue-driven-development`)、対話的な実装後の出荷 (`shipping`)、
   CI 修正単体 (`ci-self-heal`)、レビュー対応単体 (`pr-review-respond`)、conflict 解消
   単体 (`pr-conflict-resolver`)、PR の merge (人間ゲート)。実行環境はクラウドを想定し、
-  素の `git` / `gh` だけで動くこと。
+  素の `git` / `gh` / `jq` だけで動くこと。
 ---
 # issue-driven-development
 
@@ -32,6 +32,7 @@ GitHub issue 1 件を「merge 可能な PR の材料」に変えるスキル。*
 |---|---|---|
 | `GH_TOKEN` (or `gh auth` 済み) | clone / label / PR 操作 | yes |
 | `LOOP_OPS_TOKEN` | 計測イベント送信 (emit-event.sh) | no (無ければ送信を skip) |
+| `LOCK_LEASE_TTL_SECONDS` | `scripts/acquire-lock.sh` の lock lease 失効秒数 | no (既定 3600) |
 
 ## 入力契約
 
@@ -39,24 +40,60 @@ GitHub issue 1 件を「merge 可能な PR の材料」に変えるスキル。*
 
 - **A. トリガペイロード** (Actions の labeled イベント / Routine): `owner/repo` と issue 番号が渡される
 - **B. 手動**: `owner/repo#123` 形式の識別子
-- **C. 探索モード**: 対象 repo で `claude:ready` ラベルの issue を作成日昇順で 1 件取る:
+- **C. 探索モード**: まず `"${CLAUDE_SKILL_DIR}/scripts/acquire-lock.sh" --reap $REPO` で失効した
+  `claude:in-progress` (crash した run) を `claude:ready` へ差し戻してから、
+  対象 repo で `claude:ready` ラベルの issue を作成日昇順で 1 件取る:
   `gh issue list -R $REPO --label claude:ready --state open --json number --jq 'sort_by(.number) | .[0].number'`
+  reap を省略すると、クラッシュした run が握ったままの issue が永久に
+  queue へ戻らない (kanade0404/skills#31 のデッドロック)。
 
 Linear 版と違い**対象リポジトリの解決は不要** (issue が属する repo がそのまま対象)。
 
 ## 排他制御 (二重起動防止)
 
-ラベル張り替えは atomic でないため、Linear 版と同じロック検証を行う:
+ラベル張り替えは atomic でないため、決定論的なロック検証を行う。手順は
+[`scripts/acquire-lock.sh`](scripts/acquire-lock.sh) に切り出し済み — **ラベルは
+最古検証に勝った run しか触らない**ことと、**lock に有効期限 (lease) を持たせる**
+ことで、旧手順にあった 2 つの非可逆バグ (kanade0404/skills#31) を構造的に潰している:
 
-0. issue のラベルに `claude:done` / `claude:failed` があれば処理済み — 即終了
-1. `claude-lock: <run-id>` (run-id は uuid) をコメントとして 1 件投稿する
-2. `claude:ready` を外し `claude:in-progress` を付ける
-3. コメントを**作成日昇順**で取得し、最古の `claude-lock:` が自分の run-id か確認する
-   - 自分が最古 → 続行
-   - 他者が最古 → 自分の付けた `claude:in-progress` を外して即終了 (exit 0)
+- **queue 消失**: 旧手順は「lock コメント投稿 → ラベル張替 → 最古検証」の順で、
+  敗者やクラッシュした run が `claude:in-progress` だけ外して `claude:ready` を
+  永久に失っていた。新手順は「lock コメント投稿 → 最古検証 → (勝者だけ) ラベル張替」
+  の順に入れ替え、**敗者・エラー終了はラベルを一切書き換えない**。
+- **デッドロック**: 旧手順は「最古の `claude-lock:` コメントが勝ち」を無期限に
+  適用しており、クラッシュした run のコメントが永久に勝ち続けた。新手順は
+  lock コメントに `ts=<epoch>` のリース時刻を刻み、`LOCK_LEASE_TTL_SECONDS`
+  (既定 3600 秒) を超えたコメントは勝者判定から除外する。加えて `claude:in-progress`
+  のまま放置された issue は、次にこの issue へ触れたタイミング (単発呼び出し、
+  または探索モードの `--reap` 事前スイープ) で自動的に `claude:ready` へ差し戻す。
 
-ラベルが repo に無ければ `gh label create` で作る (`claude:ready` / `claude:in-progress` /
-`claude:done` / `claude:failed` / `needs-human` / `claude-loop:1..3`)。
+呼び出しは agent の作業ディレクトリ (対象リポジトリの checkout) ではなく本 skill の
+インストール先を指す `${CLAUDE_SKILL_DIR}` を起点にする — 対象リポジトリ側に
+`scripts/acquire-lock.sh` が無い consumer 環境では cwd 相対だと解決に失敗するため:
+
+```bash
+"${CLAUDE_SKILL_DIR}/scripts/acquire-lock.sh" "$OWNER/$REPO" "$NUMBER"
+```
+
+| 終了コード | 意味 | 次のアクション |
+|---|---|---|
+| `0` | ロック取得成功。ラベルは `claude:in-progress` に変わっている | 実装に進む |
+| `3` | 既に終端 (`claude:done` / `claude:failed`) | 何もせず次の issue へ (探索モードなら次候補) |
+| `4` | 他の生存中の run が保持中 (lease 未失効) | 何もせず次の issue へ |
+| `5` | 最古検証に敗北 | 何もせず次の issue へ (自分の lock コメントは監査用に残る) |
+| `1` / `2` | 予期しない失敗 / 使用法エラー | ラベルは script 内の `trap` が復元済み。ログを見てリトライ判断 |
+
+ラベルが repo に無ければ script が `gh label create` で作る (`claude:ready` /
+`claude:in-progress` / `claude:done` / `claude:failed` / `needs-human` /
+`claude-loop:1..3`)。`claude-loop:N` はこの後の CI 修正反応 (`ci-self-heal`)
+が付け替える前提のラベルで、事前作成しておかないと fresh な consumer repo で
+最初の CI 失敗反応が失敗する。
+
+**この trap が保護しないもの**: script 自身は `exit 0` で戻った後、実装フェーズ
+(この SKILL の 3〜5 節) の異常終了までは面倒を見ない。そこで死んだ run の復旧は
+lease 失効 + 次回 `--reap` (または該当 issue への再アクセス時の自動 reclaim) に
+委ねている。想定される正常系はあくまで `## エスカレーション` — 継続不能を検知
+できた場合は必ずそちらで `needs-human` + `claude:failed` に明示遷移すること。
 
 Actions 起動の場合はさらに workflow 側の `concurrency` グループが二重起動を防ぐ
 ([references/actions-wiring.md](references/actions-wiring.md))。
