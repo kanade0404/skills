@@ -63,15 +63,30 @@ for path in "$@"; do
           || cargo generate-lockfile
         ;;
       poetry.lock)
+        # poetry/uv/go/bundle all parse the existing lockfile before
+        # resolving, so a conflict-marker-tainted file aborts even
+        # `--no-update` mode. Remove it first, matching the fallback the
+        # npm/pnpm/yarn/bun/Cargo.lock branches above already use.
+        rm -f poetry.lock
         poetry lock --no-update
         ;;
       uv.lock)
+        rm -f uv.lock
         uv lock
         ;;
       go.sum)
+        rm -f go.sum
         go mod tidy
+        # `go mod tidy` can also rewrite go.mod (missing/unused
+        # requirements). go.mod isn't part of the caller's resolved-file
+        # list (only go.sum was conflicted), so stage it here - otherwise
+        # finalize.sh's pre-push "working tree clean" checklist fails after
+        # the merge commit has already been created, since go.mod would be
+        # left modified but uncommitted.
+        git add -- go.mod
         ;;
       Gemfile.lock)
+        rm -f Gemfile.lock
         bundle lock --update
         ;;
       *)
