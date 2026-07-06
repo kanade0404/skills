@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - "skills/**"
+      - "rules/**"
+      - "rules-local/**"
+      - "scripts/rulesync-sync.mjs"
       - ".github/scripts/**"
       - ".github/trigger-evals-known-failures.json"
       - ".github/workflows/trigger-evals.yml"

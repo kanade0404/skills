@@ -1,10 +1,7 @@
 ---
-root: false
-targets: ["*"]
-description: "Bash の汎用コマンドより専用ツールを優先する規律、permission/hook にブロックされたときの復帰手順、gh api / curl 出力の取り扱い規律。すべての作業で常時適用する。"
-globs: ["**/*"]
+paths:
+  - '**/*'
 ---
-
 # Bash / API discipline
 
 - ファイルの閲覧・検索・加工は専用ツール (Read / Glob / Grep / Edit) を優先し、Bash の
