@@ -3,11 +3,13 @@
 # Dispatches to per-action scripts in this same directory.
 #
 # Usage:
-#   prr fetch   <pr-number>
-#   prr reply   <pr-number> <root-comment-id> <body-file>
-#   prr resolve <pr-number> <root-comment-id> [body-file]
-#   prr summary <pr-number> <body-file>
-#   prr wait-ci <pr-number> [interval-seconds]
+#   prr fetch    <pr-number>
+#   prr reply    <pr-number> <root-comment-id> <body-file>
+#   prr resolve  <pr-number> <root-comment-id> <classification> [body-file]
+#   prr summary  <pr-number> <body-file>
+#   prr wait-ci  <pr-number> [interval-seconds]
+#   prr defer    <pr-number> <thread-url> <title> <body-file>
+#   prr escalate <pr-number> <reason> <body-file>
 #
 # Why this wrapper exists:
 #   Claude Code permission rules (`allowed-tools`) match against the literal
@@ -24,11 +26,13 @@ usage() {
 prr — pr-review-respond entry point
 
 Usage:
-  prr fetch   <pr>
-  prr reply   <pr> <root-comment-id> <body-file>
-  prr resolve <pr> <root-comment-id> [body-file]
-  prr summary <pr> <body-file>
-  prr wait-ci <pr> [interval-sec]
+  prr fetch    <pr>
+  prr reply    <pr> <root-comment-id> <body-file>
+  prr resolve  <pr> <root-comment-id> <classification> [body-file]
+  prr summary  <pr> <body-file>
+  prr wait-ci  <pr> [interval-sec]
+  prr defer    <pr> <thread-url> <title> <body-file>
+  prr escalate <pr> <reason> <body-file>
 
 All subcommands shell out to <scripts-dir>/<action>_*.sh.
 EOF
@@ -52,6 +56,12 @@ case "$cmd" in
     ;;
   wait-ci)
     exec "$SCRIPT_DIR/wait_ci.sh" "$@"
+    ;;
+  defer)
+    exec "$SCRIPT_DIR/defer_issue.sh" "$@"
+    ;;
+  escalate)
+    exec "$SCRIPT_DIR/escalate.sh" "$@"
     ;;
   help|--help|-h)
     usage
