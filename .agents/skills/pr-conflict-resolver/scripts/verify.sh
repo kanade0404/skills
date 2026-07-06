@@ -44,11 +44,20 @@ if [ -f package.json ]; then
   if [ -f tsconfig.json ]; then
     run_check tsc npx --no-install tsc --noEmit
   fi
-  if command -v jq >/dev/null 2>&1 && jq -e '.scripts.lint' package.json >/dev/null 2>&1; then
-    run_check lint npm run lint --if-present
-  fi
-  if command -v jq >/dev/null 2>&1 && jq -e '.scripts.test' package.json >/dev/null 2>&1; then
-    run_check test npm test --if-present
+  if command -v jq >/dev/null 2>&1; then
+    if jq -e '.scripts.lint' package.json >/dev/null 2>&1; then
+      run_check lint npm run lint --if-present
+    fi
+    if jq -e '.scripts.test' package.json >/dev/null 2>&1; then
+      # CI=true is the de-facto standard signal (jest, vitest, mocha, ava,
+      # ...) for "don't enter watch mode". A bare `npm test` invoking a
+      # watch-by-default runner would otherwise hang here indefinitely
+      # (never emit PASS/FAIL, never reach the trailing RESULT line) in an
+      # unattended run.
+      run_check test env CI=true npm test --if-present
+    fi
+  else
+    echo "warning: jq not found; cannot detect package.json scripts.lint/scripts.test - lint/test checks skipped without running them" >&2
   fi
 fi
 
