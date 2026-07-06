@@ -20,6 +20,24 @@
 #                 compare against HEAD after checkout before pushing)
 set -euo pipefail
 
+# Best-effort external timeout: this runs unattended, so a network stall on
+# `gh pr view` must not block the whole conflict-resolution workflow
+# indefinitely. Prefer GNU coreutils `timeout`/`gtimeout` when present; fall
+# back to running the command directly when neither exists (e.g. a bare
+# macOS shell with no coreutils installed) rather than hard-failing every
+# invocation on a missing dependency.
+run_with_timeout() {
+  local secs="$1"
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$secs" "$@"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    gtimeout "$secs" "$@"
+  else
+    "$@"
+  fi
+}
+
 if [ "$#" -ne 1 ]; then
   echo "usage: $0 <pr-number>" >&2
   exit 2
@@ -42,8 +60,12 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 127
 fi
 
-if ! json=$(gh pr view "$pr" --json number,headRefName,baseRefName,title,url,headRefOid 2>&1); then
-  echo "error: 'gh pr view $pr' failed (PR not found, no auth, or no access): $json" >&2
+# Deliberately NOT `2>&1`: merging stderr into the captured JSON means any
+# warning gh writes to stderr (deprecation notice, etc.) corrupts the value
+# `jq` parses below, even when the PR lookup itself succeeded. Let stderr
+# surface on its own; only stdout is captured as the JSON payload.
+if ! json=$(run_with_timeout 30 gh pr view "$pr" --json number,headRefName,baseRefName,title,url,headRefOid); then
+  echo "error: 'gh pr view $pr' failed (PR not found, no auth, no access, or timed out)" >&2
   exit 1
 fi
 
