@@ -42,7 +42,8 @@ permissions:
   pull-requests: write
 jobs:
   update:
-    uses: kanade0404/skills/.github/workflows/consumer-update.yml@master
+    # write 権限を渡す reusable は SHA pin が必須 (下記の注意を参照)
+    uses: kanade0404/skills/.github/workflows/consumer-update.yml@<commit-SHA> # vX.Y.Z
     with:
       update_command: |
         <pin 書き換え + fetch + generate>
@@ -50,6 +51,12 @@ jobs:
 
 注意:
 
+- **参照は `@master` でなく commit SHA に pin する**。この caller は
+  `contents: write` / `pull-requests: write` を渡すため、branch 参照だと
+  参照先の将来の変更が consumer 側のレビューを経ずに write 権限で実行される
+  (GitHub 公式も "Using the commit SHA is the safest option" としている)。
+  追随は Renovate 等の github-actions manager による bump PR で行う。
+  read 権限しか渡さない caller (例: 計測送信) は @master 追随でもよい。
 - reusable workflow は caller token の権限を **downgrade しかできない**ため、
   caller 側で `contents: write` / `pull-requests: write` を明示する。
 - repo 設定 "Allow GitHub Actions to create and approve pull requests" を有効にする。
