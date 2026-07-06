@@ -16,6 +16,16 @@
 #   command string. With per-script invocation we'd need a separate rule per
 #   script and per install path. Routing every action through a single `prr`
 #   entry point lets a single rule (`Bash(bash *prr *)`) cover everything.
+#
+# Why the per-action scripts are dispatched via `exec bash "<script>"`
+# instead of `exec "<script>"`:
+#   Rulesync-generated mirrors (e.g. the Codex `.agents/` distribution) are
+#   committed without the executable bit, since rulesync's writer does not
+#   preserve source file permissions. Invoking the target file directly
+#   would exit 126 ("Permission denied") from that mirror even though the
+#   file itself is valid. Explicitly running it through `bash` sidesteps the
+#   executable bit entirely and works from any mirror regardless of how it
+#   was materialized.
 
 set -euo pipefail
 
@@ -49,25 +59,25 @@ shift || true
 
 case "$cmd" in
   fetch)
-    exec "$SCRIPT_DIR/fetch_threads.sh" "$@"
+    exec bash "$SCRIPT_DIR/fetch_threads.sh" "$@"
     ;;
   reply)
-    exec "$SCRIPT_DIR/reply_thread.sh" "$@"
+    exec bash "$SCRIPT_DIR/reply_thread.sh" "$@"
     ;;
   resolve)
-    exec "$SCRIPT_DIR/resolve_thread.sh" "$@"
+    exec bash "$SCRIPT_DIR/resolve_thread.sh" "$@"
     ;;
   summary)
-    exec "$SCRIPT_DIR/post_summary.sh" "$@"
+    exec bash "$SCRIPT_DIR/post_summary.sh" "$@"
     ;;
   wait-ci)
-    exec "$SCRIPT_DIR/wait_ci.sh" "$@"
+    exec bash "$SCRIPT_DIR/wait_ci.sh" "$@"
     ;;
   defer)
-    exec "$SCRIPT_DIR/defer_issue.sh" "$@"
+    exec bash "$SCRIPT_DIR/defer_issue.sh" "$@"
     ;;
   escalate)
-    exec "$SCRIPT_DIR/escalate.sh" "$@"
+    exec bash "$SCRIPT_DIR/escalate.sh" "$@"
     ;;
   help|--help|-h)
     usage
