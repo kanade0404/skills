@@ -14,10 +14,11 @@ name: consumer update
 #     回したい場合は secrets.pr_token に fine-grained PAT (contents / pull-requests:
 #     write) を渡す
 #
-# 冪等性: 同じタグの更新 PR が既に open なら何もしない (日次 schedule で多重 PR に
-# ならない)。ブランチだけが残っている場合 (前回 push 後の PR 作成失敗 = 孤児
-# ブランチ) は、そのブランチから PR 作成を再試行して自動復旧する。pin が既に
-# 最新なら差分ゼロで終了する。
+# 冪等性: 同じタグの更新 PR が既に存在すれば (open / merged / closed を問わず)
+# 何もしない (日次 schedule で多重 PR にならず、merge 後の branch 削除忘れや
+# 意図的な close も蒸し返さない)。ブランチだけが残っている場合 (前回 push 後の
+# PR 作成失敗 = 孤児ブランチ) は、そのブランチから PR 作成を再試行して自動復旧
+# する。pin が既に最新なら差分ゼロで終了する。
 
 on:
   workflow_call:
@@ -58,6 +59,10 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           token: ${{ secrets.pr_token || github.token }}
+          # workflow_dispatch が非デフォルトブランチから起動されても、更新は常に
+          # デフォルトブランチ基点で行う (トリガ ref 基点だと無関係な commit が
+          # 更新 PR に混入する)
+          ref: ${{ github.event.repository.default_branch }}
 
       - name: Resolve latest release tag
         id: tag
@@ -82,9 +87,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.pr_token || github.token }}
           BRANCH: chore/skills-${{ steps.tag.outputs.tag }}
+          OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
-          # skip 判定は「open PR の有無」で行う。ブランチ存在だけで skip すると、
+          # skip 判定は「PR の有無」で行う。ブランチ存在だけで skip すると、
           # 前回 push 後に PR 作成が失敗した場合 (Actions の PR 作成許可が無効、
           # 一時エラー等) に孤児ブランチが残って永久に復旧不能になる
           if git ls-remote --exit-code --heads origin "$BRANCH" > /dev/null; then
@@ -92,9 +98,16 @@ jobs:
           else
             echo "branch_exists=false" >> "$GITHUB_OUTPUT"
           fi
-          open_prs=$(gh pr list --head "$BRANCH" --state open --json number --jq 'length')
-          if [ "$open_prs" -gt 0 ]; then
-            echo "update PR for $BRANCH is already open; nothing to do"
+          # state 問わず数える: merged / closed も「この tag は処理済み」扱いにする
+          # (branch 削除忘れで merge 済みブランチから毎日 PR 再作成を試みない /
+          # 意図的に close された tag を蒸し返さない)。fork の同名 branch による
+          # PR は除外する (公開リポで guard を偽装して更新 PR を止められないよう、
+          # head リポジトリのオーナーがこのリポジトリと一致するものだけ数える)
+          prs=$(gh pr list --head "$BRANCH" --state all --json headRepositoryOwner \
+            | jq --arg owner "$OWNER" \
+                '[.[] | select(.headRepositoryOwner.login == $owner)] | length')
+          if [ "$prs" -gt 0 ]; then
+            echo "a PR for $BRANCH already exists (any state); nothing to do"
             echo "pr_exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "pr_exists=false" >> "$GITHUB_OUTPUT"
