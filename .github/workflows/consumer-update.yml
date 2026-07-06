@@ -44,6 +44,12 @@ on:
 jobs:
   update:
     runs-on: ubuntu-latest
+    # schedule と workflow_dispatch の同時実行でタグ解決〜push が競合しないよう
+    # consumer リポジトリ単位で直列化する (後発は cancel せず待たせる —
+    # 先発が PR を作れば後発は open-PR ガードで no-op になる)
+    concurrency:
+      group: skills-consumer-update-${{ github.repository }}
+      cancel-in-progress: false
     permissions:
       contents: write
       pull-requests: write
