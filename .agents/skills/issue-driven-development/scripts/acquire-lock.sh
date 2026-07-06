@@ -84,7 +84,12 @@ gen_run_id() {
 
 ensure_labels() {
   repo="$1"
-  for l in "$LABEL_READY" "$LABEL_PROGRESS" "$LABEL_DONE" "$LABEL_FAILED" needs-human; do
+  # claude-loop:1..3 are provisioned here too: this is now the only label
+  # provisioning path before the workflow hands off to the CI-fix/review
+  # reactions, and those bounded-retry reactions assume the labels already
+  # exist (gh issue/pr edit --add-label does not auto-create labels).
+  for l in "$LABEL_READY" "$LABEL_PROGRESS" "$LABEL_DONE" "$LABEL_FAILED" needs-human \
+    claude-loop:1 claude-loop:2 claude-loop:3; do
     gh label create "$l" -R "$repo" --color ededed --force >/dev/null 2>&1 || true
   done
 }
@@ -129,6 +134,16 @@ if [ "${1:-}" = "--reap" ]; then
   # stale claude:in-progress issues once a repo has more open ones than that.
   numbers=$(gh issue list -R "$repo" --label "$LABEL_PROGRESS" --state open --limit 1000 --json number --jq '.[].number')
   for num in $numbers; do
+    # Mirror the single-issue terminal check: a run that partially completes
+    # (label mutations aren't atomic) can leave BOTH claude:in-progress and a
+    # terminal label on the same issue. Without this, a later sweep would
+    # requeue an already-finished issue back onto claude:ready.
+    term_labels=$(gh issue view "$num" -R "$repo" --json labels --jq '[.labels[].name]')
+    if printf '%s' "$term_labels" \
+        | jq -e --arg d "$LABEL_DONE" --arg f "$LABEL_FAILED" \
+          'index($d) != null or index($f) != null' >/dev/null; then
+      continue
+    fi
     age=$(lock_lease_age "$repo" "$num" "$now")
     if [ -z "$age" ] || [ "$age" -gt "$LEASE_TTL" ]; then
       reclaim_issue "$repo" "$num" "$age" "reap sweep"

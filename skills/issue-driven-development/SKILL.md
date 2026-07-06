@@ -94,7 +94,10 @@ Linear 版と違い**対象リポジトリの解決は不要** (issue が属す�
 | `1` / `2` | 予期しない失敗 / 使用法エラー | ラベルは script 内の `trap` が復元済み。ログを見てリトライ判断 |
 
 ラベルが repo に無ければ script が `gh label create` で作る (`claude:ready` /
-`claude:in-progress` / `claude:done` / `claude:failed` / `needs-human`)。
+`claude:in-progress` / `claude:done` / `claude:failed` / `needs-human` /
+`claude-loop:1..3`)。`claude-loop:N` はこの後の CI 修正反応 (`ci-self-heal`)
+が付け替える前提のラベルで、事前作成しておかないと fresh な consumer repo で
+最初の CI 失敗反応が失敗する。
 
 **この trap が保護しないもの**: script 自身は `exit 0` で戻った後、実装フェーズ
 (この SKILL の 3〜5 節) の異常終了までは面倒を見ない。そこで死んだ run の復旧は

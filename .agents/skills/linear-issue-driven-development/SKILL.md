@@ -78,14 +78,20 @@ orchestrator (routine prompt 側) が GraphQL で 1 件選んで JSON を渡す:
 0. issue の labels を取得し、`claude:done` / `claude:failed` が既に付いて
    いれば処理済み。lock marker を書く前に即終了する (無駄な API 呼び出し回避)。
 0b. **lease reap**: labels に `claude:in-progress` が既に付いている場合、
-   `comments(orderBy: { field: createdAt, direction: DESC }, first: 1)` かつ
-   本文が `claude-lock: ` で始まるものを 1 件取得し、そのコメントの `ts=<epoch>`
-   (下記 stage 1 参照) から経過秒数を計算する。`LOCK_LEASE_TTL_SECONDS`
-   (既定 3600) を超えている、またはそもそも lock コメントが存在しなければ
-   **lease 失効** とみなし、`issueRemoveLabel` で `claude:in-progress` を外し
-   `issueAddLabel` で `claude:ready` を再付与 (`claude-lock-reclaim: ...` の
-   監査コメントを添える) してから続行する。失効していなければ他の生存中の
-   run が保持中と判断し、何もせず即終了する。
+   `comments(orderBy: { field: createdAt, direction: DESC }, first: 20)` で
+   直近の複数コメントを取得し、その中で本文が `claude-lock: ` で始まる
+   **最新の 1 件**を選ぶ (`first: 1` だけを取得して判定すると、lock コメント
+   より後に別のコメント — 監査コメントや進捗報告など — が投稿されていた場合に
+   本物の lock コメントを見逃し、稼働中の issue を lock 無しと誤判定して
+   reclaim してしまう。GitHub 版 `acquire-lock.sh` の `lock_lease_age()` も
+   同様に「先にフィルタ、次に最新を選ぶ」順序を守っている)。選んだコメントの
+   `ts=<epoch>` (下記 stage 1 参照) から経過秒数を計算する。
+   `LOCK_LEASE_TTL_SECONDS` (既定 3600) を超えている、またはそもそも
+   lock コメントが (取得した範囲に) 存在しなければ **lease 失効** とみなし、
+   `issueRemoveLabel` で `claude:in-progress` を外し `issueAddLabel` で
+   `claude:ready` を再付与 (`claude-lock-reclaim: ...` の監査コメントを添える)
+   してから続行する。失効していなければ他の生存中の run が保持中と判断し、
+   何もせず即終了する。
 1. issue に一意 lock marker を書き込む — `commentCreate` で
    `claude-lock: <run-id> ts=<epoch-seconds>` (run-id は uuid) のコメントを
    1 件付ける。**タイムスタンプは lease の起点であり必須。**
@@ -252,8 +258,10 @@ mutation { issueRemoveLabel(id: $id, labelId: $labelId) { success } }
 # claude-lock: の中で最古のものを勝者と判定する。失効済みは判定対象から除外する)
 query { issue(id: $id) { comments(orderBy: { field: createdAt, direction: ASC }) { nodes { id body createdAt } } } }
 
-# lease reap 用: 直近の claude-lock: コメント 1 件だけを見て失効判定する
-query { issue(id: $id) { comments(orderBy: { field: createdAt, direction: DESC }, first: 1) { nodes { id body createdAt } } } }
+# lease reap 用: 直近の複数コメントを取得し、本文が claude-lock: で始まる
+# 最新の1件をクライアント側で選んで失効判定する (first: 1 は lock 以外の
+# コメントに隠れて本物の lock コメントを見逃すため使わない)
+query { issue(id: $id) { comments(orderBy: { field: createdAt, direction: DESC }, first: 20) { nodes { id body createdAt } } } }
 
 # state 遷移 (任意)
 mutation { issueUpdate(id: $id, input: { stateId: $stateId }) { success } }
