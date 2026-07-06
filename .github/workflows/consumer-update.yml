@@ -117,6 +117,11 @@ jobs:
         if: steps.guard.outputs.pr_exists == 'false' && steps.guard.outputs.branch_exists == 'false'
         env:
           SKILLS_TAG: ${{ steps.tag.outputs.tag }}
+          # update_command 内の GitHub API を叩くツール (rulesync fetch 等) が
+          # 匿名レート制限 (60 req/h) に当たらないよう token を渡す。
+          # 実障害: rulesync fetch が runner の匿名クォータで 403 になった
+          GITHUB_TOKEN: ${{ secrets.pr_token || github.token }}
+          GH_TOKEN: ${{ secrets.pr_token || github.token }}
         run: ${{ inputs.update_command }}
 
       - name: Create pull request if changed
