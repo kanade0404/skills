@@ -17,6 +17,12 @@
 
 set -euo pipefail
 
+# gh は CLICOLOR_FORCE=1 / GH_FORCE_TTY の環境だと pipe 先にも ANSI 色付き JSON を
+# 出力し、下流の jq (--argjson / parse) を静かに壊す。ここは機械処理専用の経路
+# なので、全 subcommand に先立って色と TTY 強制を無効化する。
+export CLICOLOR_FORCE=0
+unset GH_FORCE_TTY 2>/dev/null || true
+
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 
 usage() {
