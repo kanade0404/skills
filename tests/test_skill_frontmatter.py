@@ -36,16 +36,58 @@ def extract_description(frontmatter: str) -> str | None:
     match = DESCRIPTION_RE.search(frontmatter)
     if match is None:
         return None
-    if match.group("block") is not None:
-        lines = []
-        for line in match.group("block").splitlines():
-            lines.append(line[2:] if line.startswith("  ") else line)
-        return "\n".join(lines).strip()
-    return match.group("inline").strip()
+    if match.group("block") is None:
+        return match.group("inline").strip()
+
+    style = match.group("style")
+    raw_lines = match.group("block").splitlines()
+    # YAML block scalar のインデント幅は最初の内容行で決まる (固定 2 space を仮定しない)
+    indent = next(
+        (len(line) - len(line.lstrip(" ")) for line in raw_lines if line.strip()),
+        None,
+    )
+    if indent is None:
+        return ""
+    text = "\n".join(line[indent:] if line.strip() else "" for line in raw_lines)
+    # chomping: '-' (strip) は末尾改行なし、既定 (clip) と '+' (keep) は改行 1 つを数える。
+    # '+' の複数改行は 1 つに正規化する (最大長チェックの用途では十分)
+    text = text.rstrip("\n")
+    if text and not style.endswith("-"):
+        text += "\n"
+    return text
 
 
 def skill_files() -> list[Path]:
     return sorted(SKILLS_DIR.glob("*/SKILL.md"))
+
+
+class TestExtractDescription(unittest.TestCase):
+    def test_inline_description(self) -> None:
+        self.assertEqual(extract_description('description: "hello world"'), '"hello world"')
+
+    def test_block_with_two_space_indent(self) -> None:
+        fm = "description: |\n  line1\n  line2"
+        self.assertEqual(extract_description(fm), "line1\nline2\n")
+
+    def test_block_with_four_space_indent(self) -> None:
+        # インデント幅は最初の内容行から決まる (2 space 固定を仮定しない)
+        fm = "description: |\n    line1\n    line2"
+        self.assertEqual(extract_description(fm), "line1\nline2\n")
+
+    def test_default_chomping_keeps_single_trailing_newline(self) -> None:
+        fm = "description: |\n  line1\n\n"
+        self.assertEqual(extract_description(fm), "line1\n")
+
+    def test_strip_chomping_removes_trailing_newline(self) -> None:
+        fm = "description: |-\n  line1\n  line2\n"
+        self.assertEqual(extract_description(fm), "line1\nline2")
+
+    def test_length_counts_trailing_newline_for_default_chomping(self) -> None:
+        # `|` (clip) では末尾改行 1 つが値に含まれ、長さ判定にも数えられる
+        fm = "description: |\n  abc"
+        desc = extract_description(fm)
+        assert desc is not None
+        self.assertEqual(len(desc), 4)
 
 
 class TestSkillFrontmatter(unittest.TestCase):

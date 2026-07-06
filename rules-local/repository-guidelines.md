@@ -1,3 +1,10 @@
+---
+root: true
+targets: ["*"]
+description: "この skill カタログ / rulesync 配布元リポジトリの構造・規約・不変条件。全エージェントがセッション開始時に読む root rule。"
+globs: ["**/*"]
+---
+
 # Repository Guidelines
 
 ## Project Structure & Module Organization

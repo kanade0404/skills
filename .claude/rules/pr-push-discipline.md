@@ -1,10 +1,7 @@
 ---
-root: false
-targets: ["*"]
-description: "PR ブランチへ push した後の規律: push で報告を終わらせず、CI の帰結・レビュースレッドの終端・監視の設置という 3 つの帰結を担保してから PR を離れる。手順の中身は skill 側が持ち、この rule は帰結と「いつ必ずやるか」だけを定める。"
-globs: ["**/*"]
+paths:
+  - '**/*'
 ---
-
 # PR push discipline
 
 PR ブランチへ push したら「push して報告」で終わらせない。次の 3 つの帰結が

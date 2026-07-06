@@ -29,11 +29,13 @@
 
 set -euo pipefail
 
-# Force plain output even when the calling shell/CI forces ANSI color
-# (e.g. CLICOLOR_FORCE=1). `gh ... --json` must stay parseable by `jq`;
-# color codes embedded in JSON break every downstream subcommand.
+# gh は CLICOLOR_FORCE=1 / GH_FORCE_TTY の環境だと pipe 先にも ANSI 色付き JSON を
+# 出力し、下流の jq (--argjson / parse) を静かに壊す。ここは機械処理専用の経路
+# なので、全 subcommand に先立って色と TTY 強制を無効化する。NO_COLOR も合わせて
+# 明示することで、gh 以外の下流ツールが色判定に NO_COLOR を見る場合にも効く。
 export NO_COLOR=1
 export CLICOLOR_FORCE=0
+unset GH_FORCE_TTY 2>/dev/null || true
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 
