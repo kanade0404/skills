@@ -30,6 +30,7 @@ set -u
 # でも色付けされ、下流の jq を静かに壊すため、入口で無効化する
 export NO_COLOR=1
 export CLICOLOR_FORCE=0
+unset GH_FORCE_TTY
 
 result_subtype="${1:-unknown}"
 caller="${2:-unknown}"

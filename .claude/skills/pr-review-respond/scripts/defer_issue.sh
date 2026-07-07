@@ -17,6 +17,7 @@ set -euo pipefail
 # 直接実行にも耐えるよう、dispatcher (prr) 頼みにせず自前でも色強制を無効化する
 export NO_COLOR=1
 export CLICOLOR_FORCE=0
+unset GH_FORCE_TTY
 
 if [ "$#" -ne 4 ]; then
   echo "usage: $0 <pr-number> <thread-url> <title> <body-file>" >&2

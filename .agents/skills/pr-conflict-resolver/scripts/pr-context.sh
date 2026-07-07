@@ -24,6 +24,7 @@ set -euo pipefail
 # でも色付けされ、下流の jq を静かに壊すため、入口で無効化する
 export NO_COLOR=1
 export CLICOLOR_FORCE=0
+unset GH_FORCE_TTY
 
 # Best-effort external timeout: this runs unattended, so a network stall on
 # `gh pr view` must not block the whole conflict-resolution workflow

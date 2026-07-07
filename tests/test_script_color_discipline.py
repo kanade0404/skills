@@ -35,6 +35,9 @@ NEUTRALIZE_RE = re.compile(
     r"^\s*export\s+CLICOLOR_FORCE=0\b|^[^#\n]*?\bCLICOLOR_FORCE=0\s+gh\b",
     re.M,
 )
+# CLICOLOR_FORCE=0 は色を止めるが、GH_FORCE_TTY が継承されていると gh は
+# 端末様式の出力 (表整形等) のままになるため、unset も必須 (skills#67 レビュー)
+UNSET_TTY_RE = re.compile(r"^\s*unset\s+GH_FORCE_TTY\b", re.M)
 
 
 def shell_scripts(directory: Path) -> list[Path]:
@@ -69,6 +72,13 @@ class TestGhColorNeutralization(unittest.TestCase):
                         " が無い。CLICOLOR_FORCE=1 環境で jq が静かに壊れる —"
                         " rules/bash-and-api-discipline.md 参照。NO_COLOR 単独は"
                         " gh の JSON colorizer を止めないため不合格",
+                    )
+                    unset_tty = UNSET_TTY_RE.search(text)
+                    self.assertTrue(
+                        unset_tty is not None and unset_tty.start() < gh_call.start(),
+                        f"{rel}: 最初の gh 呼び出しより前に `unset GH_FORCE_TTY` が"
+                        " 無い。GH_FORCE_TTY 継承下では CLICOLOR_FORCE=0 でも gh が"
+                        " 端末様式の出力を返し、機械処理が壊れる",
                     )
         # 対象パターンが 1 件も無いなら検査自体が空振りしている (リグレッション検知)
         self.assertGreater(checked, 0, "gh|jq を使う skill script が見つからない")
