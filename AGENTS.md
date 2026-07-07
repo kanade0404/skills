@@ -71,9 +71,17 @@ Treat this as a skill-content / distribution-source repository, not an applicati
   HTTP エラーで非ゼロ exit するが、**素の `curl` は HTTP エラーでも exit 0** なので
   `--fail` 系オプションを併用して exit code を見るか、HTTP ステータスを自分で検査
   する。失敗時はエラー本文が stdout に混ざるため、そのままパースすると誤検知する
-  (例: 404 のエラー JSON を「データが存在する」と誤認する)。また `gh` の出力は
-  端末向けに色付けされることがあるため、機械処理には `--jq` / `--json` を使い、
-  素の出力を jq にパイプしない。ポーリング・監視・収集スクリプトを書くときは特に。
+  (例: 404 のエラー JSON を「データが存在する」と誤認する)。
+- **機械処理スクリプトは入口で `NO_COLOR=1` / `CLICOLOR_FORCE=0` を export し
+  `GH_FORCE_TTY` を unset して、環境の端末装飾に依存しない状態を自分で作る**。
+  `CLICOLOR_FORCE=1` の環境では
+  `gh api` の生 JSON 出力が pipe 先でも色付けされ、下流の jq を静かに壊す
+  (実例: 監視 2 回 + skill 同梱スクリプト 1 回が同根で故障)。`--jq` / `--json` を
+  使っていても、生出力をパイプする経路が 1 箇所でもあれば防御にならない —
+  読み手の注意ではなく entry point での構造的無効化で防ぐ。
+- CI / GitHub Actions 内で GitHub API を叩くツール (rulesync, gh 等) には
+  `GITHUB_TOKEN` / `GH_TOKEN` を明示的に渡す。runner の匿名クォータは 60 req/h で
+  即枯渇する (実例: workflow 内の `rulesync fetch` が匿名レート制限の 403 で失敗)。
 
 # PR push discipline
 
@@ -82,7 +90,9 @@ PR ブランチへ push したら「push して報告」で終わらせない。
 であり、手順の中身は skill が持つ (skill が無い環境でも帰結の担保は免除されない):
 
 1. **CI の帰結** — 起動した checks の完了まで追う。失敗時は root cause 特定へ
-   (`ci-self-heal` があれば委ねる。推測修正の連投はしない)
+   (`ci-self-heal` があれば委ねる。推測修正の連投はしない)。自分の変更と無関係な
+   job の失敗は、まず base ブランチの最新 CI と直近の依存更新を確認し、branch を
+   base に追随させて切り分ける
 2. **レビュースレッドの終端** — 各スレッドへの個別返信 + 集約サマリコメント 1 件
    (`pr-review-respond` があれば起動する)
 3. **離れる前の監視** — merge / close・新規レビューコメント・checks 失敗を検知する
