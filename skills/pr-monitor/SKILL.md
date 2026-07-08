@@ -135,8 +135,6 @@ escalations: [{kind: ci-halted|review-stuck, key: <"<workflow>/<name>"|comment_i
 | 2 | `ScheduleWakeup` | cron が無ければ session 内で `delaySeconds` に state の `poll_interval_seconds` を渡して self-pace poll。起床ごとに Step 4 を実行し、未決着なら更新後の `poll_interval_seconds` で再度 `ScheduleWakeup` | `monitor_mode: wakeup`, `schedule_id: null` |
 | 3 | 手動 | どちらも不可なら「`pr-monitor <n> --check-only` を後で再実行してください」と案内して終了 | `monitor_mode: manual`, `schedule_id: null` |
 
-環境に `Monitor` ツール (条件監視) があれば、手段 2 の代わりにそちらへ委譲してよい — 使えるなら使う程度の位置づけで、`ScheduleWakeup` と同じ `poll_interval_seconds` を待機条件に使う。
-
 手段 3 (`manual`) は監視プロセスを何も残さない — 後続の CI 失敗・新規レビューコメント・merge/close を検知する主体が居なくなる。呼出側 (`shipping` Phase 6) はこれを監視設置の成功として扱わず、SHIPPED ではなく `MONITOR_UNAVAILABLE` として人間に引き継ぐ。
 
 `ScheduleWakeup` の `prompt` には `pr-monitor <n> --check-only` を渡し、次回起床で本スキルに戻れるようにする。採用した `monitor_mode` (と cron なら `schedule_id`) を **必ず state に書く** — 再入時の OPEN ブランチはこれを読まないと「次に wakeup を予約すべきか」「決着時に何の cron を解除するか」が判らない。
