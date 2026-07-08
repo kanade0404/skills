@@ -153,11 +153,12 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prm" status <n>
 
    同じタイミングで、次の 3 つも合わせて prune する。dedup 台帳が失効しないと、同じ名前・同じスレッドの **別インシデント** が二度と通知されなくなり、エスカレーション (無監視放置の防止) の存在意義が長期運用で崩れるため:
    - `escalations` の `kind: ci-halted` エントリ: `key` (check 名) が現在の `checks.failing` に **無ければ** 削除する (= 回復した。次に同名 check が失敗したら新インシデントとして再検知・再エスカレーション可能になる)。
-   - `known_comment_ids` を、現在の `unresolved_threads` の `comment_id` 集合との積集合に絞る (state ファイルの無限肥大防止 + resolve 済みスレッドが後で再オープンされた際に新規スレッドとして検知できるようにするため)。
+   - `known_comment_ids` を、現在の `unresolved_threads` の `comment_id` 集合 (`is_outdated` を問わず全件) との積集合に絞る (state ファイルの無限肥大防止 + resolve 済みスレッドが後で再オープンされた際に新規スレッドとして検知できるようにするため)。この集合を `is_outdated == false` に絞り込む**必要はない** — (5) が新規判定の対象自体を `is_outdated == false` に限定するため、outdated のまま残るスレッドの `comment_id` が `known_comment_ids` に居座っても再 dispatch には至らない (実害なし)。両者の絞り込み基準を分けることで、prune は「本当に resolve されたか」だけを見る単純な条件に保てる。
    - `escalations` の `kind: review-stuck` エントリ: `key` (comment_id) が現在の `unresolved_threads` に **無ければ** 削除する (= スレッドが resolve された)。
 4. `checks.failing` の中に (3 で prune 済みの) `known_failing_checks` に無い名前がある → 新規失敗。`ci-self-heal` を使う subagent を Task で dispatch し (契約は次項)、対象 check 名を `known_failing_checks` に追記する。
    - 返った `verdict` が `HALTED` (3-failure architecture gate / flaky / env / infra) → 「エスカレーション分岐」(後述) に従う。`known_failing_checks` への追記はそのまま行い (再 dispatch させないため)、次回以降のポーリングでも 3 の prune で落ちない限り「新規」扱いにしない。
-5. `unresolved_threads` の `comment_id` のうち `known_comment_ids` に無いものがある → 新規の未解決レビュースレッド。`pr-review-respond` を使う subagent を Task で dispatch し (新規分の author が全て CodeRabbit なら、契約入力に「修正適用は `coderabbit:autofix` skill に委譲する。plugin がある環境のみ、無ければ `pr-review-respond` 通常経路」と明記する)、対象 `comment_id` を `known_comment_ids` に追記する。
+5. `unresolved_threads` のうち **`is_outdated == false`** のものに限り、`comment_id` が `known_comment_ids` に無いものがある → 新規の未解決レビュースレッド。`pr-review-respond` を使う subagent を Task で dispatch し (新規分の author が全て CodeRabbit なら、契約入力に「修正適用は `coderabbit:autofix` skill に委譲する。plugin がある環境のみ、無ければ `pr-review-respond` 通常経路」と明記する)、対象 `comment_id` を `known_comment_ids` に追記する。
+   - `is_outdated == true` のスレッドは **dispatch しない**: `pr-review-respond` Phase A は `is_outdated == true` のスレッドを処理前に除外する設計であり、dispatch しても responder が skip するだけの空振りになる (fix push で古い会話が outdated になったが、reviewer がまだ resolve していないケースがこれに当たる)。この種のスレッドは `known_comment_ids` にも追記しない — 次回以降のポーリングでも同じ判定 (dispatch 対象外) を繰り返すだけで実害はなく、むしろ id を残さない方が「未対応のまま人間判断待ち」という状態を素直に表せる。代わりに出力フォーマットの監視サマリに一覧化し、resolve するか・追加コメントで再アクション喚起するかの判断を人間に残す。
    - dispatch した subagent が **終端分類 (VALID / INVALID_PUSH / VALID_DEFER / DUPLICATE) できないコメントを残した** (handback に未終端コメントの報告がある、`WAITING` のまま返った 等) → 「エスカレーション分岐」(後述) に従う。`known_comment_ids` への追記はそのまま行う (再 dispatch しないため)。
 6. 4 と 5 の dispatch は **同一ポーリング内で逐次** (`ci-self-heal` → `pr-review-respond` の順)。同一 PR ブランチを共有し双方が push しうるため並列にしない。
 7. 2・4・5 のいずれかに該当した (状態に変化があった) 場合、`poll_interval_seconds` を 60 に **リセット** する。いずれにも該当しなかった場合は現在値を 2 倍 (上限 1800) にする。
@@ -222,7 +223,8 @@ state ファイルの `monitor_mode` で OPEN 時の次アクションを分岐�
 ## 観測 (直近ポーリング)
 - checks.failing: <件数 (名前列) / なし>
 - checks.pending: <件数 / なし>
-- unresolved_threads: <unresolved_count 件>
+- unresolved_threads: <unresolved_count 件> (うち dispatch 対象外 outdated: <n 件>)
+- outdated かつ未解決 (dispatch 対象外、人間判断待ち): <URL 列 / なし>
 
 ## dispatch 履歴
 - <ISO8601> ci-self-heal dispatch (<check 名>) → verdict: <PASS/HALTED>
