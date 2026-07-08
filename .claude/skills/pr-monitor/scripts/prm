@@ -72,7 +72,7 @@ owner=$(jq -r '.owner.login' <<<"$repo_view")
 repo=$(jq -r '.name' <<<"$repo_view")
 
 fetch_unresolved_threads() {
-  local cursor="" has_next="true" raw pr_node page all="[]"
+  local cursor="" has_next="true" raw pr_node page all="[]" err_file rc err
   while [ "$has_next" = "true" ]; do
     args=(-f owner="$owner" -f repo="$repo" -F pr="$pr")
     if [ -n "$cursor" ]; then
@@ -81,10 +81,13 @@ fetch_unresolved_threads() {
     # Deliberately no --jq here: when the GraphQL response carries a
     # top-level `errors` entry (e.g. a nonexistent PR number), `gh api
     # graphql --jq` skips the filter and dumps the raw envelope to stdout
-    # while still exiting non-zero. Capturing the raw envelope ourselves
-    # (with `|| true` so `set -e` doesn't abort before we can inspect it)
-    # lets us tell "PR not found" apart from a real transport failure and
-    # report a friendly error instead of a raw jq crash further down.
+    # while still exiting non-zero. Capturing stdout and stderr separately
+    # (mirroring fetch_failing_checks below) lets us tell "PR not found"
+    # (a valid GraphQL response with a null pullRequest) apart from a real
+    # transport/auth/rate-limit failure (empty or non-JSON stdout) and
+    # report the correct one instead of a raw jq crash further down.
+    err_file=$(mktemp)
+    set +e
     raw=$(gh api graphql "${args[@]}" -f query='
       query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
         repository(owner: $owner, name: $repo) {
@@ -102,9 +105,13 @@ fetch_unresolved_threads() {
             }
           }
         }
-      }') || true
+      }' 2>"$err_file")
+    rc=$?
+    set -e
+    err=$(cat "$err_file")
+    rm -f "$err_file"
     if [ -z "$raw" ] || ! jq -e . >/dev/null 2>&1 <<<"$raw"; then
-      echo "error: PR $pr not found" >&2
+      echo "error: gh api graphql failed while fetching review threads for PR $pr (exit $rc): ${err:-<no output>}" >&2
       exit 1
     fi
     pr_node=$(jq -c '.data.repository.pullRequest' <<<"$raw")
