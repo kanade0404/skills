@@ -16,7 +16,8 @@ PR ブランチへ push したら「push して報告」で終わらせない。
    (`pr-review-respond` があれば起動する)
 3. **離れる前の監視** — merge / close・新規レビューコメント・checks 失敗を検知する
    手段を残す。イベントトリガが無ければ監視プロセスを設置する (`pr-monitor` が
-   担うのは merge / close の検知のみ。新規コメント・checks 失敗の検知は別途担保する)
+   あれば設置する — merge / close に加え、新規レビューコメント・checks 失敗も
+   検知して対応 skill の subagent dispatch まで担う)
 
 なぜ rule か: skill はトリガされて初めてロードされるため、「忘れずに起動する」
 保証だけは常駐する rule でしか担保できない (実例: push 後に P2 指摘 7 件が半日

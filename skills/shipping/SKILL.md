@@ -1,6 +1,6 @@
 ---
 name: shipping
-description: 実装が上流スキル (`design`/`software-design` → `tdd`/`tidy-first`) で GREEN になった後の **出荷専用ターミナルステージ**を、各フェーズを fresh subagent に dispatch して構成するオーケストレータスキル。品質ゲート (`code-review`) → 完了ゲート (`verify-done`) → PR materialize (open PR が無ければ `commit-commands:commit-push-pr`、あれば push) → CI 緑化 (`ci-self-heal`) と自動レビュー対応 (`pr-review-respond`、CodeRabbit/Devin/Copilot/人間) を、CI 全 pass かつ全コメント終端まで回し、行き詰まったら escalate する。要するコード修正は behavioral→`tdd` / structural→`tidy-first` の subagent にルーティングし、本スキルはコードを書かずループ制御と収束/escalation 判定だけを main で持つ。「ship して」「実装できたから後は全部やって PR 出して CI もレビュー対応も全部通してマージできる状態にして」「commit-push-pr の検証付き版で」「赤と指摘を全部潰して merge-ready に」のような実装後に出荷まで丸ごと任せる要請で必ず起動すること。commit だけは `commit-commands:commit`、検証ループ不要の commit→push→PR だけは `commit-push-pr`、コードレビューだけは `code-review`、既存 PR のコメント対応だけは `pr-review-respond`、CI 修復だけは `ci-self-heal`、完了確認だけは `verify-done`、実装そのもの (設計/コーディング/未 GREEN/WIP) は上流が担い範囲外。PR は merge せず merge-ready で停止する。
+description: 実装が上流スキル (`design`/`software-design` → `tdd`/`tidy-first`) で GREEN になった後の **出荷専用ターミナルステージ**を、各フェーズを fresh subagent に dispatch するオーケストレータスキル。品質ゲート (`code-review`) → 完了ゲート (`verify-done`) → PR materialize (open PR が無ければ `commit-commands:commit-push-pr`、あれば push) → CI 緑化 (`ci-self-heal`) と自動レビュー対応 (`pr-review-respond`、CodeRabbit/Devin/Copilot/人間、CodeRabbit 修正は `coderabbit:autofix` へ委譲) を、CI 全 pass かつ全コメント終端まで回し、行き詰まったら escalate する。収束後は SHIPPED 前に `pr-monitor` を subagent dispatch し監視設置を確認する。コード修正は behavioral→`tdd` / structural→`tidy-first` の subagent にルーティングし、本スキルはコードを書かずループ制御と収束/escalation 判定だけを main で持つ。「ship して」「実装できたから後は全部やって PR 出して CI もレビュー対応も全部通してマージできる状態にして」「commit-push-pr の検証付き版で」「赤と指摘を全部潰して merge-ready に」のような実装後に出荷まで丸ごと任せる要請で必ず起動すること。commit だけは `commit-commands:commit`、検証ループ不要の commit→push→PR だけは `commit-push-pr`、コードレビューだけは `code-review`、既存 PR のコメント対応だけは `pr-review-respond`、CI 修復だけは `ci-self-heal`、完了確認だけは `verify-done`、実装そのもの (設計/コーディング/未 GREEN/WIP) は上流が担い範囲外。PR は merge せず merge-ready で停止する。
 claudecode:
   allowed-tools:
     - Read
@@ -82,6 +82,7 @@ design / software-design   →   tdd / tidy-first   →   shipping (本スキル
 | CI 緑化 | `ci-self-heal` | PASS / HALTED |
 | レビュー対応 | `pr-review-respond` | 未終端コメント n→m |
 | 修正 | `tdd` / `tidy-first` | pushed_commits |
+| 監視設置 (Phase 6) | `pr-monitor` | `MONITORING (<mode>)` / `SETTLED` |
 
 ---
 
@@ -121,7 +122,7 @@ design / software-design   →   tdd / tidy-first   →   shipping (本スキル
 
 ## パイプライン
 
-5 フェーズを順に通す。各フェーズは上記契約で subagent を 1 つ dispatch し、返った `verdict` を下表で読む。**本スキルは差し戻し先のコードに手を入れない** — 修正は dev/fix subagent が行う。
+6 フェーズを順に通す。各フェーズは上記契約で subagent を 1 つ dispatch し、返った `verdict` を下表で読む。**本スキルは差し戻し先のコードに手を入れない** — 修正は dev/fix subagent が行う。
 
 ### Phase 1 — 品質ゲート (1a simplify → 1b code-review)
 
@@ -168,7 +169,7 @@ PR number / URL を確保して Phase 4 へ。
 push 後、以下を **1 サイクル**として回す。(a)(b) は逐次:
 
 - **(a) CI**: `ci-self-heal` を使う subagent を dispatch。CI watch → root-cause → 修正 (内部で `tdd`/`tidy-first`) → 再 push → 再 watch を内部で回し、緑なら `PASS`、3-failure / flaky / env / infra なら `HALTED` を返す。
-- **(b) レビュー**: `pr-review-respond` を使う subagent を dispatch。契約の入力で **fetch / triage 対象に CodeRabbit / Devin / Copilot / 人間を含めるよう明示**する。Copilot は bot だが `@coderabbitai resolve` に応答しないため人間と同じ reply-only 経路で扱う。VALID は修正 commit、INVALID_PUSH は根拠付き pushback、VALID_DEFER は issue 化、DUPLICATE は参照。
+- **(b) レビュー**: `pr-review-respond` を使う subagent を dispatch。契約の入力で **fetch / triage 対象に CodeRabbit / Devin / Copilot / 人間を含めるよう明示**する。Copilot は bot だが `@coderabbitai resolve` に応答しないため人間と同じ reply-only 経路で扱う。**CodeRabbit 起因の指摘への修正適用は、`coderabbit` plugin が入っている環境では `coderabbit:autofix` (per-change approval 付き) に委譲する**ことを契約入力で明示する — plugin が無い環境では従来どおり `pr-review-respond` 内の修正経路 (`tdd` / `tidy-first` ルーティング) を使う。VALID は修正 commit、INVALID_PUSH は根拠付き pushback、VALID_DEFER は issue 化、DUPLICATE は参照。
 - **(c) 状態判定**: このサイクルで (a)(b) の `pushed_commits` が空でないかを `git rev-parse HEAD` の前後比較で確認。
 
 (a) `ci-self-heal` が `HALTED` を返したら、**同サイクルの (b) を dispatch せず即 escalate** する (HALTED は終端。先へ進めない)。
@@ -191,7 +192,23 @@ push 後、以下を **1 サイクル**として回す。(a)(b) は逐次:
 
 ### Phase 5 — 最終ゲート
 
-収束したら `verify-done` を使う subagent を再 dispatch し、最終の完了宣言用 fresh evidence (Verification ブロック literal) を取る。PASS を取ってから SHIPPED 報告。**PR の merge / squash / ブランチ削除はしない** — 最終状態は「人間が merge できる状態」で停止する。
+収束したら `verify-done` を使う subagent を再 dispatch し、最終の完了宣言用 fresh evidence (Verification ブロック literal) を取る。PASS を取ってから Phase 6 へ。**PR の merge / squash / ブランチ削除はしない** — 最終状態は「人間が merge できる状態」で停止する。
+
+### Phase 6 — 監視設置
+
+**なぜ**: `rules/pr-push-discipline.md` の帰結 3 (「離れる前の監視」) は常駐 rule で「いつ必ずやるか」を定めるが、rule 単体では「SHIPPED に飛びつく」完了報告直前の慣性を止められない。本スキルの終端フェーズとして構造的ゲートにすることで、rule (規範) と skill (手続き) の二重化で初めて帰結 3 が実効化する。**SHIPPED は監視設置を確認してから報告する** — Phase 5 の PASS だけでは報告しない。
+
+`pr-monitor` を使う subagent を Task で dispatch する (fresh subagent。「Subagent 起動契約 (テンプレ)」に従う。main は監視を待たない):
+
+- **契約入力**: 対象 PR 番号 / `origin_transcript` パス (「PR を生んだ本セッション」の transcript。retro が解析すべき対象であり、後の `--check-only` 監視セッションではない)
+- **subagent 内の振る舞い**: `pr-monitor` は cron 登録 (`/schedule`) または `ScheduleWakeup` self-pace poll、どちらも不可なら手動再実行案内のいずれかを選び、**subagent 自体は常駐しない** (main を塞がない)。拡張後の `pr-monitor` は merge / close の検知に加え、新規未解決レビュースレッド・checks 失敗も `prm status` で検知し、`ci-self-heal` / `pr-review-respond` / (CodeRabbit 起因なら) `coderabbit:autofix` の subagent dispatch まで担う (`pr-monitor` 側の責務。本スキルは dispatch するだけ)。
+- **読む verdict**: `MONITORING (<mode>)` (cron / wakeup / manual のいずれかで監視設置が完了) / `SETTLED` (dispatch 時点で既に merge / close していた場合)
+
+| Phase 6 verdict | 次の手 |
+|---|---|
+| `MONITORING (<mode>)` | 監視設置済みとして SHIPPED 報告 |
+| `SETTLED` | 追加監視は不要。SHIPPED 報告に「dispatch 時点で既に決着済み」を明記 |
+| dispatch 失敗 / 上記いずれでもない verdict | **SHIPPED と報告しない**。Verdict を BLOCKED とし「監視未設置」を明記した上で、手動 `pr-monitor <n> --check-only` の実行を案内して報告を終える |
 
 ---
 
@@ -225,6 +242,7 @@ escalate 後は **ユーザの明示指示があるまで追加 dispatch / push 
 - Phase 3 PR: <created <URL> / reused <URL>>
 - Phase 4 収束ループ: <k サイクル>
 - Phase 5 verify-done(final): <PASS>
+- Phase 6 pr-monitor: <MONITORING (mode) / SETTLED>
 
 ## Cycle ledger
 1. ci-self-heal=<PASS/HALTED> / pr-review-respond=<未終端 n→0> / push=<直近 short SHA / none>
@@ -234,7 +252,7 @@ escalate 後は **ユーザの明示指示があるまで追加 dispatch / push 
 - SHIPPED / BLOCKED / ESCALATED
 - CI: <全 pass / 赤 n> (<run URL>)
 - 未終端コメント: <0 / n>
-- Next: <人間 merge 待ち / Critical 対処 / architecture 再考 …>
+- Next: <人間 merge 待ち / pr-monitor 監視中 (<mode>) / Critical 対処 / architecture 再考 …>
 
 ## Artifacts (各 subagent の handback への参照)
 - code-review findings: <handback 参照>
@@ -255,9 +273,10 @@ escalate 後は **ユーザの明示指示があるまで追加 dispatch / push 
 
 ### 出力する成果物
 
-- **Pipeline ログ** (Phase 1–5 の判定 1 行ずつ、固定構造)
+- **Pipeline ログ** (Phase 1–6 の判定 1 行ずつ、固定構造)
 - **Cycle ledger** (1 行 = 1 サイクル: ci-self-heal verdict + pr-review-respond 未終端数 + push SHA)
 - **Verdict 1 行** (SHIPPED / BLOCKED / ESCALATED + CI 状態 + 未終端数 + Next)
+- **監視設置** (Phase 6: `pr-monitor` subagent dispatch の verdict — `MONITORING (<mode>)` / `SETTLED`)
 - **subagent handback への参照** + Phase 5 Verification ブロック literal
 
 ### 出力しない成果物
