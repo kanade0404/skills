@@ -22,7 +22,7 @@
 # on the caller to remember the rule (skills/pr-review-respond/SKILL.md
 # Phase D).
 #
-# Reply body construction (posted before the resolve mutation, if at all):
+# Reply body construction:
 #   - vendor=coderabbit: body-file content (if given) followed by a blank
 #     line and the `@coderabbitai resolve` directive. If body-file is
 #     omitted, the reply is just the directive line.
@@ -30,12 +30,20 @@
 #     bot mention in a human/Devin thread would be confusing). If body-file
 #     is omitted, no reply is posted at all; the thread is resolved silently.
 #
-# After the reply (if any), the thread is looked up by its root comment's
+# Ordering (deliberate): the thread is looked up by its root comment's
 # databaseId — paginating `reviewThreads` the same way
 # skills/pr-monitor/scripts/prm's fetch_unresolved_threads does — and
-# resolved via `resolveReviewThread(input: {threadId: $id})`. The mutation
-# response's `isResolved` is verified to be true; anything else is a hard
-# failure (non-zero exit).
+# resolved via `resolveReviewThread(input: {threadId: $id})` BEFORE the reply
+# is posted. The mutation response's `isResolved` is verified to be true;
+# anything else is a hard failure (non-zero exit) and no reply is posted at
+# all. This ordering matters: if the lookup or mutation fails (transient
+# GraphQL error, insufficient resolve permission, thread already gone) after
+# a "Fixed in ..." reply had already been posted, the thread would be left
+# open with a misleading success reply that a later `pr-review-respond`
+# fetch could mistake for an already-handled (self-replied) thread and skip
+# forever. Resolving first means a failure here never posts that reply; the
+# worst case is a thread that resolved correctly but without an explanatory
+# reply, which is a strictly safer failure mode.
 #
 # stdout:
 #   - reply posted:  line 1 = reply html_url, last line = "resolved <thread_id>"
@@ -118,14 +126,6 @@ case "$vendor" in
     ;;
 esac
 
-if [ "$skip_reply" = false ]; then
-  resp=$(gh api -X POST \
-    -H "Accept: application/vnd.github+json" \
-    "repos/$owner/$repo/pulls/$pr/comments/$comment_id/replies" \
-    -f body="$body")
-  jq -r '.html_url' <<<"$resp"
-fi
-
 # Look up the GraphQL thread id for this root comment's databaseId by
 # paginating reviewThreads (same cursor-loop shape as
 # skills/pr-monitor/scripts/prm's fetch_unresolved_threads).
@@ -206,6 +206,18 @@ is_resolved=$(jq -r '.data.resolveReviewThread.thread.isResolved' <<<"$mutation_
 if [ "$is_resolved" != "true" ]; then
   echo "error: resolveReviewThread mutation did not return isResolved=true for thread $thread_id" >&2
   exit 1
+fi
+
+# The reply is posted only after the thread lookup and resolve mutation have
+# both succeeded (see the "Ordering (deliberate)" note above the usage
+# comment) — a failure in either of those never leaves a misleading "Fixed
+# in ..." reply behind on a thread that didn't actually get resolved.
+if [ "$skip_reply" = false ]; then
+  resp=$(gh api -X POST \
+    -H "Accept: application/vnd.github+json" \
+    "repos/$owner/$repo/pulls/$pr/comments/$comment_id/replies" \
+    -f body="$body")
+  jq -r '.html_url' <<<"$resp"
 fi
 
 echo "resolved $thread_id"
