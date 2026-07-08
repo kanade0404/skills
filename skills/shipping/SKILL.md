@@ -82,7 +82,7 @@ design / software-design   →   tdd / tidy-first   →   shipping (本スキル
 | CI 緑化 | `ci-self-heal` | PASS / HALTED |
 | レビュー対応 | `pr-review-respond` | 未終端コメント n→m |
 | 修正 | `tdd` / `tidy-first` | pushed_commits |
-| 監視設置 (Phase 6) | `pr-monitor` | `MONITORING (<mode>)` / `SETTLED (<MERGED|CLOSED>)` / `ESCALATED` |
+| 監視設置 (Phase 6) | `pr-monitor` | `MONITORING (<mode>)` / `SETTLED (<MERGED\|CLOSED>)` / `ESCALATED` |
 
 ---
 
@@ -208,7 +208,7 @@ push 後、以下を **1 サイクル**として回す。(a)(b) は逐次:
 |---|---|
 | `MONITORING (cron)` / `MONITORING (wakeup)` | 監視設置済みとして SHIPPED 報告 |
 | `MONITORING (manual)` | **監視設置とはみなさない**。cron も `ScheduleWakeup` も使えない環境では、後続の CI 失敗・新規レビューコメント・merge/close を検知するプロセスが何も残らない。SHIPPED にせず Verdict を **`MONITOR_UNAVAILABLE`** とし「MONITOR_UNAVAILABLE: 監視プロセスが残せない環境。手動 `pr-monitor <n> --check-only` の定期実行が必要」と明記してユーザーに引き継ぐ |
-| `SETTLED (<MERGED|CLOSED>)` | 追加監視は不要。SHIPPED 報告に「dispatch 時点で既に決着済み」を明記 |
+| `SETTLED (<MERGED\|CLOSED>)` | 追加監視は不要。SHIPPED 報告に「dispatch 時点で既に決着済み」を明記 |
 | `ESCALATED` | 監視は継続中だが needs-human コメント投稿済み。**SHIPPED ではなく ESCALATED 報告** — needs-human コメント URL と対象 (check 名 / comment_id) を明記して報告を終える |
 | dispatch 失敗 / 上記いずれでもない verdict | **SHIPPED と報告しない**。Verdict を BLOCKED とし「監視未設置」を明記した上で、手動 `pr-monitor <n> --check-only` の実行を案内して報告を終える |
 
