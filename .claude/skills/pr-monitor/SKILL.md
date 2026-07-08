@@ -204,7 +204,7 @@ state ファイルの `monitor_mode` で OPEN 時の次アクションを分岐�
      pr-monitor は監視を継続します。対応後の新しい push で該当 check が prune されれば自動的に再検知されます。
      ```
 
-  2. state の `escalations` に `{kind: ci-halted|review-stuck, key: <"<workflow>/<name>"|comment_id>, at: <ISO8601>}` を追記する。
+  2. `gh pr comment` の**投稿成功を確認してから**、state の `escalations` に `{kind: ci-halted|review-stuck, key: <"<workflow>/<name>"|comment_id>, at: <ISO8601>}` を追記する。投稿が失敗した場合 (network / rate-limit / permission 等) は追記せず、次ポーリングで再試行される — ここでも「確認された成功後にのみ state を更新する」原則 (次項「dispatch 契約」参照) を守り、通知未達のまま dedup が効いて以後の再エスカレーションが永久に握りつぶされる事態を防ぐ。
 
 人間が対応した後の新 push で `known_failing_checks` が (2 の全クリア、または 3 の prune で) 落ちれば、次のポーリングで自然に再検知・再 dispatch される。
 
