@@ -112,7 +112,7 @@ schedule_id: <cron/routine の id | null>  # cron 手段のとき。決着時の
 origin_transcript: <当該 feature/ship を実際に行ったセッションの transcript パス>
 known_comment_ids: [<comment_id>, ...]    # dispatch 済みコメント。多重 dispatch 防止
 known_failing_checks: [<check name>, ...] # dispatch 済み失敗 check。同上
-last_head_sha: <sha>                      # 前回観測 head。新 push 検知 (バックオフ reset と known_failing_checks クリアに使う)
+last_head_sha: <sha>                      # 前回観測 head。新 push 検知 (バックオフ reset、known_failing_checks クリア、escalations[kind=ci-halted] クリアに使う)
 poll_interval_seconds: <n>                # 指数バックオフの現在値
 escalations: [{kind: ci-halted|review-stuck, key: <check名|comment_id>, at: <ISO8601>}]
                                            # needs-human コメントを投稿済みの事象。同じ (kind, key) への再投稿を防ぐ dedup 台帳
@@ -147,11 +147,11 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prm" status <n>
 を 1 回叩き、返った JSON と state ファイルの前回スナップショットを突き合わせて、次の順で分岐する:
 
 1. `pr.state` が `MERGED` / `CLOSED` → **決着**。状態ファイルの `state` を更新し、`monitor_mode: cron` なら `schedule_id` の cron を解除 (one-shot で消さないと check-only が鳴り続け `retro` が再起動し続ける)。**ここで判定終了** (以下は評価しない) — Step 5 へ。
-2. `pr.head_sha` が state の `last_head_sha` と異なる → 新規 push を検知。`known_failing_checks` を **クリア** する (CI が新しい head で再走するため、前回の失敗名を引き継ぐと新 CI 上の再失敗を見落とす)。この判定を失敗 check の評価 (4) より **前** に行う — push と同時に来た新規失敗が、クリア前の古い `known_failing_checks` と比較されて同一ポーリング内で「既知」と誤判定されるのを防ぐ (M1)。
+2. `pr.head_sha` が state の `last_head_sha` と異なる → 新規 push を検知。`known_failing_checks` と `escalations` の `kind: ci-halted` エントリを **両方とも全クリア** する。`known_failing_checks` のクリアは CI が新しい head で再走するため、前回の失敗名を引き継ぐと新 CI 上の再失敗を見落とすため。`escalations[kind=ci-halted]` も同時に全クリアが必要なのは、3 の prune が「`key` (check 名) が現在の `checks.failing` に無ければ削除」という条件しか持たず、**人間の修正 push 後も同じ check 名が引き続き failing のケース**を救えないため — この条件だけに任せると、新 head で `ci-self-heal` が再度 `HALTED` を返しても古いエスカレーション記録の `key` が一致し続けて dedup が効いてしまい、新しいインシデントの needs-human コメントが二度と投稿されなくなる。**新 head = 新インシデント境界**という原則に従い、同名 check の再失敗・再 HALTED であっても新 SHA 上では独立した事象として扱い、再エスカレーションを許可する。この判定を失敗 check の評価 (4) より **前** に行う — push と同時に来た新規失敗が、クリア前の古い `known_failing_checks` と比較されて同一ポーリング内で「既知」と誤判定されるのを防ぐ (M1)。
 3. `known_failing_checks` を **prune** する: 現在の `checks.failing` に載っている名前との積集合に絞る (2 の全クリアは、新 push 時に積集合を取るまでもなく丸ごと消せるという、この prune の特殊形)。回復して `checks.failing` から消えた check 名は積集合から自然に落ち、後日再失敗した際に (4) で「新規」として再検知される。ただし `ci-self-heal` が `HALTED` を返し続けている check は `checks.failing` に居座り続けるため prune で落ちず、再 dispatch されないまま「エスカレーション分岐」(後述) の状態を維持する。
 
    同じタイミングで、次の 3 つも合わせて prune する。dedup 台帳が失効しないと、同じ名前・同じスレッドの **別インシデント** が二度と通知されなくなり、エスカレーション (無監視放置の防止) の存在意義が長期運用で崩れるため:
-   - `escalations` の `kind: ci-halted` エントリ: `key` (check 名) が現在の `checks.failing` に **無ければ** 削除する (= 回復した。次に同名 check が失敗したら新インシデントとして再検知・再エスカレーション可能になる)。
+   - `escalations` の `kind: ci-halted` エントリ: `key` (check 名) が現在の `checks.failing` に **無ければ** 削除する (= 回復した。次に同名 check が失敗したら新インシデントとして再検知・再エスカレーション可能になる)。これは **push を伴わない回復** (手動 re-run 等で head_sha が変わらないまま check が green になるケース) を拾うための条件付きクリアであり、2 の「新 push 時の無条件全クリア」とは補完関係にある — 2 は新 head という事実だけで即座にクリアするのに対し、ここは `checks.failing` の実測結果を見て初めてクリアする。同じ check 名が failing のまま新 push が来た場合は 2 で先にクリア済みのため、この条件は素通りする (矛盾なく重複適用されるだけ)。
    - `known_comment_ids` を、現在の `unresolved_threads` の `comment_id` 集合 (`is_outdated` を問わず全件) との積集合に絞る (state ファイルの無限肥大防止 + resolve 済みスレッドが後で再オープンされた際に新規スレッドとして検知できるようにするため)。この集合を `is_outdated == false` に絞り込む**必要はない** — (5) が新規判定の対象自体を `is_outdated == false` に限定するため、outdated のまま残るスレッドの `comment_id` が `known_comment_ids` に居座っても再 dispatch には至らない (実害なし)。両者の絞り込み基準を分けることで、prune は「本当に resolve されたか」だけを見る単純な条件に保てる。
    - `escalations` の `kind: review-stuck` エントリ: `key` (comment_id) が現在の `unresolved_threads` に **無ければ** 削除する (= スレッドが resolve された)。
 4. `checks.failing` の中に (3 で prune 済みの) `known_failing_checks` に無い名前がある → 新規失敗。`ci-self-heal` を使う subagent を Task で dispatch し (契約は次項)、対象 check 名を `known_failing_checks` に追記する。
