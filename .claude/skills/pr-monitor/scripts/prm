@@ -140,15 +140,44 @@ fetch_state() {
 # pending, and 0 when everything passed — but in all three cases the JSON
 # (when --json is given) goes to stdout. Capturing into a variable first
 # (rather than piping straight into jq under `set -o pipefail`) means the
-# non-zero exit never masks or duplicates jq's own output. When there are no
-# checks at all, `gh pr checks` errors before emitting any JSON, so stdout is
-# empty and we fall back to an empty result.
+# non-zero exit never masks or duplicates jq's own output.
+#
+# `gh pr checks` also exits non-zero with empty stdout in two situations that
+# must NOT be treated the same way:
+#   1. No checks are configured on the branch at all — `gh` prints exactly
+#      "no checks reported on the '<branch>' branch" to stderr. This is a
+#      legitimate, expected state: normalizing it to
+#      {"failing":[],"pending":[]} is correct.
+#   2. `gh` itself failed (auth expired, rate-limited, network error, GitHub
+#      API outage, ...). Empty/non-JSON stdout here means we have NO
+#      information about check state — silently returning
+#      {"failing":[],"pending":[]} would make `prm status` (and the
+#      pr-monitor loop reading it) believe the PR is green when the truth is
+#      "unknown". That defeats the purpose of a monitoring loop: the one
+#      failure mode it must never hide is its own inability to observe.
+# Distinguishing the two requires looking at stderr, since both share empty
+# stdout and a non-zero exit code (gh's generic exit codes 1/2/4 don't map
+# 1:1 to "no checks" vs "API failure" — see `gh help exit-codes`). Only the
+# exact "no checks reported" message is normalized to empty; anything else
+# is treated as a real failure and aborts this script (exit 1) so the
+# caller sees an error instead of a false-green result.
 fetch_failing_checks() {
-  local out
-  out=$(gh pr checks "$pr" --repo "$owner/$repo" --json name,bucket,link 2>/dev/null) || true
+  local out err_file err rc
+  err_file=$(mktemp)
+  set +e
+  out=$(gh pr checks "$pr" --repo "$owner/$repo" --json name,bucket,link 2>"$err_file")
+  rc=$?
+  set -e
+  err=$(cat "$err_file")
+  rm -f "$err_file"
+
   if [ -z "$out" ] || ! jq -e . >/dev/null 2>&1 <<<"$out"; then
-    echo '{"failing":[],"pending":[]}'
-    return
+    if [[ "$err" == *"no checks reported"* ]]; then
+      echo '{"failing":[],"pending":[]}'
+      return
+    fi
+    echo "error: gh pr checks failed for PR $pr (exit $rc): ${err:-<no output>}" >&2
+    exit 1
   fi
   jq -c '{
     failing: [ .[] | select(.bucket == "fail" or .bucket == "cancel") | {name, bucket, link} ],
