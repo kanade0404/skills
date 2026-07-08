@@ -27,6 +27,7 @@ set -euo pipefail
 export NO_COLOR=1
 export CLICOLOR_FORCE=0
 unset GH_FORCE_TTY
+export GH_PAGER=cat
 
 valid_reasons="budget-exceeded max-turns ci-3-fail review-5-rounds no-progress ambiguous-issue repo-unresolvable conflict security-block other"
 

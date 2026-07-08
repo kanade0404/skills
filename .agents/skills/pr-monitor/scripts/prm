@@ -1,0 +1,219 @@
+#!/usr/bin/env bash
+# prm — pr-monitor single entry point.
+#
+# Reports a PR's lifecycle state, failing/pending checks, and the full set
+# of unresolved review threads as stable JSON on stdout. Consumers poll this
+# instead of hand-rolling `gh` + `jq` pipelines per invocation.
+#
+# Usage:
+#   prm status     <pr-number>
+#   prm unresolved <pr-number>
+#
+# Output schema — `prm status <n>`:
+# {
+#   "pr": {
+#     "state": "OPEN|MERGED|CLOSED", "merged_at": str|null,
+#     "url": str, "branch": str, "head_sha": str
+#   },
+#   "checks": {
+#     "failing": [ {"name": str, "bucket": "fail"|"cancel", "link": str, "workflow": str} ],
+#     "pending": [ str, ... ]
+#   },
+#   "unresolved_count": int,
+#   "unresolved_threads": [
+#     {
+#       "thread_id": str, "is_outdated": bool, "comment_id": int|null,
+#       "author": str, "path": str|null, "url": str, "created_at": str,
+#       "body_head": str   # first 300 chars of the root comment body
+#     }
+#   ]
+# }
+#
+# Output schema — `prm unresolved <n>`:
+# { "unresolved_count": int, "threads": [ <same shape as unresolved_threads[]> ] }
+#
+# All output is passed through `jq -S` for stable (sorted) key ordering.
+# Bad arguments print usage to stderr and exit 2.
+#
+# Dependencies: bash, gh (authenticated), jq. Nothing else — no python etc.
+# Works when invoked as `bash <path>/prm <cmd> <n>` regardless of the
+# executable bit (rulesync-generated mirrors may not preserve it).
+
+set -euo pipefail
+
+# gh は CLICOLOR_FORCE=1 / GH_FORCE_TTY の環境だと pipe 先にも ANSI 色付き JSON を
+# 出力し、下流の jq (--argjson / parse) を静かに壊す。機械処理専用の経路なので、
+# 全 subcommand に先立って色と TTY 強制を無効化する。
+export NO_COLOR=1
+export CLICOLOR_FORCE=0
+unset GH_FORCE_TTY 2>/dev/null || true
+export GH_PAGER=cat
+
+usage() {
+  echo "usage: $0 <status|unresolved> <pr-number>" >&2
+  exit 2
+}
+
+[ "$#" -eq 2 ] || usage
+cmd="$1"
+pr="$2"
+
+case "$pr" in
+  '' | *[!0-9]*) usage ;;
+esac
+
+case "$cmd" in
+  status | unresolved) ;;
+  *) usage ;;
+esac
+
+repo_view=$(gh repo view --json owner,name)
+owner=$(jq -r '.owner.login' <<<"$repo_view")
+repo=$(jq -r '.name' <<<"$repo_view")
+
+fetch_unresolved_threads() {
+  local cursor="" has_next="true" raw pr_node page all="[]" err_file rc err
+  while [ "$has_next" = "true" ]; do
+    args=(-f owner="$owner" -f repo="$repo" -F pr="$pr")
+    if [ -n "$cursor" ]; then
+      args+=(-f cursor="$cursor")
+    fi
+    # Deliberately no --jq here: when the GraphQL response carries a
+    # top-level `errors` entry (e.g. a nonexistent PR number), `gh api
+    # graphql --jq` skips the filter and dumps the raw envelope to stdout
+    # while still exiting non-zero. Capturing stdout and stderr separately
+    # (mirroring fetch_failing_checks below) lets us tell "PR not found"
+    # (a valid GraphQL response with a null pullRequest) apart from a real
+    # transport/auth/rate-limit failure (empty or non-JSON stdout) and
+    # report the correct one instead of a raw jq crash further down.
+    err_file=$(mktemp)
+    set +e
+    raw=$(gh api graphql "${args[@]}" -f query='
+      query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
+        repository(owner: $owner, name: $repo) {
+          pullRequest(number: $pr) {
+            reviewThreads(first: 100, after: $cursor) {
+              pageInfo { hasNextPage endCursor }
+              nodes {
+                id
+                isResolved
+                isOutdated
+                comments(first: 1) {
+                  nodes { databaseId author { login } path url bodyText createdAt }
+                }
+              }
+            }
+          }
+        }
+      }' 2>"$err_file")
+    rc=$?
+    set -e
+    err=$(cat "$err_file")
+    rm -f "$err_file"
+    if [ -z "$raw" ] || ! jq -e . >/dev/null 2>&1 <<<"$raw"; then
+      echo "error: gh api graphql failed while fetching review threads for PR $pr (exit $rc): ${err:-<no output>}" >&2
+      exit 1
+    fi
+    pr_node=$(jq -c '.data.repository.pullRequest' <<<"$raw")
+    if [ "$pr_node" = "null" ]; then
+      echo "error: PR $pr not found" >&2
+      exit 1
+    fi
+    page=$(jq -c '.reviewThreads' <<<"$pr_node")
+    has_next=$(jq -r '.pageInfo.hasNextPage' <<<"$page")
+    cursor=$(jq -r '.pageInfo.endCursor // empty' <<<"$page")
+    all=$(jq -c --argjson acc "$all" '$acc + [.nodes[]]' <<<"$page")
+  done
+  jq -c '[ .[]
+    | select(.isResolved == false)
+    | {
+        thread_id: .id,
+        is_outdated: .isOutdated,
+        comment_id: (.comments.nodes[0].databaseId // null),
+        author: (.comments.nodes[0].author.login // "unknown"),
+        path: (.comments.nodes[0].path // null),
+        url: .comments.nodes[0].url,
+        created_at: .comments.nodes[0].createdAt,
+        body_head: ((.comments.nodes[0].bodyText // "") | .[0:300])
+      } ]' <<<"$all"
+}
+
+fetch_state() {
+  gh pr view "$pr" --repo "$owner/$repo" --json state,mergedAt,url,headRefName,headRefOid \
+    --jq '{state, merged_at: .mergedAt, url, branch: .headRefName, head_sha: .headRefOid}'
+}
+
+# `gh pr checks` exits 1 when a check failed, 8 when checks are still
+# pending, and 0 when everything passed — but in all three cases the JSON
+# (when --json is given) goes to stdout. Capturing into a variable first
+# (rather than piping straight into jq under `set -o pipefail`) means the
+# non-zero exit never masks or duplicates jq's own output.
+#
+# `gh pr checks` also exits non-zero with empty stdout in two situations that
+# must NOT be treated the same way:
+#   1. No checks are configured on the branch at all — `gh` prints exactly
+#      "no checks reported on the '<branch>' branch" to stderr. This is a
+#      legitimate, expected state: normalizing it to
+#      {"failing":[],"pending":[]} is correct.
+#   2. `gh` itself failed (auth expired, rate-limited, network error, GitHub
+#      API outage, ...). Empty/non-JSON stdout here means we have NO
+#      information about check state — silently returning
+#      {"failing":[],"pending":[]} would make `prm status` (and the
+#      pr-monitor loop reading it) believe the PR is green when the truth is
+#      "unknown". That defeats the purpose of a monitoring loop: the one
+#      failure mode it must never hide is its own inability to observe.
+# Distinguishing the two requires looking at stderr, since both share empty
+# stdout and a non-zero exit code (gh's generic exit codes 1/2/4 don't map
+# 1:1 to "no checks" vs "API failure" — see `gh help exit-codes`). Only the
+# exact "no checks reported" message is normalized to empty; anything else
+# is treated as a real failure and aborts this script (exit 1) so the
+# caller sees an error instead of a false-green result.
+fetch_failing_checks() {
+  local out err_file err rc
+  err_file=$(mktemp)
+  set +e
+  out=$(gh pr checks "$pr" --repo "$owner/$repo" --json name,bucket,link,workflow 2>"$err_file")
+  rc=$?
+  set -e
+  err=$(cat "$err_file")
+  rm -f "$err_file"
+
+  if [ -z "$out" ] || ! jq -e . >/dev/null 2>&1 <<<"$out"; then
+    if [[ "$err" == *"no checks reported"* ]]; then
+      echo '{"failing":[],"pending":[]}'
+      return
+    fi
+    echo "error: gh pr checks failed for PR $pr (exit $rc): ${err:-<no output>}" >&2
+    exit 1
+  fi
+  jq -c '{
+    failing: [ .[] | select(.bucket == "fail" or .bucket == "cancel") | {name, bucket, link, workflow} ],
+    pending: [ .[] | select(.bucket == "pending") | .name ]
+  }' <<<"$out"
+}
+
+case "$cmd" in
+  unresolved)
+    # Captured into a variable (rather than piped straight into jq) so that
+    # fetch_unresolved_threads' PR-not-found `exit 1` (set -euo pipefail)
+    # aborts this script directly instead of leaving jq to fail on empty
+    # stdin with an unrelated, confusing error.
+    threads_json=$(fetch_unresolved_threads)
+    jq -S '{unresolved_count: length, threads: .}' <<<"$threads_json"
+    ;;
+  status)
+    state_json=$(fetch_state)
+    checks_json=$(fetch_failing_checks)
+    threads_json=$(fetch_unresolved_threads)
+    jq -S -n \
+      --argjson pr_state "$state_json" \
+      --argjson checks "$checks_json" \
+      --argjson threads "$threads_json" \
+      '{
+        pr: $pr_state,
+        checks: $checks,
+        unresolved_count: ($threads | length),
+        unresolved_threads: $threads
+      }'
+    ;;
+esac

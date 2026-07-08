@@ -47,6 +47,7 @@ set -euo pipefail
 export NO_COLOR=1
 export CLICOLOR_FORCE=0
 unset GH_FORCE_TTY
+export GH_PAGER=cat
 
 if [ "$#" -ne 1 ]; then
   echo "usage: $0 <pr-number>" >&2

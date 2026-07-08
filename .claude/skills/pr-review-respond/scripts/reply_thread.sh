@@ -19,6 +19,7 @@ set -euo pipefail
 export NO_COLOR=1
 export CLICOLOR_FORCE=0
 unset GH_FORCE_TTY
+export GH_PAGER=cat
 
 if [ "$#" -ne 3 ]; then
   echo "usage: $0 <pr-number> <root-comment-id> <body-file>" >&2
