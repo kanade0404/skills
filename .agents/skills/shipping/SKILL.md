@@ -170,7 +170,7 @@ PR number / URL を確保して Phase 4 へ。
 push 後、以下を **1 サイクル**として回す。(a)(b) は逐次:
 
 - **(a) CI**: `ci-self-heal` を使う subagent を dispatch。CI watch → root-cause → 修正 (内部で `tdd`/`tidy-first`) → 再 push → 再 watch を内部で回し、緑なら `PASS`、3-failure / flaky / env / infra なら `HALTED` を返す。
-- **(b) レビュー**: `pr-review-respond` を使う subagent を dispatch。契約の入力で **fetch / triage 対象に CodeRabbit / Devin / Copilot / 人間を含めるよう明示**する。Copilot は bot だが `@coderabbitai resolve` に応答しないため人間と同じ reply-only 経路で扱う。**CodeRabbit 起因の指摘への修正適用は、`coderabbit` plugin が入っている環境では `coderabbit:autofix` (per-change approval 付き) に委譲する**ことを契約入力で明示する — plugin が無い環境では従来どおり `pr-review-respond` 内の修正経路 (`tdd` / `tidy-first` ルーティング) を使う。VALID は修正 commit、INVALID_PUSH は根拠付き pushback、VALID_DEFER は issue 化、DUPLICATE は参照。
+- **(b) レビュー**: `pr-review-respond` を使う subagent を dispatch。契約の入力で **fetch / triage 対象に CodeRabbit / Devin / Copilot / 人間を含めるよう明示**する。Copilot は `pr-review-respond` のベンダー判定上 `human` に分類され、VALID / VALID_DEFER / DUPLICATE は他 vendor と同じく GraphQL `resolveReviewThread` で直接 resolve される (ディレクティブ併記なし)。reply-only になるのは INVALID_PUSH のみ。**CodeRabbit 起因の指摘への修正適用は、`coderabbit` plugin が入っている環境では `coderabbit:autofix` (per-change approval 付き) に委譲する**ことを契約入力で明示する — plugin が無い環境では従来どおり `pr-review-respond` 内の修正経路 (`tdd` / `tidy-first` ルーティング) を使う。VALID は修正 commit、INVALID_PUSH は根拠付き pushback、VALID_DEFER は issue 化、DUPLICATE は参照。
 - **(c) 状態判定**: このサイクルで (a)(b) の `pushed_commits` が空でないかを `git rev-parse HEAD` の前後比較で確認。
 
 (a) `ci-self-heal` が `HALTED` を返したら、**同サイクルの (b) を dispatch せず即 escalate** する (HALTED は終端。先へ進めない)。
@@ -302,6 +302,6 @@ escalate 後は **ユーザの明示指示があるまで追加 dispatch / push 
 - **subagent の context 制限**: 大規模 diff / 長い CI ログは 1 subagent で読み切れない場合がある。各フェーズ skill 側の分割運用に従う。本スキルは 1 フェーズ 1 dispatch を前提。
 - **逐次コスト**: 1 サイクル内 ci-self-heal → pr-review-respond を逐次に回すため並列より遅い。shared-branch の正しさを優先した意図的選択。
 - **収束は「新規 commit が出なくなった」で判定**: nitpick 無限ループは「triage 済み nitpick は未終端 0 算入」の定義で吸収する (特例ルールを置かない)。重要リリースで追加往復を望む場合はユーザが明示指示できる。
-- **Copilot vendor 判定**: `pr-review-respond` の fetcher は Copilot を安全側に倒す。本スキルは契約入力で Copilot を triage 対象に必ず含めるよう明示するが resolve は発行しない。
+- **Copilot vendor 判定**: `pr-review-respond` の fetcher は Copilot を安全側に倒し `human` 扱いにする。本スキルは契約入力で Copilot を triage 対象に必ず含めるよう明示する。VALID / VALID_DEFER / DUPLICATE は他 vendor 同様 GraphQL `resolveReviewThread` で resolve され、resolve されず返信のみで残るのは INVALID_PUSH のみ。
 - **single PR 前提**: 1 セッション 1 PR。複数 PR 並走の出荷は想定しない。
 - **マルチモデル未検証**: trigger eval は本セッションのモデルのみ。Haiku / Sonnet での発火は未確認。
