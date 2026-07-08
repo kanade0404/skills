@@ -151,14 +151,11 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prm" status <n>
 6. 2・3・5 のいずれかに該当した (状態に変化があった) 場合、`poll_interval_seconds` を 60 に **リセット** する。いずれにも該当しなかった場合は現在値を 2 倍 (上限 1800) にする。
 7. `last_head_sha` を今回の `head_sha` に、`last_checked_at` を現在時刻に更新して state ファイルへ書き戻す。
 
-state ファイルの `monitor_mode` で OPEN 時の次アクションを分岐する (再入時は `--check-only` 引数だけでは手段が判らないため):
+state ファイルの `monitor_mode` で OPEN 時の次アクションを分岐する (再入時は `--check-only` 引数だけでは手段が判らないため。`MERGED` / `CLOSED` は分岐 1 で判定終了済み — Step 5 へ):
 
 | state | 次の手 |
 |---|---|
 | `OPEN` | Step 4 の 2〜7 を実施後、`monitor_mode: cron` なら何もせず終了 (次回 cron 起床に任せる)、`monitor_mode: wakeup` なら更新後の `poll_interval_seconds` で再度 `ScheduleWakeup`、`manual` なら手動再実行を案内 |
-| `MERGED` / `CLOSED` | Step 4 の 1 を実施済み。Step 5 へ |
-
-**決着優先の注意**: 決着 (分岐 1) は他の分岐より先に評価する。同一ポーリングで PR が merge/close されていたら、dispatch 判定 (2・3) はスキップして直接 Step 5 へ進む — 決着後は監視自体が終わるため。
 
 #### dispatch 契約 (簡略)
 

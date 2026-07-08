@@ -67,8 +67,9 @@ case "$cmd" in
   *) usage ;;
 esac
 
-owner=$(gh repo view --json owner --jq '.owner.login')
-repo=$(gh repo view --json name --jq '.name')
+repo_view=$(gh repo view --json owner,name)
+owner=$(jq -r '.owner.login' <<<"$repo_view")
+repo=$(jq -r '.name' <<<"$repo_view")
 
 fetch_unresolved_threads() {
   local cursor="" has_next="true" page all="[]"

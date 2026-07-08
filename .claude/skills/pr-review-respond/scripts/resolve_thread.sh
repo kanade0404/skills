@@ -88,27 +88,27 @@ esac
 owner=$(gh repo view --json owner --jq '.owner.login')
 repo=$(gh repo view --json name --jq '.name')
 
+body_content=""
+if [ -n "$body_file" ]; then
+  if [ ! -f "$body_file" ]; then
+    echo "error: body file not found: $body_file" >&2
+    exit 2
+  fi
+  body_content=$(cat "$body_file")
+fi
+
 skip_reply=false
 case "$vendor" in
   coderabbit)
-    prefix=""
     if [ -n "$body_file" ]; then
-      if [ ! -f "$body_file" ]; then
-        echo "error: body file not found: $body_file" >&2
-        exit 2
-      fi
-      prefix=$(cat "$body_file")
-      prefix="${prefix}"$'\n\n'
+      body="${body_content}"$'\n\n''@coderabbitai resolve'
+    else
+      body="@coderabbitai resolve"
     fi
-    body="${prefix}@coderabbitai resolve"
     ;;
   devin|human)
     if [ -n "$body_file" ]; then
-      if [ ! -f "$body_file" ]; then
-        echo "error: body file not found: $body_file" >&2
-        exit 2
-      fi
-      body=$(cat "$body_file")
+      body="$body_content"
     else
       skip_reply=true
     fi
