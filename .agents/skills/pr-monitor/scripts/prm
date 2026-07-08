@@ -16,7 +16,7 @@
 #     "url": str, "branch": str, "head_sha": str
 #   },
 #   "checks": {
-#     "failing": [ {"name": str, "bucket": "fail"|"cancel", "link": str} ],
+#     "failing": [ {"name": str, "bucket": "fail"|"cancel", "link": str, "workflow": str} ],
 #     "pending": [ str, ... ]
 #   },
 #   "unresolved_count": int,
@@ -165,7 +165,7 @@ fetch_failing_checks() {
   local out err_file err rc
   err_file=$(mktemp)
   set +e
-  out=$(gh pr checks "$pr" --repo "$owner/$repo" --json name,bucket,link 2>"$err_file")
+  out=$(gh pr checks "$pr" --repo "$owner/$repo" --json name,bucket,link,workflow 2>"$err_file")
   rc=$?
   set -e
   err=$(cat "$err_file")
@@ -180,7 +180,7 @@ fetch_failing_checks() {
     exit 1
   fi
   jq -c '{
-    failing: [ .[] | select(.bucket == "fail" or .bucket == "cancel") | {name, bucket, link} ],
+    failing: [ .[] | select(.bucket == "fail" or .bucket == "cancel") | {name, bucket, link, workflow} ],
     pending: [ .[] | select(.bucket == "pending") | .name ]
   }' <<<"$out"
 }

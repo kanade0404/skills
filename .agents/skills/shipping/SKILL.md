@@ -197,17 +197,18 @@ push 後、以下を **1 サイクル**として回す。(a)(b) は逐次:
 
 ### Phase 6 — 監視設置
 
-**なぜ**: `rules/pr-push-discipline.md` の帰結 3 (「離れる前の監視」) は常駐 rule で「いつ必ずやるか」を定めるが、rule 単体では「SHIPPED に飛びつく」完了報告直前の慣性を止められない。本スキルの終端フェーズとして構造的ゲートにすることで、rule (規範) と skill (手続き) の二重化で初めて帰結 3 が実効化する。**SHIPPED は監視設置を確認してから報告する** — Phase 5 の PASS だけでは報告しない。
+**なぜ**: `rules/pr-push-discipline.md` の帰結 3 (「離れる前の監視」) は常駐 rule で「いつ必ずやるか」を定めるが、rule 単体では「SHIPPED に飛びつく」完了報告直前の慣性を止められない。本スキルの終端フェーズとして構造的ゲートにすることで、rule (規範) と skill (手続き) の二重化で初めて帰結 3 が実効化する。**SHIPPED は監視設置を確認してから報告する** — Phase 5 の PASS だけでは報告しない。`pr-monitor` が cron も `ScheduleWakeup` も使えず手動フォールバック (`monitor_mode: manual`) に倒れた場合、後続の CI 失敗・新規レビューコメント・merge/close を検知する常駐プロセスは何も残らない — 帰結 3 が求める「手段を残す」を満たさないため、`manual` は監視設置の成功に数えない。
 
 `pr-monitor` を使う subagent を Task で dispatch する (fresh subagent。「Subagent 起動契約 (テンプレ)」に従う。main は監視を待たない):
 
 - **契約入力**: 対象 PR 番号 / `origin_transcript` パス (「PR を生んだ本セッション」の transcript。retro が解析すべき対象であり、後の `--check-only` 監視セッションではない)
 - **subagent 内の振る舞い**: `pr-monitor` は cron 登録 (`/schedule`) または `ScheduleWakeup` self-pace poll、どちらも不可なら手動再実行案内のいずれかを選び、**subagent 自体は常駐しない** (main を塞がない)。拡張後の `pr-monitor` は merge / close の検知に加え、新規未解決レビュースレッド・checks 失敗も `prm status` で検知し、`ci-self-heal` / `pr-review-respond` / (CodeRabbit 起因なら) `coderabbit:autofix` の subagent dispatch まで担う (`pr-monitor` 側の責務。本スキルは dispatch するだけ)。
-- **読む verdict**: `MONITORING (<mode>)` (cron / wakeup / manual のいずれかで監視設置が完了) / `SETTLED (<MERGED|CLOSED>)` (dispatch 時点で既に merge / close していた場合) / `ESCALATED` (dispatch した poll で `ci-self-heal` HALTED または `pr-review-respond` 終端未達によるエスカレーションが発生し、needs-human コメントを投稿した場合。監視自体は `pr-monitor` 側で継続する)
+- **読む verdict**: `MONITORING (<mode>)` (`mode` は cron / wakeup / manual のいずれか。**`manual` は監視プロセスが何も残らないため監視設置の成功には数えない** — cron / wakeup のみ成功扱い) / `SETTLED (<MERGED|CLOSED>)` (dispatch 時点で既に merge / close していた場合) / `ESCALATED` (dispatch した poll で `ci-self-heal` HALTED または `pr-review-respond` 終端未達によるエスカレーションが発生し、needs-human コメントを投稿した場合。監視自体は `pr-monitor` 側で継続する)
 
 | Phase 6 verdict | 次の手 |
 |---|---|
-| `MONITORING (<mode>)` | 監視設置済みとして SHIPPED 報告 |
+| `MONITORING (cron)` / `MONITORING (wakeup)` | 監視設置済みとして SHIPPED 報告 |
+| `MONITORING (manual)` | **監視設置とはみなさない**。cron も `ScheduleWakeup` も使えない環境では、後続の CI 失敗・新規レビューコメント・merge/close を検知するプロセスが何も残らない。SHIPPED にせず Verdict を **`MONITOR_UNAVAILABLE`** とし「MONITOR_UNAVAILABLE: 監視プロセスが残せない環境。手動 `pr-monitor <n> --check-only` の定期実行が必要」と明記してユーザーに引き継ぐ |
 | `SETTLED (<MERGED|CLOSED>)` | 追加監視は不要。SHIPPED 報告に「dispatch 時点で既に決着済み」を明記 |
 | `ESCALATED` | 監視は継続中だが needs-human コメント投稿済み。**SHIPPED ではなく ESCALATED 報告** — needs-human コメント URL と対象 (check 名 / comment_id) を明記して報告を終える |
 | dispatch 失敗 / 上記いずれでもない verdict | **SHIPPED と報告しない**。Verdict を BLOCKED とし「監視未設置」を明記した上で、手動 `pr-monitor <n> --check-only` の実行を案内して報告を終える |
@@ -251,10 +252,10 @@ escalate 後は **ユーザの明示指示があるまで追加 dispatch / push 
 2. ...
 
 ## Verdict
-- SHIPPED / BLOCKED / ESCALATED
+- SHIPPED / BLOCKED / ESCALATED / MONITOR_UNAVAILABLE
 - CI: <全 pass / 赤 n> (<run URL>)
 - 未終端コメント: <0 / n>
-- Next: <人間 merge 待ち / pr-monitor 監視中 (<mode>) / Critical 対処 / architecture 再考 …>
+- Next: <人間 merge 待ち / pr-monitor 監視中 (<mode>) / 手動 pr-monitor <n> --check-only の定期実行が必要 (MONITOR_UNAVAILABLE) / Critical 対処 / architecture 再考 …>
 
 ## Artifacts (各 subagent の handback への参照)
 - code-review findings: <handback 参照>
@@ -267,6 +268,8 @@ escalate 後は **ユーザの明示指示があるまで追加 dispatch / push 
 
 **早期終了時 (BLOCKED / ESCALATED)**: テンプレは全フェーズ完走を前提にしない。未到達フェーズ行は `未到達 (Phase N で <verdict>)` と書く。(a) `ci-self-heal`=HALTED で (b) を skip したサイクルは Cycle ledger 行を `pr-review-respond=未実行 ((a) HALTED で同サイクル skip)` と書く。Artifacts の `verify-done Verification` 行は、Phase 5 未到達なら `Phase 5 未到達のため記載なし` とする。BLOCKED / ESCALATED は例外ではなく Verdict の定義済み出口であり、この体裁で必ず 1 メッセージにまとめる。
 
+**`MONITOR_UNAVAILABLE`**: BLOCKED / ESCALATED と異なり全 Phase (1〜6) は完走している — Phase 6 の `pr-monitor` dispatch が `MONITORING (manual)` を返した場合の縮退 Verdict であり、未到達フェーズ扱いにはしない。Pipeline ログの Phase 6 行はそのまま `MONITORING (manual)` と書き、その上で Verdict 行を `MONITOR_UNAVAILABLE` とする。
+
 ---
 
 ## 出力する成果物 / 出力しない成果物
@@ -277,7 +280,7 @@ escalate 後は **ユーザの明示指示があるまで追加 dispatch / push 
 
 - **Pipeline ログ** (Phase 1–6 の判定 1 行ずつ、固定構造)
 - **Cycle ledger** (1 行 = 1 サイクル: ci-self-heal verdict + pr-review-respond 未終端数 + push SHA)
-- **Verdict 1 行** (SHIPPED / BLOCKED / ESCALATED + CI 状態 + 未終端数 + Next)
+- **Verdict 1 行** (SHIPPED / BLOCKED / ESCALATED / MONITOR_UNAVAILABLE + CI 状態 + 未終端数 + Next)
 - **監視設置** (Phase 6: `pr-monitor` subagent dispatch の verdict — `MONITORING (<mode>)` / `SETTLED (<MERGED|CLOSED>)` / `ESCALATED`)
 - **subagent handback への参照** + Phase 5 Verification ブロック literal
 

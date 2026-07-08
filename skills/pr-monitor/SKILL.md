@@ -71,7 +71,7 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prm" <subcommand> <pr>
 ```json
 {
   "pr": {"state": "OPEN", "merged_at": null, "url": "...", "branch": "...", "head_sha": "..."},
-  "checks": {"failing": [{"name": "...", "bucket": "fail", "link": "..."}], "pending": ["..."]},
+  "checks": {"failing": [{"name": "...", "bucket": "fail", "link": "...", "workflow": "..."}], "pending": ["..."]},
   "unresolved_count": 3,
   "unresolved_threads": [
     {"thread_id": "...", "is_outdated": false, "comment_id": 123, "author": "coderabbitai", "path": "...", "url": "...", "created_at": "...", "body_head": "..."}
@@ -111,10 +111,13 @@ monitor_mode: <cron | wakeup | manual>   # Step 3 で採用した待機手段。
 schedule_id: <cron/routine の id | null>  # cron 手段のとき。決着時の解除対象 (無いと何を消すか判らない)
 origin_transcript: <当該 feature/ship を実際に行ったセッションの transcript パス>
 known_comment_ids: [<comment_id>, ...]    # dispatch 済みコメント。多重 dispatch 防止
-known_failing_checks: [<check name>, ...] # dispatch 済み失敗 check。同上
+known_failing_checks: [<"<workflow>/<name>" の文字列>, ...] # dispatch 済み失敗 check。同上。
+                                           # 複数 workflow に同名 job があるリポジトリでは
+                                           # check 名単独だと別インシデントを同一視するため、
+                                           # `gh pr checks --json` が返す workflow を含めた組で key する
 last_head_sha: <sha>                      # 前回観測 head。新 push 検知 (バックオフ reset、known_failing_checks クリア、escalations[kind=ci-halted] クリアに使う)
 poll_interval_seconds: <n>                # 指数バックオフの現在値
-escalations: [{kind: ci-halted|review-stuck, key: <check名|comment_id>, at: <ISO8601>}]
+escalations: [{kind: ci-halted|review-stuck, key: <"<workflow>/<name>"|comment_id>, at: <ISO8601>}]
                                            # needs-human コメントを投稿済みの事象。同じ (kind, key) への再投稿を防ぐ dedup 台帳
 ```
 
@@ -134,6 +137,8 @@ escalations: [{kind: ci-halted|review-stuck, key: <check名|comment_id>, at: <IS
 
 環境に `Monitor` ツール (条件監視) があれば、手段 2 の代わりにそちらへ委譲してよい — 使えるなら使う程度の位置づけで、`ScheduleWakeup` と同じ `poll_interval_seconds` を待機条件に使う。
 
+手段 3 (`manual`) は監視プロセスを何も残さない — 後続の CI 失敗・新規レビューコメント・merge/close を検知する主体が居なくなる。呼出側 (`shipping` Phase 6) はこれを監視設置の成功として扱わず、SHIPPED ではなく `MONITOR_UNAVAILABLE` として人間に引き継ぐ。
+
 `ScheduleWakeup` の `prompt` には `pr-monitor <n> --check-only` を渡し、次回起床で本スキルに戻れるようにする。採用した `monitor_mode` (と cron なら `schedule_id`) を **必ず state に書く** — 再入時の OPEN ブランチはこれを読まないと「次に wakeup を予約すべきか」「決着時に何の cron を解除するか」が判らない。
 
 ポーリング間隔は state の `poll_interval_seconds` で管理する (基準 60 秒、上限 1800 秒)。この値の更新ルールは Step 4 の末尾で扱う。
@@ -147,14 +152,14 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prm" status <n>
 を 1 回叩き、返った JSON と state ファイルの前回スナップショットを突き合わせて、次の順で分岐する:
 
 1. `pr.state` が `MERGED` / `CLOSED` → **決着**。状態ファイルの `state` を更新し、`monitor_mode: cron` なら `schedule_id` の cron を解除 (one-shot で消さないと check-only が鳴り続け `retro` が再起動し続ける)。**ここで判定終了** (以下は評価しない) — Step 5 へ。
-2. `pr.head_sha` が state の `last_head_sha` と異なる → 新規 push を検知。`known_failing_checks` と `escalations` の `kind: ci-halted` エントリを **両方とも全クリア** する。`known_failing_checks` のクリアは CI が新しい head で再走するため、前回の失敗名を引き継ぐと新 CI 上の再失敗を見落とすため。`escalations[kind=ci-halted]` も同時に全クリアが必要なのは、3 の prune が「`key` (check 名) が現在の `checks.failing` に無ければ削除」という条件しか持たず、**人間の修正 push 後も同じ check 名が引き続き failing のケース**を救えないため — この条件だけに任せると、新 head で `ci-self-heal` が再度 `HALTED` を返しても古いエスカレーション記録の `key` が一致し続けて dedup が効いてしまい、新しいインシデントの needs-human コメントが二度と投稿されなくなる。**新 head = 新インシデント境界**という原則に従い、同名 check の再失敗・再 HALTED であっても新 SHA 上では独立した事象として扱い、再エスカレーションを許可する。この判定を失敗 check の評価 (4) より **前** に行う — push と同時に来た新規失敗が、クリア前の古い `known_failing_checks` と比較されて同一ポーリング内で「既知」と誤判定されるのを防ぐ (M1)。
-3. `known_failing_checks` を **prune** する: 現在の `checks.failing` に載っている名前との積集合に絞る (2 の全クリアは、新 push 時に積集合を取るまでもなく丸ごと消せるという、この prune の特殊形)。回復して `checks.failing` から消えた check 名は積集合から自然に落ち、後日再失敗した際に (4) で「新規」として再検知される。ただし `ci-self-heal` が `HALTED` を返し続けている check は `checks.failing` に居座り続けるため prune で落ちず、再 dispatch されないまま「エスカレーション分岐」(後述) の状態を維持する。
+2. `pr.head_sha` が state の `last_head_sha` と異なる → 新規 push を検知。`known_failing_checks` と `escalations` の `kind: ci-halted` エントリを **両方とも全クリア** する。`known_failing_checks` のクリアは CI が新しい head で再走するため、前回の失敗キーを引き継ぐと新 CI 上の再失敗を見落とすため。`escalations[kind=ci-halted]` も同時に全クリアが必要なのは、3 の prune が「`key` (`"<workflow>/<name>"`) が現在の `checks.failing` に無ければ削除」という条件しか持たず、**人間の修正 push 後も同じ check が引き続き failing のケース**を救えないため — この条件だけに任せると、新 head で `ci-self-heal` が再度 `HALTED` を返しても古いエスカレーション記録の `key` が一致し続けて dedup が効いてしまい、新しいインシデントの needs-human コメントが二度と投稿されなくなる。**新 head = 新インシデント境界**という原則に従い、同一 `workflow/name` の再失敗・再 HALTED であっても新 SHA 上では独立した事象として扱い、再エスカレーションを許可する。この判定を失敗 check の評価 (4) より **前** に行う — push と同時に来た新規失敗が、クリア前の古い `known_failing_checks` と比較されて同一ポーリング内で「既知」と誤判定されるのを防ぐ (M1)。
+3. `known_failing_checks` を **prune** する: 現在の `checks.failing` の各要素を `"<workflow>/<name>"` に組んだ集合との積集合に絞る (2 の全クリアは、新 push 時に積集合を取るまでもなく丸ごと消せるという、この prune の特殊形)。`workflow` を含めて key するのは、複数 workflow に同名 job があるリポジトリで check 名だけを key にすると別 workflow の失敗が同一視され、`ci-self-heal` が dispatch されなくなるため (`gh pr checks --json` は `workflow` フィールドを提供する)。回復して `checks.failing` から消えた `workflow/name` は積集合から自然に落ち、後日再失敗した際に (4) で「新規」として再検知される。ただし `ci-self-heal` が `HALTED` を返し続けている check は `checks.failing` に居座り続けるため prune で落ちず、再 dispatch されないまま「エスカレーション分岐」(後述) の状態を維持する。
 
-   同じタイミングで、次の 3 つも合わせて prune する。dedup 台帳が失効しないと、同じ名前・同じスレッドの **別インシデント** が二度と通知されなくなり、エスカレーション (無監視放置の防止) の存在意義が長期運用で崩れるため:
-   - `escalations` の `kind: ci-halted` エントリ: `key` (check 名) が現在の `checks.failing` に **無ければ** 削除する (= 回復した。次に同名 check が失敗したら新インシデントとして再検知・再エスカレーション可能になる)。これは **push を伴わない回復** (手動 re-run 等で head_sha が変わらないまま check が green になるケース) を拾うための条件付きクリアであり、2 の「新 push 時の無条件全クリア」とは補完関係にある — 2 は新 head という事実だけで即座にクリアするのに対し、ここは `checks.failing` の実測結果を見て初めてクリアする。同じ check 名が failing のまま新 push が来た場合は 2 で先にクリア済みのため、この条件は素通りする (矛盾なく重複適用されるだけ)。
+   同じタイミングで、次の 3 つも合わせて prune する。dedup 台帳が失効しないと、同じキー・同じスレッドの **別インシデント** が二度と通知されなくなり、エスカレーション (無監視放置の防止) の存在意義が長期運用で崩れるため:
+   - `escalations` の `kind: ci-halted` エントリ: `key` (`"<workflow>/<name>"`) が現在の `checks.failing` に **無ければ** 削除する (= 回復した。次に同じ `workflow/name` の check が失敗したら新インシデントとして再検知・再エスカレーション可能になる)。これは **push を伴わない回復** (手動 re-run 等で head_sha が変わらないまま check が green になるケース) を拾うための条件付きクリアであり、2 の「新 push 時の無条件全クリア」とは補完関係にある — 2 は新 head という事実だけで即座にクリアするのに対し、ここは `checks.failing` の実測結果を見て初めてクリアする。同じ `workflow/name` が failing のまま新 push が来た場合は 2 で先にクリア済みのため、この条件は素通りする (矛盾なく重複適用されるだけ)。
    - `known_comment_ids` を、現在の `unresolved_threads` の `comment_id` 集合 (`is_outdated` を問わず全件) との積集合に絞る (state ファイルの無限肥大防止 + resolve 済みスレッドが後で再オープンされた際に新規スレッドとして検知できるようにするため)。この集合を `is_outdated == false` に絞り込む**必要はない** — (5) が新規判定の対象自体を `is_outdated == false` に限定するため、outdated のまま残るスレッドの `comment_id` が `known_comment_ids` に居座っても再 dispatch には至らない (実害なし)。両者の絞り込み基準を分けることで、prune は「本当に resolve されたか」だけを見る単純な条件に保てる。
    - `escalations` の `kind: review-stuck` エントリ: `key` (comment_id) が現在の `unresolved_threads` に **無ければ** 削除する (= スレッドが resolve された)。
-4. `checks.failing` の中に (3 で prune 済みの) `known_failing_checks` に無い名前がある → 新規失敗。`ci-self-heal` を使う subagent を Task で dispatch し (契約は次項)、対象 check 名を `known_failing_checks` に追記する。
+4. `checks.failing` の中に (3 で prune 済みの) `known_failing_checks` に無い `"<workflow>/<name>"` がある → 新規失敗。`ci-self-heal` を使う subagent を Task で dispatch し (契約は次項)、対象を `"<workflow>/<name>"` 形式で `known_failing_checks` に追記する。
    - 返った `verdict` が `HALTED` (3-failure architecture gate / flaky / env / infra) → 「エスカレーション分岐」(後述) に従う。`known_failing_checks` への追記はそのまま行い (再 dispatch させないため)、次回以降のポーリングでも 3 の prune で落ちない限り「新規」扱いにしない。
 5. `unresolved_threads` のうち **`is_outdated == false`** のものに限り、`comment_id` が `known_comment_ids` に無いものがある → 新規の未解決レビュースレッド。`pr-review-respond` を使う subagent を Task で dispatch し (新規分の author が全て CodeRabbit なら、契約入力に「修正適用は `coderabbit:autofix` skill に委譲する。plugin がある環境のみ、無ければ `pr-review-respond` 通常経路」と明記する)、対象 `comment_id` を `known_comment_ids` に追記する。
    - `is_outdated == true` のスレッドは **dispatch しない**: `pr-review-respond` Phase A は `is_outdated == true` のスレッドを処理前に除外する設計であり、dispatch しても responder が skip するだけの空振りになる (fix push で古い会話が outdated になったが、reviewer がまだ resolve していないケースがこれに当たる)。この種のスレッドは `known_comment_ids` にも追記しない — 次回以降のポーリングでも同じ判定 (dispatch 対象外) を繰り返すだけで実害はなく、むしろ id を残さない方が「未対応のまま人間判断待ち」という状態を素直に表せる。代わりに出力フォーマットの監視サマリに一覧化し、resolve するか・追加コメントで再アクション喚起するかの判断を人間に残す。
@@ -174,21 +179,21 @@ state ファイルの `monitor_mode` で OPEN 時の次アクションを分岐�
 
 4 または 5 で dispatch した subagent が上記の条件 (HALTED / 終端未達) を返した場合、**対象の check / comment_id は `known_*` に残したまま再 dispatch しない**。ただし **監視自体は継続する** — merge / close 検知 (分岐 1) は止めず、Step 4 の残り (7・8) やバックオフ・待機手段の予約も通常どおり行う。
 
-- 対応する `key` (`ci-halted` は check 名、`review-stuck` は `comment_id`) が state の `escalations` に既に同じ `kind` で記録されている場合、**同じ事象への 2 度目のコメント投稿はしない** (dedup)。
+- 対応する `key` (`ci-halted` は `"<workflow>/<name>"`、`review-stuck` は `comment_id`) が state の `escalations` に既に同じ `kind` で記録されている場合、**同じ事象への 2 度目のコメント投稿はしない** (dedup)。
 - 未記録なら:
   1. `gh pr comment <n>` で needs-human 向けの構造化コメントを 1 件投稿する。最低構成:
 
      ```markdown
      ## needs-human: <ci-halted | review-stuck>
 
-     - What: <HALTED になった check 名 / 終端分類できなかったコメントの URL>
+     - What: <HALTED になった "<workflow>/<name>" / 終端分類できなかったコメントの URL>
      - Handback: <dispatch した subagent の handback 要点 1-2 文>
      - Next: <人間が取るべき次の一手 1 文 (例: architecture 再考 / 該当スレッドへの直接判断)>
 
      pr-monitor は監視を継続します。対応後の新しい push で該当 check が prune されれば自動的に再検知されます。
      ```
 
-  2. state の `escalations` に `{kind: ci-halted|review-stuck, key: <check名|comment_id>, at: <ISO8601>}` を追記する。
+  2. state の `escalations` に `{kind: ci-halted|review-stuck, key: <"<workflow>/<name>"|comment_id>, at: <ISO8601>}` を追記する。
 
 人間が対応した後の新 push で `known_failing_checks` が (2 の全クリア、または 3 の prune で) 落ちれば、次のポーリングで自然に再検知・再 dispatch される。
 
@@ -200,7 +205,7 @@ state ファイルの `monitor_mode` で OPEN 時の次アクションを分岐�
 
 `shipping` の Subagent 起動契約と同型。Task で新規 subagent を 1 つ起動し、次だけ渡し、次だけ返させる:
 
-- 入力: 対象 PR 番号 / 対象 (`ci-self-heal` なら failing checks の名前列、`pr-review-respond` なら新規 `unresolved_threads` の `thread_id`・`comment_id`・`author`・`url`・`body_head`) / (該当時) CodeRabbit 委譲の明記
+- 入力: 対象 PR 番号 / 対象 (`ci-self-heal` なら failing checks の `"<workflow>/<name>"` 列、`pr-review-respond` なら新規 `unresolved_threads` の `thread_id`・`comment_id`・`author`・`url`・`body_head`) / (該当時) CodeRabbit 委譲の明記
 - 返す構造: `verdict` (`ci-self-heal` は PASS/HALTED、`pr-review-respond` は未終端 n→m)、`pushed_commits` (この task で push した SHA 列 / none)、`handback` (呼出側が次に判断するのに要る最小ブロック)
 
 本スキルは `verdict` / `pushed_commits` / `handback` だけを読み、`known_*` へ追記して次ポーリングへ戻る。dispatch 先が例外・timeout で失敗した場合は `known_*` への追記が起きないため、次回ポーリングで同じ check / thread が「新規」として再検知・再 dispatch される (取りこぼしより重複 dispatch を許容する設計)。`verdict` が HALTED / 終端未達の場合は上記「エスカレーション分岐」に従う。
@@ -221,13 +226,13 @@ state ファイルの `monitor_mode` で OPEN 時の次アクションを分岐�
 - last_checked_at: <ISO8601>
 
 ## 観測 (直近ポーリング)
-- checks.failing: <件数 (名前列) / なし>
+- checks.failing: <件数 ("workflow/name" 列) / なし>
 - checks.pending: <件数 / なし>
 - unresolved_threads: <unresolved_count 件> (うち dispatch 対象外 outdated: <n 件>)
 - outdated かつ未解決 (dispatch 対象外、人間判断待ち): <URL 列 / なし>
 
 ## dispatch 履歴
-- <ISO8601> ci-self-heal dispatch (<check 名>) → verdict: <PASS/HALTED>
+- <ISO8601> ci-self-heal dispatch (<"workflow/name">) → verdict: <PASS/HALTED>
 - <ISO8601> pr-review-respond dispatch (<comment_id 列>, coderabbit:autofix 委譲: <あり/なし>) → verdict: <未終端 n→m>
 
 ## エスカレーション
