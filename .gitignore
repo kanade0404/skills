@@ -14,6 +14,13 @@ __pycache__/
 # remote target (e.g. test-mutation-gate's emit_gate_event.sh fallback)
 .cache/
 
+# pr-monitor's per-PR polling state (consumer-side runtime state, not
+# distributed content). Without this, a consumer dogfooding pr-monitor
+# against this very repo could accidentally commit their local monitor
+# state file (`.claude/.pr-monitor/PR-<n>.yml`) since nothing else in this
+# repo's .gitignore covers paths under `.claude/`.
+.claude/.pr-monitor/
+
 # This repo intentionally commits its generated Codex skills under .agents/
 # (dogfooding). Override a personal global ~/.gitignore that ignores .agents/.
 !.agents/
