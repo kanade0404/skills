@@ -130,7 +130,7 @@ esac
 # paginating reviewThreads (same cursor-loop shape as
 # skills/pr-monitor/scripts/prm's fetch_unresolved_threads).
 find_thread_id() {
-  local cursor="" has_next="true" raw pr_node page found=""
+  local cursor="" has_next="true" raw pr_node page found="" err_file rc err
   while [ "$has_next" = "true" ]; do
     args=(-f owner="$owner" -f repo="$repo" -F pr="$pr")
     if [ -n "$cursor" ]; then
@@ -139,10 +139,13 @@ find_thread_id() {
     # Deliberately no --jq here: when the GraphQL response carries a
     # top-level `errors` entry (e.g. a nonexistent PR number), `gh api
     # graphql --jq` skips the filter and dumps the raw envelope to stdout
-    # while still exiting non-zero. Capturing the raw envelope ourselves
-    # (with `|| true` so `set -e` doesn't abort before we can inspect it)
-    # lets us tell "PR not found" apart from a real transport failure and
-    # report a friendly error instead of a raw jq crash further down.
+    # while still exiting non-zero. Capturing stdout and stderr separately
+    # lets us tell "PR not found" (a valid GraphQL response with a null
+    # pullRequest) apart from a real transport/auth/rate-limit failure
+    # (empty or non-JSON stdout) and report the correct one instead of a
+    # raw jq crash further down.
+    err_file=$(mktemp)
+    set +e
     raw=$(gh api graphql "${args[@]}" -f query='
       query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
         repository(owner: $owner, name: $repo) {
@@ -158,9 +161,13 @@ find_thread_id() {
             }
           }
         }
-      }') || true
+      }' 2>"$err_file")
+    rc=$?
+    set -e
+    err=$(cat "$err_file")
+    rm -f "$err_file"
     if [ -z "$raw" ] || ! jq -e . >/dev/null 2>&1 <<<"$raw"; then
-      echo "error: PR $pr not found" >&2
+      echo "error: gh api graphql failed while looking up review thread for PR $pr (exit $rc): ${err:-<no output>}" >&2
       exit 3
     fi
     pr_node=$(jq -c '.data.repository.pullRequest' <<<"$raw")
@@ -186,13 +193,22 @@ find_rc=0
 thread_id=$(find_thread_id) || find_rc=$?
 if [ "$find_rc" -ne 0 ]; then
   if [ "$find_rc" -eq 3 ]; then
-    # find_thread_id already printed "error: PR $pr not found" to stderr.
+    # find_thread_id already printed a descriptive error (PR not found, or
+    # a transport/auth/rate-limit failure) to stderr.
     exit 1
   fi
   echo "error: could not find review thread for root comment id $comment_id on PR $pr" >&2
   exit 1
 fi
 
+# Guarded the same way as find_thread_id's lookup: `gh api graphql` can
+# exit non-zero here (e.g. missing write/resolve permission), which under
+# `set -e` would otherwise abort the script before the isResolved check or
+# our own error message is reached. Capture stdout/stderr and the exit
+# code explicitly so a transport/permission failure is reported clearly
+# instead of letting `set -e` kill the script with gh's raw stderr.
+mutation_err_file=$(mktemp)
+set +e
 mutation_resp=$(gh api graphql \
   -F id="$thread_id" \
   -f query='
@@ -200,7 +216,16 @@ mutation_resp=$(gh api graphql \
       resolveReviewThread(input: {threadId: $id}) {
         thread { id isResolved }
       }
-    }')
+    }' 2>"$mutation_err_file")
+mutation_rc=$?
+set -e
+mutation_err=$(cat "$mutation_err_file")
+rm -f "$mutation_err_file"
+
+if [ -z "$mutation_resp" ] || ! jq -e . >/dev/null 2>&1 <<<"$mutation_resp"; then
+  echo "error: resolveReviewThread mutation failed for thread $thread_id (exit $mutation_rc): ${mutation_err:-<no output>}" >&2
+  exit 1
+fi
 
 is_resolved=$(jq -r '.data.resolveReviewThread.thread.isResolved' <<<"$mutation_resp")
 if [ "$is_resolved" != "true" ]; then
