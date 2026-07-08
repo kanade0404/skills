@@ -72,13 +72,20 @@ owner=$(jq -r '.owner.login' <<<"$repo_view")
 repo=$(jq -r '.name' <<<"$repo_view")
 
 fetch_unresolved_threads() {
-  local cursor="" has_next="true" page all="[]"
+  local cursor="" has_next="true" raw pr_node page all="[]"
   while [ "$has_next" = "true" ]; do
-    args=(-F owner="$owner" -F repo="$repo" -F pr="$pr")
+    args=(-f owner="$owner" -f repo="$repo" -F pr="$pr")
     if [ -n "$cursor" ]; then
       args+=(-F cursor="$cursor")
     fi
-    page=$(gh api graphql "${args[@]}" -f query='
+    # Deliberately no --jq here: when the GraphQL response carries a
+    # top-level `errors` entry (e.g. a nonexistent PR number), `gh api
+    # graphql --jq` skips the filter and dumps the raw envelope to stdout
+    # while still exiting non-zero. Capturing the raw envelope ourselves
+    # (with `|| true` so `set -e` doesn't abort before we can inspect it)
+    # lets us tell "PR not found" apart from a real transport failure and
+    # report a friendly error instead of a raw jq crash further down.
+    raw=$(gh api graphql "${args[@]}" -f query='
       query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
         repository(owner: $owner, name: $repo) {
           pullRequest(number: $pr) {
@@ -95,7 +102,17 @@ fetch_unresolved_threads() {
             }
           }
         }
-      }' --jq '.data.repository.pullRequest.reviewThreads')
+      }') || true
+    if [ -z "$raw" ] || ! jq -e . >/dev/null 2>&1 <<<"$raw"; then
+      echo "error: PR $pr not found" >&2
+      exit 1
+    fi
+    pr_node=$(jq -c '.data.repository.pullRequest' <<<"$raw")
+    if [ "$pr_node" = "null" ]; then
+      echo "error: PR $pr not found" >&2
+      exit 1
+    fi
+    page=$(jq -c '.reviewThreads' <<<"$pr_node")
     has_next=$(jq -r '.pageInfo.hasNextPage' <<<"$page")
     cursor=$(jq -r '.pageInfo.endCursor // empty' <<<"$page")
     all=$(jq -c --argjson acc "$all" '$acc + [.nodes[]]' <<<"$page")
@@ -141,7 +158,12 @@ fetch_failing_checks() {
 
 case "$cmd" in
   unresolved)
-    fetch_unresolved_threads | jq -S '{unresolved_count: length, threads: .}'
+    # Captured into a variable (rather than piped straight into jq) so that
+    # fetch_unresolved_threads' PR-not-found `exit 1` (set -euo pipefail)
+    # aborts this script directly instead of leaving jq to fail on empty
+    # stdin with an unrelated, confusing error.
+    threads_json=$(fetch_unresolved_threads)
+    jq -S '{unresolved_count: length, threads: .}' <<<"$threads_json"
     ;;
   status)
     state_json=$(fetch_state)

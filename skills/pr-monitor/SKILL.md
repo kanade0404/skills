@@ -10,6 +10,7 @@ claudecode:
     - Bash(git rev-parse *)
     - Bash(git branch *)
     - Bash(bash *prm *)
+    - Bash(gh pr comment *)
     - ScheduleWakeup
     - Skill
     - Task
@@ -113,10 +114,12 @@ known_comment_ids: [<comment_id>, ...]    # dispatch 済みコメント。多重
 known_failing_checks: [<check name>, ...] # dispatch 済み失敗 check。同上
 last_head_sha: <sha>                      # 前回観測 head。新 push 検知 (バックオフ reset と known_failing_checks クリアに使う)
 poll_interval_seconds: <n>                # 指数バックオフの現在値
+escalations: [{kind: ci-halted|review-stuck, key: <check名|comment_id>, at: <ISO8601>}]
+                                           # needs-human コメントを投稿済みの事象。同じ (kind, key) への再投稿を防ぐ dedup 台帳
 ```
 
 - `origin_transcript` は **初回登録時の現セッション transcript** を入れる (retro が解析すべきは「PR を生んだ作業」。後の check-only 監視セッションではない)。パス特定は `retro` Step 1 と同じ slug 規則 (`pwd` の `/` `.` を `-` 置換 → `~/.claude/projects/<slug>/` 最新 `*.jsonl`)。
-- 初回登録時は `known_comment_ids: []` / `known_failing_checks: []` / `last_head_sha: <Step1 で観測した head_sha>` / `poll_interval_seconds: 60` で開始する。
+- 初回登録時は `known_comment_ids: []` / `known_failing_checks: []` / `escalations: []` / `last_head_sha: <Step1 で観測した head_sha>` / `poll_interval_seconds: 60` で開始する。
 - `--check-only` で再入した時はこのファイルを Read し、Step 4 の結果で `known_*` / `last_head_sha` / `poll_interval_seconds` / `last_checked_at` を更新する (`monitor_mode` / `schedule_id` / `origin_transcript` は保持)。
 
 ### Step 3 — 待機手段を優先順で選ぶ
@@ -144,18 +147,43 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prm" status <n>
 を 1 回叩き、返った JSON と state ファイルの前回スナップショットを突き合わせて、次の順で分岐する:
 
 1. `pr.state` が `MERGED` / `CLOSED` → **決着**。状態ファイルの `state` を更新し、`monitor_mode: cron` なら `schedule_id` の cron を解除 (one-shot で消さないと check-only が鳴り続け `retro` が再起動し続ける)。**ここで判定終了** (以下は評価しない) — Step 5 へ。
-2. `checks.failing` の中に `known_failing_checks` に無い名前がある → 新規失敗。`ci-self-heal` を使う subagent を Task で dispatch し (契約は次項)、対象 check 名を `known_failing_checks` に追記する。
-3. `unresolved_threads` の `comment_id` のうち `known_comment_ids` に無いものがある → 新規の未解決レビュースレッド。`pr-review-respond` を使う subagent を Task で dispatch し (新規分の author が全て CodeRabbit なら、契約入力に「修正適用は `coderabbit:autofix` skill に委譲する。plugin がある環境のみ、無ければ `pr-review-respond` 通常経路」と明記する)、対象 `comment_id` を `known_comment_ids` に追記する。
-4. 2 と 3 の dispatch は **同一ポーリング内で逐次** (`ci-self-heal` → `pr-review-respond` の順)。同一 PR ブランチを共有し双方が push しうるため並列にしない。
-5. `pr.head_sha` が state の `last_head_sha` と異なる → 新規 push を検知。`known_failing_checks` を **クリア** する (CI が新しい head で再走するため、前回の失敗名を引き継ぐと新 CI 上の再失敗を見落とす)。
-6. 2・3・5 のいずれかに該当した (状態に変化があった) 場合、`poll_interval_seconds` を 60 に **リセット** する。いずれにも該当しなかった場合は現在値を 2 倍 (上限 1800) にする。
-7. `last_head_sha` を今回の `head_sha` に、`last_checked_at` を現在時刻に更新して state ファイルへ書き戻す。
+2. `pr.head_sha` が state の `last_head_sha` と異なる → 新規 push を検知。`known_failing_checks` を **クリア** する (CI が新しい head で再走するため、前回の失敗名を引き継ぐと新 CI 上の再失敗を見落とす)。この判定を失敗 check の評価 (4) より **前** に行う — push と同時に来た新規失敗が、クリア前の古い `known_failing_checks` と比較されて同一ポーリング内で「既知」と誤判定されるのを防ぐ (M1)。
+3. `known_failing_checks` を **prune** する: 現在の `checks.failing` に載っている名前との積集合に絞る (2 の全クリアは、新 push 時に積集合を取るまでもなく丸ごと消せるという、この prune の特殊形)。回復して `checks.failing` から消えた check 名は積集合から自然に落ち、後日再失敗した際に (4) で「新規」として再検知される。ただし `ci-self-heal` が `HALTED` を返し続けている check は `checks.failing` に居座り続けるため prune で落ちず、再 dispatch されないまま「エスカレーション分岐」(後述) の状態を維持する。
+4. `checks.failing` の中に (3 で prune 済みの) `known_failing_checks` に無い名前がある → 新規失敗。`ci-self-heal` を使う subagent を Task で dispatch し (契約は次項)、対象 check 名を `known_failing_checks` に追記する。
+   - 返った `verdict` が `HALTED` (3-failure architecture gate / flaky / env / infra) → 「エスカレーション分岐」(後述) に従う。`known_failing_checks` への追記はそのまま行い (再 dispatch させないため)、次回以降のポーリングでも 3 の prune で落ちない限り「新規」扱いにしない。
+5. `unresolved_threads` の `comment_id` のうち `known_comment_ids` に無いものがある → 新規の未解決レビュースレッド。`pr-review-respond` を使う subagent を Task で dispatch し (新規分の author が全て CodeRabbit なら、契約入力に「修正適用は `coderabbit:autofix` skill に委譲する。plugin がある環境のみ、無ければ `pr-review-respond` 通常経路」と明記する)、対象 `comment_id` を `known_comment_ids` に追記する。
+   - dispatch した subagent が **終端分類 (VALID / INVALID_PUSH / VALID_DEFER / DUPLICATE) できないコメントを残した** (handback に未終端コメントの報告がある、`WAITING` のまま返った 等) → 「エスカレーション分岐」(後述) に従う。`known_comment_ids` への追記はそのまま行う (再 dispatch しないため)。
+6. 4 と 5 の dispatch は **同一ポーリング内で逐次** (`ci-self-heal` → `pr-review-respond` の順)。同一 PR ブランチを共有し双方が push しうるため並列にしない。
+7. 2・4・5 のいずれかに該当した (状態に変化があった) 場合、`poll_interval_seconds` を 60 に **リセット** する。いずれにも該当しなかった場合は現在値を 2 倍 (上限 1800) にする。
+8. `last_head_sha` を今回の `head_sha` に、`last_checked_at` を現在時刻に更新して state ファイルへ書き戻す。
 
 state ファイルの `monitor_mode` で OPEN 時の次アクションを分岐する (再入時は `--check-only` 引数だけでは手段が判らないため。`MERGED` / `CLOSED` は分岐 1 で判定終了済み — Step 5 へ):
 
 | state | 次の手 |
 |---|---|
-| `OPEN` | Step 4 の 2〜7 を実施後、`monitor_mode: cron` なら何もせず終了 (次回 cron 起床に任せる)、`monitor_mode: wakeup` なら更新後の `poll_interval_seconds` で再度 `ScheduleWakeup`、`manual` なら手動再実行を案内 |
+| `OPEN` | Step 4 の 2〜8 を実施後、`monitor_mode: cron` なら何もせず終了 (次回 cron 起床に任せる)、`monitor_mode: wakeup` なら更新後の `poll_interval_seconds` で再度 `ScheduleWakeup`、`manual` なら手動再実行を案内 |
+
+#### エスカレーション分岐 (`ci-self-heal` HALTED / `pr-review-respond` 終端未達)
+
+4 または 5 で dispatch した subagent が上記の条件 (HALTED / 終端未達) を返した場合、**対象の check / comment_id は `known_*` に残したまま再 dispatch しない**。ただし **監視自体は継続する** — merge / close 検知 (分岐 1) は止めず、Step 4 の残り (7・8) やバックオフ・待機手段の予約も通常どおり行う。
+
+- 対応する `key` (`ci-halted` は check 名、`review-stuck` は `comment_id`) が state の `escalations` に既に同じ `kind` で記録されている場合、**同じ事象への 2 度目のコメント投稿はしない** (dedup)。
+- 未記録なら:
+  1. `gh pr comment <n>` で needs-human 向けの構造化コメントを 1 件投稿する。最低構成:
+
+     ```markdown
+     ## needs-human: <ci-halted | review-stuck>
+
+     - What: <HALTED になった check 名 / 終端分類できなかったコメントの URL>
+     - Handback: <dispatch した subagent の handback 要点 1-2 文>
+     - Next: <人間が取るべき次の一手 1 文 (例: architecture 再考 / 該当スレッドへの直接判断)>
+
+     pr-monitor は監視を継続します。対応後の新しい push で該当 check が prune されれば自動的に再検知されます。
+     ```
+
+  2. state の `escalations` に `{kind: ci-halted|review-stuck, key: <check名|comment_id>, at: <ISO8601>}` を追記する。
+
+人間が対応した後の新 push で `known_failing_checks` が (2 の全クリア、または 3 の prune で) 落ちれば、次のポーリングで自然に再検知・再 dispatch される。`review-stuck` の場合、人間が当該スレッドに追加で書き込めば別の `comment_id` として新規検知される。
 
 #### dispatch 契約 (簡略)
 
@@ -164,7 +192,7 @@ state ファイルの `monitor_mode` で OPEN 時の次アクションを分岐�
 - 入力: 対象 PR 番号 / 対象 (`ci-self-heal` なら failing checks の名前列、`pr-review-respond` なら新規 `unresolved_threads` の `thread_id`・`comment_id`・`author`・`url`・`body_head`) / (該当時) CodeRabbit 委譲の明記
 - 返す構造: `verdict` (`ci-self-heal` は PASS/HALTED、`pr-review-respond` は未終端 n→m)、`pushed_commits` (この task で push した SHA 列 / none)、`handback` (呼出側が次に判断するのに要る最小ブロック)
 
-本スキルは `verdict` / `pushed_commits` / `handback` だけを読み、`known_*` へ追記して次ポーリングへ戻る。dispatch 先が例外・timeout で失敗した場合は `known_*` への追記が起きないため、次回ポーリングで同じ check / thread が「新規」として再検知・再 dispatch される (取りこぼしより重複 dispatch を許容する設計)。
+本スキルは `verdict` / `pushed_commits` / `handback` だけを読み、`known_*` へ追記して次ポーリングへ戻る。dispatch 先が例外・timeout で失敗した場合は `known_*` への追記が起きないため、次回ポーリングで同じ check / thread が「新規」として再検知・再 dispatch される (取りこぼしより重複 dispatch を許容する設計)。`verdict` が HALTED / 終端未達の場合は上記「エスカレーション分岐」に従う。
 
 ### Step 5 — 決着したら retro
 
@@ -190,18 +218,29 @@ state ファイルの `monitor_mode` で OPEN 時の次アクションを分岐�
 - <ISO8601> ci-self-heal dispatch (<check 名>) → verdict: <PASS/HALTED>
 - <ISO8601> pr-review-respond dispatch (<comment_id 列>, coderabbit:autofix 委譲: <あり/なし>) → verdict: <未終端 n→m>
 
+## エスカレーション
+- <escalations 件数 (kind/key 列, 新規投稿分には needs-human コメント URL) / なし>
+
 ## 決着
 - <MERGED <SHA> / CLOSED / 監視中 (次回 <手段>, interval <n>s)>
 - Next: <retro 起動済み / 次ポーリング予定 / 手動再実行案内>
+
+verdict: <MONITORING (<cron|wakeup|manual>) / SETTLED (<MERGED|CLOSED>) / ESCALATED>
 ```
 
-## 出力する成果物 / 出力しない成果物
+`verdict` は次の 3 トークンに固定する (`shipping` Phase 6 がこの report を dispatch 結果として読む契約。`skills/shipping/SKILL.md` の Phase 6 verdict 表記と完全一致させる):
+
+- `SETTLED (<MERGED|CLOSED>)`: Step 4 分岐 1 (または Step 1) で決着を検知したポーリング。
+- `ESCALATED`: このポーリングで新規のエスカレーション (needs-human コメント投稿) が発生した、または既存の未解消エスカレーション (`escalations` に記録済みで対象がまだ prune で落ちていない) を抱えたまま終了するポーリング。**決着ではない** — 監視自体は継続し Step 5 (retro) へは進まない。
+- `MONITORING (<mode>)`: 上記いずれでもない通常の監視継続。
 
 ### 出力する成果物
-- **状態ファイル** `.claude/.pr-monitor/PR-<n>.yml` (consumer gitignore 前提、`known_*` / `last_head_sha` / `poll_interval_seconds` 込み)
-- **監視サマリ** (state 遷移 + 採用した待機手段 + 観測値 + dispatch 履歴 + 次アクション)
+
+- **状態ファイル** `.claude/.pr-monitor/PR-<n>.yml` (consumer gitignore 前提、`known_*` / `escalations` / `last_head_sha` / `poll_interval_seconds` 込み)
+- **監視サマリ** (state 遷移 + 採用した待機手段 + 観測値 + dispatch 履歴 + エスカレーション + 次アクション)
 - **CI 失敗検知時の `ci-self-heal` subagent dispatch** (検知と起動のみ。修復自体は `ci-self-heal` の成果物)
 - **新規未解決レビュースレッド検知時の `pr-review-respond` subagent dispatch** (検知と起動のみ。返信・修正コミットは `pr-review-respond` / `coderabbit:autofix` の成果物)
+- **エスカレーション時の needs-human コメント** (`gh pr comment` 経由、同一事象で 1 回のみ投稿)
 - **決着時の retro 起動**
 
 ### 出力しない成果物

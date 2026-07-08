@@ -7,11 +7,14 @@
 # state is set by this script's mutation call, not by waiting on the bot.
 #
 # Usage:
-#   resolve_thread.sh <pr-number> <root-comment-id> <classification> [body-file] [vendor]
+#   resolve_thread.sh <pr-number> <root-comment-id> <classification> <vendor> [body-file]
 #
 # classification must be one of: VALID VALID_DEFER DUPLICATE.
-# vendor must be one of: coderabbit devin human (default: coderabbit, kept
-# for backward compatibility with existing 3/4-arg callers).
+# vendor is REQUIRED (4th positional arg) and must be one of: coderabbit
+# devin human. There is no implicit default — an omitted or invalid vendor
+# is a hard failure (usage + exit 2). This is deliberate: silently defaulting
+# to coderabbit would let a misclassified human/Devin thread receive an
+# `@coderabbitai resolve` mention (skills/pr-review-respond/SKILL.md Phase D).
 #
 # Guard: INVALID_PUSH is REJECTED (non-zero exit, no API call made). Resolving
 # an INVALID_PUSH thread would tell the reviewer "fixed" when we actually
@@ -50,16 +53,16 @@ export CLICOLOR_FORCE=0
 unset GH_FORCE_TTY
 export GH_PAGER=cat
 
-if [ "$#" -lt 3 ] || [ "$#" -gt 5 ]; then
-  echo "usage: $0 <pr-number> <root-comment-id> <classification> [body-file] [vendor]" >&2
+if [ "$#" -lt 4 ] || [ "$#" -gt 5 ]; then
+  echo "usage: $0 <pr-number> <root-comment-id> <classification> <vendor> [body-file]" >&2
   exit 2
 fi
 
 pr="$1"
 comment_id="$2"
 classification="$3"
-body_file="${4:-}"
-vendor="${5:-coderabbit}"
+vendor="$4"
+body_file="${5:-}"
 
 case "$classification" in
   VALID|VALID_DEFER|DUPLICATE)
@@ -79,8 +82,8 @@ case "$vendor" in
   coderabbit|devin|human)
     ;;
   *)
-    echo "usage: $0 <pr-number> <root-comment-id> <classification> [body-file] [vendor]" >&2
-    echo "error: unknown vendor: $vendor (expected coderabbit|devin|human)" >&2
+    echo "usage: $0 <pr-number> <root-comment-id> <classification> <vendor> [body-file]" >&2
+    echo "error: unknown or missing vendor: '$vendor' (expected coderabbit|devin|human, no default)" >&2
     exit 2
     ;;
 esac
@@ -127,13 +130,20 @@ fi
 # paginating reviewThreads (same cursor-loop shape as
 # skills/pr-monitor/scripts/prm's fetch_unresolved_threads).
 find_thread_id() {
-  local cursor="" has_next="true" page found=""
+  local cursor="" has_next="true" raw pr_node page found=""
   while [ "$has_next" = "true" ]; do
-    args=(-F owner="$owner" -F repo="$repo" -F pr="$pr")
+    args=(-f owner="$owner" -f repo="$repo" -F pr="$pr")
     if [ -n "$cursor" ]; then
-      args+=(-F cursor="$cursor")
+      args+=(-f cursor="$cursor")
     fi
-    page=$(gh api graphql "${args[@]}" -f query='
+    # Deliberately no --jq here: when the GraphQL response carries a
+    # top-level `errors` entry (e.g. a nonexistent PR number), `gh api
+    # graphql --jq` skips the filter and dumps the raw envelope to stdout
+    # while still exiting non-zero. Capturing the raw envelope ourselves
+    # (with `|| true` so `set -e` doesn't abort before we can inspect it)
+    # lets us tell "PR not found" apart from a real transport failure and
+    # report a friendly error instead of a raw jq crash further down.
+    raw=$(gh api graphql "${args[@]}" -f query='
       query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
         repository(owner: $owner, name: $repo) {
           pullRequest(number: $pr) {
@@ -148,7 +158,17 @@ find_thread_id() {
             }
           }
         }
-      }' --jq '.data.repository.pullRequest.reviewThreads')
+      }') || true
+    if [ -z "$raw" ] || ! jq -e . >/dev/null 2>&1 <<<"$raw"; then
+      echo "error: PR $pr not found" >&2
+      exit 3
+    fi
+    pr_node=$(jq -c '.data.repository.pullRequest' <<<"$raw")
+    if [ "$pr_node" = "null" ]; then
+      echo "error: PR $pr not found" >&2
+      exit 3
+    fi
+    page=$(jq -c '.reviewThreads' <<<"$pr_node")
     found=$(jq -r --arg cid "$comment_id" \
       '.nodes[] | select((.comments.nodes[0].databaseId | tostring) == $cid) | .id' \
       <<<"$page")
@@ -162,10 +182,16 @@ find_thread_id() {
   return 1
 }
 
-thread_id=$(find_thread_id) || {
+find_rc=0
+thread_id=$(find_thread_id) || find_rc=$?
+if [ "$find_rc" -ne 0 ]; then
+  if [ "$find_rc" -eq 3 ]; then
+    # find_thread_id already printed "error: PR $pr not found" to stderr.
+    exit 1
+  fi
   echo "error: could not find review thread for root comment id $comment_id on PR $pr" >&2
   exit 1
-}
+fi
 
 mutation_resp=$(gh api graphql \
   -F id="$thread_id" \
