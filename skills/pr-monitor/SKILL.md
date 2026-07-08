@@ -149,6 +149,11 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prm" status <n>
 1. `pr.state` が `MERGED` / `CLOSED` → **決着**。状態ファイルの `state` を更新し、`monitor_mode: cron` なら `schedule_id` の cron を解除 (one-shot で消さないと check-only が鳴り続け `retro` が再起動し続ける)。**ここで判定終了** (以下は評価しない) — Step 5 へ。
 2. `pr.head_sha` が state の `last_head_sha` と異なる → 新規 push を検知。`known_failing_checks` を **クリア** する (CI が新しい head で再走するため、前回の失敗名を引き継ぐと新 CI 上の再失敗を見落とす)。この判定を失敗 check の評価 (4) より **前** に行う — push と同時に来た新規失敗が、クリア前の古い `known_failing_checks` と比較されて同一ポーリング内で「既知」と誤判定されるのを防ぐ (M1)。
 3. `known_failing_checks` を **prune** する: 現在の `checks.failing` に載っている名前との積集合に絞る (2 の全クリアは、新 push 時に積集合を取るまでもなく丸ごと消せるという、この prune の特殊形)。回復して `checks.failing` から消えた check 名は積集合から自然に落ち、後日再失敗した際に (4) で「新規」として再検知される。ただし `ci-self-heal` が `HALTED` を返し続けている check は `checks.failing` に居座り続けるため prune で落ちず、再 dispatch されないまま「エスカレーション分岐」(後述) の状態を維持する。
+
+   同じタイミングで、次の 3 つも合わせて prune する。dedup 台帳が失効しないと、同じ名前・同じスレッドの **別インシデント** が二度と通知されなくなり、エスカレーション (無監視放置の防止) の存在意義が長期運用で崩れるため:
+   - `escalations` の `kind: ci-halted` エントリ: `key` (check 名) が現在の `checks.failing` に **無ければ** 削除する (= 回復した。次に同名 check が失敗したら新インシデントとして再検知・再エスカレーション可能になる)。
+   - `known_comment_ids` を、現在の `unresolved_threads` の `comment_id` 集合との積集合に絞る (state ファイルの無限肥大防止 + resolve 済みスレッドが後で再オープンされた際に新規スレッドとして検知できるようにするため)。
+   - `escalations` の `kind: review-stuck` エントリ: `key` (comment_id) が現在の `unresolved_threads` に **無ければ** 削除する (= スレッドが resolve された)。
 4. `checks.failing` の中に (3 で prune 済みの) `known_failing_checks` に無い名前がある → 新規失敗。`ci-self-heal` を使う subagent を Task で dispatch し (契約は次項)、対象 check 名を `known_failing_checks` に追記する。
    - 返った `verdict` が `HALTED` (3-failure architecture gate / flaky / env / infra) → 「エスカレーション分岐」(後述) に従う。`known_failing_checks` への追記はそのまま行い (再 dispatch させないため)、次回以降のポーリングでも 3 の prune で落ちない限り「新規」扱いにしない。
 5. `unresolved_threads` の `comment_id` のうち `known_comment_ids` に無いものがある → 新規の未解決レビュースレッド。`pr-review-respond` を使う subagent を Task で dispatch し (新規分の author が全て CodeRabbit なら、契約入力に「修正適用は `coderabbit:autofix` skill に委譲する。plugin がある環境のみ、無ければ `pr-review-respond` 通常経路」と明記する)、対象 `comment_id` を `known_comment_ids` に追記する。
@@ -183,7 +188,11 @@ state ファイルの `monitor_mode` で OPEN 時の次アクションを分岐�
 
   2. state の `escalations` に `{kind: ci-halted|review-stuck, key: <check名|comment_id>, at: <ISO8601>}` を追記する。
 
-人間が対応した後の新 push で `known_failing_checks` が (2 の全クリア、または 3 の prune で) 落ちれば、次のポーリングで自然に再検知・再 dispatch される。`review-stuck` の場合、人間が当該スレッドに追加で書き込めば別の `comment_id` として新規検知される。
+人間が対応した後の新 push で `known_failing_checks` が (2 の全クリア、または 3 の prune で) 落ちれば、次のポーリングで自然に再検知・再 dispatch される。
+
+`review-stuck` の回復パスはスレッドの **resolve / 再オープン** であり、スレッド内への追記ではない — `prm` は `comments(first: 1)` でルートコメントのみ取得するため、スレッド内で人間が返信しても `comment_id` は変わらず、追記だけでは新規検知のトリガにならない。観測可能な回復シグナルは次の 2 つ:
+- 人間が当該スレッドを **resolve** すれば `unresolved_threads` から消え、3 の prune により `escalations` の `review-stuck` エントリと `known_comment_ids` の両方から失効する。
+- そのスレッドが後で **unresolve (再オープン)** されれば、`known_comment_ids` は既に prune 済みのため (5) で新規スレッドとして再検知され、`pr-review-respond` へ再 dispatch される。
 
 #### dispatch 契約 (簡略)
 

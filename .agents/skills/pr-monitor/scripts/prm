@@ -76,7 +76,7 @@ fetch_unresolved_threads() {
   while [ "$has_next" = "true" ]; do
     args=(-f owner="$owner" -f repo="$repo" -F pr="$pr")
     if [ -n "$cursor" ]; then
-      args+=(-F cursor="$cursor")
+      args+=(-f cursor="$cursor")
     fi
     # Deliberately no --jq here: when the GraphQL response carries a
     # top-level `errors` entry (e.g. a nonexistent PR number), `gh api
