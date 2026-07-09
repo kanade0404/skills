@@ -44,17 +44,23 @@
 #
 # State subcommands — target file `.claude/.pr-monitor/PR-<n>.json`
 # (cwd-relative; created on first `state-init`):
-#   state-init  <n> <json-file>   Validate <json-file> (`jq -e .`), create
-#                                  the state directory if missing, and write
-#                                  the (jq -S stabilized) content as the new
-#                                  state file. If a state file already
-#                                  exists it is overwritten, with a warning
-#                                  printed to stderr first.
+#   state-init  <n> <json-file>   Validate <json-file> is exactly one JSON
+#                                  object (`jq -es 'length == 1 and (.[0] |
+#                                  type == "object")'` — rejects arrays,
+#                                  scalars, and multi-document JSON streams,
+#                                  not just invalid syntax), create the state
+#                                  directory if missing, and write the (jq -S
+#                                  stabilized) content as the new state file.
+#                                  If a state file already exists it is
+#                                  overwritten, with a warning printed to
+#                                  stderr first.
 #   state-merge <n> <json-file>   Read the existing state file (error, exit
 #                                  1, if it does not exist yet — run
 #                                  state-init first), validate <json-file>
-#                                  as a JSON patch (`jq -e .`), shallow-merge
-#                                  it onto the existing state with
+#                                  as a JSON patch that is exactly one JSON
+#                                  object (same slurped guard as state-init),
+#                                  shallow-merge it onto the existing state
+#                                  with
 #                                  `$base + $patch`, and write the merged
 #                                  result back. Safe ONLY for patches whose
 #                                  fields are all scalars (e.g. a single
@@ -78,8 +84,15 @@
 #                                  run state-init first) and run the jq
 #                                  program in <jq-filter-file> against it
 #                                  with `.` bound to that freshly-read state,
-#                                  validate the result is a JSON object, and
-#                                  write it back atomically. Because the read
+#                                  validate the result is exactly one JSON
+#                                  object (slurped: an unslurped `jq -e 'type
+#                                  == "object"'` would only inspect the last
+#                                  value of a filter that emits a JSON stream
+#                                  of several values — e.g. a stray comma
+#                                  expression — and pass as long as that last
+#                                  value happened to be an object, silently
+#                                  discarding the rest), and write it back
+#                                  atomically. Because the read
 #                                  happens inside the lock (unlike the
 #                                  state-get-then-state-merge protocol),
 #                                  array recomputation expressed in the
@@ -200,8 +213,8 @@ acquire_state_lock() {
 # ファイルを Write ツールで直接書いてはならず、必ずこの経路を通す (F1 対策)。
 case "$cmd" in
   state-init)
-    if ! jq -e . "$json_file" >/dev/null 2>&1; then
-      echo "error: invalid or unreadable JSON: $json_file" >&2
+    if ! jq -es 'length == 1 and (.[0] | type == "object")' "$json_file" >/dev/null 2>&1; then
+      echo "error: invalid or non-object JSON: $json_file (must be exactly one JSON object)" >&2
       exit 1
     fi
     acquire_state_lock
@@ -214,8 +227,8 @@ case "$cmd" in
     exit 0
     ;;
   state-merge)
-    if ! jq -e . "$json_file" >/dev/null 2>&1; then
-      echo "error: invalid or unreadable JSON patch: $json_file" >&2
+    if ! jq -es 'length == 1 and (.[0] | type == "object")' "$json_file" >/dev/null 2>&1; then
+      echo "error: invalid or non-object JSON patch: $json_file (must be exactly one JSON object)" >&2
       exit 1
     fi
     acquire_state_lock
@@ -250,9 +263,16 @@ case "$cmd" in
       exit 1
     fi
     rm -f "$err_file"
-    if ! jq -e 'type == "object"' "$tmp_file" >/dev/null 2>&1; then
+    # `jq -e 'type == "object"'` unslurped only inspects the *last* value a
+    # filter produces. A filter body that emits a JSON stream of several
+    # values for a single input (e.g. an accidental comma expression like
+    # `.a = 1, .b = 2`) would pass this check as long as the last value
+    # happens to be an object — silently writing a multi-document stream to
+    # the state file. Slurping into an array first and requiring exactly one
+    # element closes that gap.
+    if ! jq -es 'length == 1 and (.[0] | type == "object")' "$tmp_file" >/dev/null 2>&1; then
       rm -f "$tmp_file"
-      echo "error: jq filter did not produce a JSON object: $filter_file" >&2
+      echo "error: jq filter did not produce a single JSON object: $filter_file" >&2
       exit 1
     fi
     mv "$tmp_file" "$state_file"
