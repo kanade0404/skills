@@ -224,6 +224,8 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prm" status <n>
    - `escalations` の `kind: review-stuck` エントリ: `key` (comment_id) が現在の `unresolved_threads` に **無ければ** 削除する (= スレッドが resolve された)。
 2 (新 push の CAS) と 3 (prune) は、4/5 の claim (次項) が判定の基準にする on-disk state そのものを作る工程なので、**どちらも 4/5 に入る前に完了させる** (early apply)。2 は前述のとおり成功でも `error()` による no-op でも構わない独立した `prm state-apply` 呼び出しであり、3 は (2 の結果を踏まえた最新 state に対して) 常に実行する別の `prm state-apply` 呼び出しである。この 2 回の呼び出しを 4/5 より前に完了させずに判定・claim を行うと、回復済みの check/thread を誤って「既知」のまま残す、または新 push で本来クリアされるべき古いキーを基準に誤判定する、といった食い違いが起きる。
 
+`state-apply` は書き戻すだけで更新後の state を stdout に返さない (`prm` 実装参照) ため、2/3 が on-disk を書き換えても、Step 4 冒頭で読んだ「前回スナップショット」はその変更を自動では反映しない。**4/5 の候補判定 (`known_failing_checks` / `known_comment_ids` に無いものを探す) は、冒頭スナップショットをそのまま使い回さず、2/3 完了後に `prm state-get <n>` (または `state-get <n> known_failing_checks` / `known_comment_ids`) で改めて読み直した最新 state を基準にする** (PR #78 レビュー指摘)。これを怠ると、同じ `workflow/name` が failing のままの新 push で、2 が on-disk 側の `known_failing_checks` を全クリアしたにもかかわらず、4 が冒頭スナップショットの (クリア前の) 古い `known_failing_checks` と比較して「既知」と誤判定し、claim (state-apply) を試みずに新規失敗の dispatch を見送ってしまう。
+
 4. `checks.failing` の中に (3 で prune 済みの) `known_failing_checks` に無い `"<workflow>/<name>"` がある → 新規失敗候補。**dispatch より前に** `prm state-apply` で claim する (PR #78 レビュー指摘: 2 つの `--check-only` 実行が重なると、両方が同じ prune 後 state を「新規」と読み、旧来の「dispatch 後に追記」の順序では両方が dispatch してしまう)。claim filter は CAS (compare-and-swap) 形にし、`"<workflow>/<name>"` は filter 本文へのリテラル埋め込みではなく `--arg key "<workflow>/<name>"` で束縛した `$key` を参照する — workflow 名・job 名は GitHub 側の自由形式文字列で quote / backslash / 改行を含みうるため、文字列リテラルとして直接埋め込むと、そうした文字を含む名前で filter の構文が壊れるか意図と異なる filter になり claim が成立しなくなる (PR #78 レビュー指摘):
 
    ```jq
@@ -239,7 +241,7 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prm" status <n>
    `state-apply` は lock 内で読み直した最新 state に対してこの filter を評価し、結果を検証してから書き戻す仕組みのため、`error()` を投げた filter は非ゼロ exit・**書き込みなし**で失敗する (実測確認済み)。これにより:
    - claim が **成功** (exit 0) した invocation だけが、その check について `ci-self-heal` を使う subagent を Task で dispatch する (契約は次項)。
    - claim が **失敗** (exit 1, `already-claimed`) した invocation は、別の並走 invocation が既に claim 済みと分かるので **dispatch しない** (二重 dispatch 防止 — 本来の指摘への対処)。
-   - claim 成功後、**dispatch (Task 呼び出し自体) が例外・timeout で失敗した**とこの invocation が観測した場合に **限り**、`.known_failing_checks -= ["<workflow>/<name>"]` という filter で `prm state-apply` を呼び claim を **rollback** する (次ポーリングで再び「新規」として検知・再 dispatch できるようにする — claim を dispatch より前に動かした分の取りこぼし防止)。
+   - claim 成功後、**dispatch (Task 呼び出し自体) が例外・timeout で失敗した**とこの invocation が観測した場合に **限り**、`.known_failing_checks -= [$key]` という filter (claim と同じ理由で `"<workflow>/<name>"` は filter 本文へのリテラル埋め込みではなく `--arg key "<workflow>/<name>"` 経由の `$key` 参照にする — quote / backslash / 改行を含む workflow 名・job 名で filter が壊れるのを防ぐ、PR #78 レビュー指摘) を `prm state-apply <n> <filter-file> --arg key "<workflow>/<name>"` で呼び claim を **rollback** する (次ポーリングで再び「新規」として検知・再 dispatch できるようにする — claim を dispatch より前に動かした分の取りこぼし防止)。
    - 返った `verdict` が `HALTED` (3-failure architecture gate / flaky / env / infra) → 「エスカレーション分岐」(後述) に従う。この場合は dispatch 自体は完了しているので **rollback しない** — claim は維持したまま、次回以降のポーリングでも 3 の prune で落ちない限り「新規」扱いにしない。
 5. `unresolved_threads` のうち **`is_outdated == false`** のものに限り、`comment_id` が `known_comment_ids` に無いものがある → 新規の未解決レビュースレッド候補。4 と同じ CAS claim パターンを `known_comment_ids` に対して適用する。`comment_id` は GitHub の `databaseId` で常に整数のため、`"<workflow>/<name>"` と異なりここはリテラル埋め込みのままで安全 (`--arg` が必須なのは quote / backslash / 改行を含みうる自由形式文字列のみ):
 
