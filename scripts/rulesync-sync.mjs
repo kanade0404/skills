@@ -89,8 +89,16 @@ try {
   restoreSourceExecutableBits(genOut);
 
   if (check) {
-    const diffs = diffTree(genOut, ROOT);
+    // Compute stale/type-mismatch paths BEFORE diffing (not after): a
+    // mirrored path that changed shape (directory <-> file) between the
+    // previous and current generation makes `diffTree` try to read the
+    // wrong type at that same relative path (EISDIR/ENOTDIR) before --check
+    // even gets a chance to report it as stale (PR #78 review). `diffTree`
+    // is told which paths are already-known type mismatches (via `stale`,
+    // which includes them alongside plain missing-in-genOut paths) so it can
+    // skip them instead of crashing.
     const stale = findStaleFiles(genOut, ROOT);
+    const diffs = diffTree(genOut, ROOT, new Set(stale));
     if (diffs.length > 0 || stale.length > 0) {
       console.error(
         'rulesync-sync: generated outputs are stale (run `node scripts/rulesync-sync.mjs`):',
@@ -186,12 +194,21 @@ function restoreSourceExecutableBits(outRoot, rel = '') {
 // (`restoreSourceExecutableBits` above) — comparing exec bits repo-wide
 // would make --check depend on the runner's umask for the many non-script
 // generated files.
-function diffTree(generatedRoot, targetRoot, rel = '') {
+//
+// `staleSet` is the set of relative paths `findStaleFiles` already flagged
+// (computed by the caller BEFORE this call — see the `--check` branch
+// above). A path in that set may be a type mismatch (directory in one root,
+// file in the other) at the same relative location; recursing into it or
+// reading it as the wrong type would throw (EISDIR/ENOTDIR) before --check
+// can even report the mismatch, so it's skipped here and left entirely to
+// `findStaleFiles`'s own report (PR #78 review).
+function diffTree(generatedRoot, targetRoot, staleSet, rel = '') {
   const diffs = [];
   for (const entry of readdirSync(join(generatedRoot, rel), { withFileTypes: true })) {
     const relPath = rel ? join(rel, entry.name) : entry.name;
+    if (staleSet.has(relPath)) continue;
     if (entry.isDirectory()) {
-      diffs.push(...diffTree(generatedRoot, targetRoot, relPath));
+      diffs.push(...diffTree(generatedRoot, targetRoot, staleSet, relPath));
       continue;
     }
     const targetPath = join(targetRoot, relPath);
