@@ -34,6 +34,21 @@ const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const RULESYNC_VERSION = '9.1.1';
 const check = process.argv.includes('--check');
 
+// Generated trees that mirror source content 1:1, one subtree/file per source
+// skill or rule. When a source item is deleted or renamed, `rulesync generate`
+// simply omits it from the scratch output root — there is no "shrunk" file to
+// diff against, the whole path is just absent. That's different from the
+// single aggregated files this script also generates (`.claude/settings.json`,
+// `.codex/config.toml`, `.codex/rules/rulesync.rules`, root `CLAUDE.md`/
+// `AGENTS.md`): those still exist in the scratch output with different
+// (smaller) content after a deletion, so `diffTree`'s plain content comparison
+// already catches drift there. Restricting the stale-file walk (see
+// `findStaleFiles` below) to exactly these three mirrored trees (rather than
+// all of `.claude`/`.agents`) also keeps it from ever touching non-generated
+// content that happens to live alongside them — e.g. `.claude/settings.json`
+// itself, or the gitignored runtime state under `.claude/.pr-monitor/`.
+const MIRRORED_DIRS = ['.claude/skills', '.claude/rules', '.agents/skills'];
+
 // Stage the source-of-truth feature content into `.rulesync/` for `generate`.
 // Only features with real content are staged; commands/hooks/subagents are
 // placeholder-only (README without frontmatter) and would fail rulesync parsing.
@@ -75,16 +90,23 @@ try {
 
   if (check) {
     const diffs = diffTree(genOut, ROOT);
-    if (diffs.length > 0) {
+    const stale = findStaleFiles(genOut, ROOT);
+    if (diffs.length > 0 || stale.length > 0) {
       console.error(
         'rulesync-sync: generated outputs are stale (run `node scripts/rulesync-sync.mjs`):',
       );
       for (const d of diffs) console.error(`  ${d}`);
+      for (const s of stale) {
+        console.error(`  ${s} (stale — no longer generated; source skill/rule likely deleted or renamed)`);
+      }
       process.exit(1);
     }
     console.log('rulesync-sync --check: up to date.');
   } else {
+    const stale = findStaleFiles(genOut, ROOT);
     cpSync(genOut, ROOT, { recursive: true });
+    for (const s of stale) rmSync(join(ROOT, s), { force: true });
+    for (const dir of MIRRORED_DIRS) pruneEmptyDirs(join(ROOT, dir));
   }
 } finally {
   rmSync(genOut, { recursive: true, force: true });
@@ -145,13 +167,18 @@ function restoreSourceExecutableBits(outRoot, rel = '') {
 }
 
 // Recursively compares every file under `generatedRoot` against the same
-// relative path under `targetRoot`. Only reports files that are new or changed
-// (matches the non-deleting semantics of a plain `cpSync` materialize — this
-// script never passes rulesync's `--delete`, so stale extra files in the repo
-// are out of scope here too). Executable-bit drift is only compared for files
-// with a source script counterpart (`restoreSourceExecutableBits` above) —
-// comparing exec bits repo-wide would make --check depend on the runner's
-// umask for the many non-script generated files.
+// relative path under `targetRoot`. Only reports files that are new or
+// changed (matches the non-deleting semantics of a plain `cpSync`
+// materialize — this script never passes rulesync's `--delete`). Because
+// this walk starts from `generatedRoot`, it can only ever find paths that
+// still exist there; a path whose *source* skill/rule was deleted or
+// renamed has no counterpart in `generatedRoot` at all and is invisible to
+// this walk no matter how it's phrased — that's what `findStaleFiles`
+// below is for (the same problem from the other direction). Executable-bit
+// drift is only compared for files with a source script counterpart
+// (`restoreSourceExecutableBits` above) — comparing exec bits repo-wide
+// would make --check depend on the runner's umask for the many non-script
+// generated files.
 function diffTree(generatedRoot, targetRoot, rel = '') {
   const diffs = [];
   for (const entry of readdirSync(join(generatedRoot, rel), { withFileTypes: true })) {
@@ -178,4 +205,46 @@ function diffTree(generatedRoot, targetRoot, rel = '') {
     }
   }
   return diffs;
+}
+
+// The inverse of diffTree: walks the TARGET (repo) side of each MIRRORED_DIRS
+// root and reports every file that has no counterpart at the same relative
+// path under `generatedRoot`. `diffTree` alone can never surface these because
+// it only ever walks paths that exist in `generatedRoot` in the first place —
+// a source skill/rule deleted or renamed leaves its old generated mirror
+// behind, `--check` stays green, and (since materialize is a non-deleting
+// `cpSync` overlay) `write` mode never removes it either, so agents keep
+// seeing a skill/rule that no longer has a source of truth.
+function findStaleFiles(generatedRoot, targetRoot) {
+  const stale = [];
+  const walk = (absDir, relDir) => {
+    for (const entry of readdirSync(absDir, { withFileTypes: true })) {
+      const relPath = join(relDir, entry.name);
+      const absPath = join(absDir, entry.name);
+      if (entry.isDirectory()) {
+        walk(absPath, relPath);
+        continue;
+      }
+      if (!existsSync(join(generatedRoot, relPath))) stale.push(relPath);
+    }
+  };
+  for (const dir of MIRRORED_DIRS) {
+    const targetDir = join(targetRoot, dir);
+    if (existsSync(targetDir)) walk(targetDir, dir);
+  }
+  return stale;
+}
+
+// After deleting the stale files found by `findStaleFiles`, a fully-removed
+// skill/rule can leave behind empty directories (e.g. `.claude/skills/<old
+// name>/scripts/` once its one file is gone). Recursively prunes any
+// directory under `dir` (bottom-up) that ends up with zero entries. Safe to
+// call unconditionally on all of MIRRORED_DIRS every write run — directories
+// that still have generated content in them are never touched.
+function pruneEmptyDirs(dir) {
+  if (!existsSync(dir)) return;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) pruneEmptyDirs(join(dir, entry.name));
+  }
+  if (readdirSync(dir).length === 0) rmSync(dir, { recursive: true, force: true });
 }
