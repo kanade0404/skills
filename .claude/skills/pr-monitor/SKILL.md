@@ -78,6 +78,11 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prm" <subcommand> <pr>
 |---|---|
 | `prm status <pr>` | state / head SHA / 失敗・pending checks / 未解決レビュースレッド全量を 1 つの安定 JSON で返す。毎ポーリングで呼ぶのはこれ 1 回だけ |
 | `prm unresolved <pr>` | 未解決レビュースレッド全量のみ `{unresolved_count, threads}` |
+| `prm state-init <pr> <json-file>` | 監視 state ファイル `.claude/.pr-monitor/PR-<pr>.json` を新規作成する (既存があれば警告を stderr に出しつつ上書き)。初回登録でのみ使う |
+| `prm state-merge <pr> <json-file>` | 既存 state を読み、`<json-file>` の内容を `. + $patch` で shallow merge して書き戻す read-modify-write。以降の全更新はこれ経由で行う (下記 Step 2 参照) |
+| `prm state-get <pr> [key]` | state 全体 (または `.<key>`) を出力。state ファイルが無ければ exit 1 |
+
+`state-*` は `.claude/.pr-monitor/PR-<pr>.json` に対するローカルファイル操作のみで完結し、`gh` / GitHub API には一切触れない。
 
 `prm status` の出力スキーマ:
 
@@ -111,32 +116,41 @@ state が既に `MERGED` / `CLOSED` なら **Step 5 (retro 起動) へ直行** �
 
 ### Step 2 — 状態を永続化
 
-consumer 側の **gitignore 前提パス** `.claude/.pr-monitor/PR-<number>.yml` に記録する (リポを汚さない。配布先で `.claude/.pr-monitor/` を gitignore 推奨):
+consumer 側の **gitignore 前提パス** `.claude/.pr-monitor/PR-<number>.json` に記録する (リポを汚さない。配布先で `.claude/.pr-monitor/` を gitignore 推奨)。
 
-```yaml
-pr_number: <n>
-url: <url>
-branch: <headRefName>
-state: OPEN
-created_at: <ISO8601>
-last_checked_at: <ISO8601>
-monitor_mode: <cron | wakeup | manual>   # Step 3 で採用した待機手段。再入時に何をすべきか判る
-schedule_id: <cron/routine の id | null>  # cron 手段のとき。決着時の解除対象 (無いと何を消すか判らない)
-origin_transcript: <当該 feature/ship を実際に行ったセッションの transcript パス>
-known_comment_ids: [<comment_id>, ...]    # dispatch 済みコメント。多重 dispatch 防止
-known_failing_checks: [<"<workflow>/<name>" の文字列>, ...] # dispatch 済み失敗 check。同上。
-                                           # 複数 workflow に同名 job があるリポジトリでは
-                                           # check 名単独だと別インシデントを同一視するため、
-                                           # `gh pr checks --json` が返す workflow を含めた組で key する
-last_head_sha: <sha>                      # 前回観測 head。新 push 検知 (バックオフ reset、known_failing_checks クリア、escalations[kind=ci-halted] クリアに使う)
-poll_interval_seconds: <n>                # 指数バックオフの現在値
-escalations: [{kind: ci-halted|review-stuck, key: <"<workflow>/<name>"|comment_id>, at: <ISO8601>}]
-                                           # needs-human コメントを投稿済みの事象。同じ (kind, key) への再投稿を防ぐ dedup 台帳
+**このファイルは `prm state-init` / `prm state-merge` 経由でのみ作成・更新する — Write ツールで直接書いてはならない。** 理由 (F1): 長時間の check-only 自己再入ループでは、モデルが「自分が直前のターンで書いた内容」を実ディスク上の内容と同一視し、次の更新前の Read を省略する傾向が実測されている (retro 分析: state 更新 23 回中 22 回が Read を経ない全文 Write だった)。read-modify-write を `prm state-merge` 側に構造的に閉じ込めることで、モデルの Read 規律に依存せずこの抜けを構造的に防ぐ。
+
+```json
+{
+  "pr_number": 0,
+  "url": "<url>",
+  "branch": "<headRefName>",
+  "state": "OPEN",
+  "created_at": "<ISO8601>",
+  "last_checked_at": "<ISO8601>",
+  "monitor_mode": "<cron | wakeup | manual>",
+  "schedule_id": "<cron/routine の id | null>",
+  "origin_transcript": "<当該 feature/ship を実際に行ったセッションの transcript パス>",
+  "known_comment_ids": [],
+  "known_failing_checks": [],
+  "last_head_sha": "<sha>",
+  "poll_interval_seconds": 60,
+  "escalations": [],
+  "cycle_ledger": []
+}
 ```
 
+JSON はインラインコメントを書けないため、各フィールドの意味をここにまとめる:
+- `monitor_mode` / `schedule_id`: Step 3 で採用した待機手段。再入時に何をすべきか、決着時に何を解除すべきか (cron の場合) を判別する
+- `known_comment_ids` / `known_failing_checks`: dispatch 済みの対象。多重 dispatch 防止。`known_failing_checks` は複数 workflow に同名 job があるリポジトリで別インシデントを同一視しないよう、`gh pr checks --json` が返す `workflow` を含めた `"<workflow>/<name>"` の組で key する
+- `last_head_sha`: 前回観測 head。新 push 検知 (バックオフ reset、`known_failing_checks` クリア、`escalations[kind=ci-halted]` クリアに使う)
+- `poll_interval_seconds`: 指数バックオフの現在値
+- `escalations`: `{kind: ci-halted|review-stuck, key: <"<workflow>/<name>"|comment_id>, at: <ISO8601>}` の配列。needs-human コメントを投稿済みの事象。同じ (kind, key) への再投稿を防ぐ dedup 台帳
+- `cycle_ledger` (F7): 各ポーリングサイクルの要約を 1 行ずつ積む配列。**サイクル履歴を保持する唯一の場所** — ScheduleWakeup の prompt に累積履歴を再掲しない (詳細は Step 3 末尾「wakeup prompt 生成規約」)
+
 - `origin_transcript` は **初回登録時の現セッション transcript** を入れる (retro が解析すべきは「PR を生んだ作業」。後の check-only 監視セッションではない)。パス特定は `retro` Step 1 と同じ slug 規則 (`pwd` の `/` `.` を `-` 置換 → `~/.claude/projects/<slug>/` 最新 `*.jsonl`)。
-- 初回登録時は `known_comment_ids: []` / `known_failing_checks: []` / `escalations: []` / `last_head_sha: <Step1 で観測した head_sha>` / `poll_interval_seconds: 60` で開始する。
-- `--check-only` で再入した時はこのファイルを Read し、Step 4 の結果で `known_*` / `last_head_sha` / `poll_interval_seconds` / `last_checked_at` を更新する (`monitor_mode` / `schedule_id` / `origin_transcript` は保持)。
+- 初回登録は上記スキーマを一時 JSON ファイルに書き、`prm state-init <n> <一時json>` に渡して行う。`known_comment_ids: []` / `known_failing_checks: []` / `escalations: []` / `cycle_ledger: []` / `last_head_sha: <Step1 で観測した head_sha>` / `poll_interval_seconds: 60` で開始する。
+- `--check-only` で再入した時は `prm state-get <n>` で現在の state を読む。Step 4 の判定後は、更新すべきフィールドだけを含む patch JSON (例: `{"known_failing_checks": [...], "last_head_sha": "...", "poll_interval_seconds": 120, "last_checked_at": "...", "cycle_ledger": [...]}`) を一時ファイルに書き、`prm state-merge <n> <一時patch>` に渡す。merge は `. + $patch` の **shallow** merge であり、配列フィールドは追記ではなく置換になる — 配列を更新する patch には常に **更新後の全体**を入れる。`monitor_mode` / `schedule_id` / `origin_transcript` を patch に含めなければ既存値がそのまま保持される。
 
 ### Step 3 — 待機手段を優先順で選ぶ
 
@@ -154,6 +168,14 @@ escalations: [{kind: ci-halted|review-stuck, key: <"<workflow>/<name>"|comment_i
 
 ポーリング間隔は state の `poll_interval_seconds` で管理する (基準 60 秒、上限 1800 秒)。この値の更新ルールは Step 4 の末尾で扱う。
 
+#### wakeup prompt 生成規約 (F7)
+
+`ScheduleWakeup` の `prompt` に書くのは次の 2 つ **だけ**:
+1. `pr-monitor <n> --check-only` (次回起床で本スキルに戻るための固定コマンド)
+2. state ファイルパス (`.claude/.pr-monitor/PR-<n>.json`) と、直近 1 サイクル分の差分要約 (例: 「前回 poll: checks 全 green、新規未解決スレッド 0、interval 60→120s」)
+
+**累積の進捗ナラティブ (cycle ledger) を prompt に手打ち再掲しない。** サイクル数に比例して prompt が肥大化し、起床のたびに同じ履歴を読み直す context 浪費になる (F7: 累積 ledger の毎回再掲がこの肥大の原因だった)。サイクル履歴は state の `cycle_ledger` に `prm state-merge` で 1 行ずつ積むだけにとどめ、必要になれば起床後に `prm state-get <n> cycle_ledger` で読み出す — prompt 自体には転記しない。
+
 ### Step 4 — 状態判定 (毎ポーリング)
 
 ```bash
@@ -162,7 +184,7 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prm" status <n>
 
 を 1 回叩き、返った JSON と state ファイルの前回スナップショットを突き合わせて、次の順で分岐する:
 
-1. `pr.state` が `MERGED` / `CLOSED` → **決着**。状態ファイルの `state` を更新し、`monitor_mode: cron` なら `schedule_id` の cron を解除 (one-shot で消さないと check-only が鳴り続け `retro` が再起動し続ける)。**ここで判定終了** (以下は評価しない) — Step 5 へ。
+1. `pr.state` が `MERGED` / `CLOSED` → **決着**。`prm state-merge` で状態ファイルの `state` を更新し、`monitor_mode: cron` なら `schedule_id` の cron を解除 (one-shot で消さないと check-only が鳴り続け `retro` が再起動し続ける)。**ここで判定終了** (以下は評価しない) — Step 5 へ。
 2. `pr.head_sha` が state の `last_head_sha` と異なる → 新規 push を検知。`known_failing_checks` と `escalations` の `kind: ci-halted` エントリを **両方とも全クリア** する。`known_failing_checks` のクリアは CI が新しい head で再走するため、前回の失敗キーを引き継ぐと新 CI 上の再失敗を見落とすため。`escalations[kind=ci-halted]` も同時に全クリアが必要なのは、3 の prune が「`key` (`"<workflow>/<name>"`) が現在の `checks.failing` に無ければ削除」という条件しか持たず、**人間の修正 push 後も同じ check が引き続き failing のケース**を救えないため — この条件だけに任せると、新 head で `ci-self-heal` が再度 `HALTED` を返しても古いエスカレーション記録の `key` が一致し続けて dedup が効いてしまい、新しいインシデントの needs-human コメントが二度と投稿されなくなる。**新 head = 新インシデント境界**という原則に従い、同一 `workflow/name` の再失敗・再 HALTED であっても新 SHA 上では独立した事象として扱い、再エスカレーションを許可する。この判定を失敗 check の評価 (4) より **前** に行う — push と同時に来た新規失敗が、クリア前の古い `known_failing_checks` と比較されて同一ポーリング内で「既知」と誤判定されるのを防ぐ (M1)。
 3. `known_failing_checks` を **prune** する: 現在の `checks.failing` の各要素を `"<workflow>/<name>"` に組んだ集合との積集合に絞る (2 の全クリアは、新 push 時に積集合を取るまでもなく丸ごと消せるという、この prune の特殊形)。`workflow` を含めて key するのは、複数 workflow に同名 job があるリポジトリで check 名だけを key にすると別 workflow の失敗が同一視され、`ci-self-heal` が dispatch されなくなるため (`gh pr checks --json` は `workflow` フィールドを提供する)。回復して `checks.failing` から消えた `workflow/name` は積集合から自然に落ち、後日再失敗した際に (4) で「新規」として再検知される。ただし `ci-self-heal` が `HALTED` を返し続けている check は `checks.failing` に居座り続けるため prune で落ちず、再 dispatch されないまま「エスカレーション分岐」(後述) の状態を維持する。
 
@@ -178,7 +200,7 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prm" status <n>
    - **`verdict: WAITING` それ自体はエスカレーション条件にならない**: `pr-review-respond` はヘッドレス subagent として dispatch された場合、「全スレッドを終端分類済みで CI 完了待ちのみ」のような **呼び出し元 (= 本スキル) が再開の責任を持つ待機**でも `WAITING` を返す契約になっている (`pr-review-respond` SKILL.md「実行環境前提」表)。pr-monitor はまさにその再開責任を持つ受け手であり、次ポーリングで自然に解消する (CI 完了は `checks` 側で既に追跡している。修正済みスレッドは Phase D で resolve 済みのため次回 `unresolved_threads` から消え、3 の prune で `known_comment_ids` も自然に落ちる)。エスカレーションすべきは上のとおり **未終端コメントが残っている場合のみ** — `WAITING` かつ未終端 n=0 (全コメント分類済み、待っているのは CI 完了や次ポーリングでの自然な収束だけ) なら、この分岐には該当させず Step 4 の残り (7・8) に進み監視を継続する。
 6. 4 と 5 の dispatch は **同一ポーリング内で逐次** (`ci-self-heal` → `pr-review-respond` の順)。同一 PR ブランチを共有し双方が push しうるため並列にしない。
 7. 2・4・5 のいずれかに該当した (状態に変化があった) 場合、`poll_interval_seconds` を 60 に **リセット** する。いずれにも該当しなかった場合は現在値を 2 倍 (上限 1800) にする。
-8. `last_head_sha` を今回の `head_sha` に、`last_checked_at` を現在時刻に更新して state ファイルへ書き戻す。
+8. `last_head_sha` を今回の `head_sha` に、`last_checked_at` を現在時刻に更新し、このポーリングの要約 1 行 (例: 「no change, backoff 60→120s」「new failing check dispatched」) を `cycle_ledger` に追記した patch を組んで `prm state-merge` で state ファイルへ書き戻す (`cycle_ledger` は既存全体 + 新規 1 行を patch に入れる — shallow merge は配列を置換するため)。
 
 state ファイルの `monitor_mode` で OPEN 時の次アクションを分岐する (再入時は `--check-only` 引数だけでは手段が判らないため。`MERGED` / `CLOSED` は分岐 1 で判定終了済み — Step 5 へ):
 
@@ -264,7 +286,7 @@ verdict: <MONITORING (<cron|wakeup|manual>) / SETTLED (<MERGED|CLOSED>) / ESCALA
 
 ### 出力する成果物
 
-- **状態ファイル** `.claude/.pr-monitor/PR-<n>.yml` (consumer gitignore 前提、`known_*` / `escalations` / `last_head_sha` / `poll_interval_seconds` 込み)
+- **状態ファイル** `.claude/.pr-monitor/PR-<n>.json` (consumer gitignore 前提、`known_*` / `escalations` / `last_head_sha` / `poll_interval_seconds` / `cycle_ledger` 込み。`prm state-init` / `prm state-merge` 経由でのみ作成・更新)
 - **監視サマリ** (state 遷移 + 採用した待機手段 + 観測値 + dispatch 履歴 + エスカレーション + 次アクション)
 - **CI 失敗検知時の `ci-self-heal` subagent dispatch** (検知と起動のみ。修復自体は `ci-self-heal` の成果物)
 - **新規未解決レビュースレッド検知時の `pr-review-respond` subagent dispatch** (検知と起動のみ。返信・修正コミットは `pr-review-respond` / `coderabbit:autofix` の成果物)

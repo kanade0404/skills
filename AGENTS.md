@@ -29,20 +29,22 @@ Third-party skills are generally not vendored here; consumers `rulesync fetch` u
 - Frontmatter `description` must be ≤1024 characters (other agents' skill loaders reject longer ones), specific, third-person, and describe both what the skill does and when to use it.
 - Keep each `SKILL.md` under 500 lines; move detail into `references/<topic>.md`.
 - The authoring / trigger-eval norms live in `skills/skill-builder/SKILL.md` (source of truth for skill creation).
-- These invariants are machine-checked by `tests/` (run via `python3 -m unittest discover -s tests`) and the trigger-evals CI.
+- These invariants are machine-checked by `tests/` (run via `uv run python3 -m unittest discover -s tests`) and the trigger-evals CI.
 
 ## Build, Test, and Development Commands
 
 There is no project-wide build. Useful commands:
 
-- `python3 -m unittest discover -s tests`: frontmatter invariants + CI checker unit tests.
+- `uv run python3 -m unittest discover -s tests`: frontmatter invariants + CI checker unit tests.
 - `uv run python .github/scripts/check_trigger_evals.py`: full trigger-eval scan (known failures live in `.github/trigger-evals-known-failures.json`).
 - `uv run python skills/skill-builder/scripts/score_triggers.py --cases <cases> --preds <results>`: score one skill's trigger predictions.
 - `node scripts/rulesync-sync.mjs [--check]`: regenerate (or verify) generated agent configs.
 
+Bare `python3` / `python` (without `uv run`) resolve to a broken alias in some development environments used against this repository — this has been independently rediscovered by multiple subagents. Always invoke Python through `uv run`, as all commands above already do.
+
 ## Testing Guidelines
 
-For trigger evals, place cases in `skills/<skill>/evals/<skill>-trigger.json` and predictions in `skills/<skill>/evals/<skill>-trigger-results-YYYY-MM-DD.jsonl`. Include both should-trigger and should-skip prompts, with tags such as `explicit`, `ambiguous`, `adjacent`, and `distractor`. When a skill's frontmatter (trigger surface) changes, re-measure and add a new dated results file — CI enforces this.
+For trigger evals, place cases in `skills/<skill>/evals/<skill>-trigger.json` and predictions in `skills/<skill>/evals/<skill>-trigger-results-YYYY-MM-DD.jsonl`. Include both should-trigger and should-skip prompts, with tags such as `explicit`, `ambiguous`, `adjacent`, and `distractor`. When a skill's frontmatter (trigger surface) changes, re-measure and add a new dated results file — CI enforces this. When that change adds or alters a trigger surface (new wording, new condition), also add at least 2-3 new eval cases that target the new surface directly before re-measuring — re-scoring only the old cases cannot detect false triggers/misses on the new surface (observed in PR #74).
 
 ## Commit & Pull Request Guidelines
 
@@ -105,3 +107,23 @@ PR ブランチへ push したら「push して報告」で終わらせない。
 放置された)。無人配線 (push / コメントを起点とするイベントトリガ) が同等の保証を
 持つリポジトリでは、この rule は「PR を open のまま無監視で放置しない」という
 1 行の不変条件に縮退してよい。
+
+# Self-edited skill discipline
+
+自分が現セッションで編集した `SKILL.md` を、同セッション内で実行に移す
+(その skill のワークフローを自分で駆動する / dogfood する) 前に、確定版を
+必ず一度 Read する。可能なら Skill ツールで正式に起動し、記憶や推測で
+代行しない。
+
+なぜ: 実測で、編集直後の skill を「記憶している内容」で 173 ターン実行し、
+Skill 起動の traceability が欠落した事例がある。編集内容の記憶は、
+その後の subagent による追加編集や自分自身の当初の意図とズレていく —
+セッション内で skill ファイルが変化し続ける以上、最後に読んだ版が
+最新版である保証は無い。
+
+適用場面: skill を編集した直後にその skill のワークフローへ自分で移る
+構成すべて。例:
+
+- `skill-builder` で SKILL.md を編集した直後の検証・ドッグフード
+- `shipping` / `ci-self-heal` のようなオーケストレータ skill 自身の
+  SKILL.md を編集した直後に、そのオーケストレーションを自分で駆動する場合

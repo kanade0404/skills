@@ -1,0 +1,13 @@
+{
+  "PreToolUse": [
+    {
+      "matcher": "Write|Edit|MultiEdit",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "file_path=$(jq -r '.tool_input.file_path // empty'); case \"$file_path\" in *.claude/.pr-monitor/*) echo 'pr-monitor state files must be updated via `bash <skill>/scripts/prm state-init|state-merge` (read-modify-write). Raw Write/Edit is blocked to prevent blind overwrites.' >&2; exit 2 ;; *) exit 0 ;; esac"
+        }
+      ]
+    }
+  ]
+}

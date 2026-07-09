@@ -3,11 +3,20 @@
 #
 # Reports a PR's lifecycle state, failing/pending checks, and the full set
 # of unresolved review threads as stable JSON on stdout. Consumers poll this
-# instead of hand-rolling `gh` + `jq` pipelines per invocation.
+# instead of hand-rolling `gh` + `jq` pipelines per invocation. It also owns
+# the on-disk monitor state file through a read-modify-write subcommand set,
+# so callers never Write the state file directly (F1: across long
+# self-reentrant polling loops, models tend to treat "the content I last
+# wrote" as equivalent to what's on disk and skip re-reading it before the
+# next write — moving the read-modify-write into this script closes that
+# gap structurally instead of relying on Read discipline).
 #
 # Usage:
-#   prm status     <pr-number>
-#   prm unresolved <pr-number>
+#   prm status      <pr-number>
+#   prm unresolved   <pr-number>
+#   prm state-init   <pr-number> <json-file>
+#   prm state-merge  <pr-number> <json-file>
+#   prm state-get    <pr-number> [key]
 #
 # Output schema — `prm status <n>`:
 # {
@@ -32,6 +41,29 @@
 # Output schema — `prm unresolved <n>`:
 # { "unresolved_count": int, "threads": [ <same shape as unresolved_threads[]> ] }
 #
+# State subcommands — target file `.claude/.pr-monitor/PR-<n>.json`
+# (cwd-relative; created on first `state-init`):
+#   state-init  <n> <json-file>   Validate <json-file> (`jq -e .`), create
+#                                  the state directory if missing, and write
+#                                  the (jq -S stabilized) content as the new
+#                                  state file. If a state file already
+#                                  exists it is overwritten, with a warning
+#                                  printed to stderr first.
+#   state-merge <n> <json-file>   Read the existing state file (error, exit
+#                                  1, if it does not exist yet — run
+#                                  state-init first), validate <json-file>
+#                                  as a JSON patch (`jq -e .`), shallow-merge
+#                                  it onto the existing state with
+#                                  `$base + $patch`, and write the merged
+#                                  result back. This read-modify-write is the
+#                                  only sanctioned path for state updates
+#                                  after the initial state-init.
+#   state-get   <n> [key]         Print the whole state object, or just
+#                                  `.<key>` when a key is given. Error (exit
+#                                  1) if the state file does not exist.
+# state-* output is passed through `jq -S` too, and these subcommands touch
+# only the local filesystem — they never call the GitHub API.
+#
 # All output is passed through `jq -S` for stable (sorted) key ordering.
 # Bad arguments print usage to stderr and exit 2.
 #
@@ -50,11 +82,16 @@ unset GH_FORCE_TTY 2>/dev/null || true
 export GH_PAGER=cat
 
 usage() {
-  echo "usage: $0 <status|unresolved> <pr-number>" >&2
+  cat >&2 <<'EOF'
+usage: prm <status|unresolved> <pr-number>
+       prm state-init  <pr-number> <json-file>
+       prm state-merge <pr-number> <json-file>
+       prm state-get   <pr-number> [key]
+EOF
   exit 2
 }
 
-[ "$#" -eq 2 ] || usage
+[ "$#" -ge 2 ] || usage
 cmd="$1"
 pr="$2"
 
@@ -62,9 +99,77 @@ case "$pr" in
   '' | *[!0-9]*) usage ;;
 esac
 
+json_file=""
+key=""
 case "$cmd" in
-  status | unresolved) ;;
+  status | unresolved)
+    [ "$#" -eq 2 ] || usage
+    ;;
+  state-init | state-merge)
+    [ "$#" -eq 3 ] || usage
+    json_file="$3"
+    ;;
+  state-get)
+    { [ "$#" -eq 2 ] || [ "$#" -eq 3 ]; } || usage
+    key="${3:-}"
+    case "$key" in
+      '') ;;
+      *[!a-zA-Z0-9_]*) usage ;;
+    esac
+    ;;
   *) usage ;;
+esac
+
+state_dir=".claude/.pr-monitor"
+state_file="$state_dir/PR-$pr.json"
+
+# state-* サブコマンドは cwd 相対の state ファイルに対する read-modify-write の
+# みで完結し、GitHub API には一切触れない。呼び出し側 (skill 本文) は state
+# ファイルを Write ツールで直接書いてはならず、必ずこの経路を通す (F1 対策)。
+case "$cmd" in
+  state-init)
+    if ! jq -e . "$json_file" >/dev/null 2>&1; then
+      echo "error: invalid or unreadable JSON: $json_file" >&2
+      exit 1
+    fi
+    mkdir -p "$state_dir"
+    if [ -f "$state_file" ]; then
+      echo "warning: overwriting existing state file: $state_file" >&2
+    fi
+    tmp_file=$(mktemp "${state_file}.tmp.XXXXXX")
+    jq -S . "$json_file" >"$tmp_file"
+    mv "$tmp_file" "$state_file"
+    exit 0
+    ;;
+  state-merge)
+    if [ ! -f "$state_file" ]; then
+      echo "error: state file not found: $state_file (run state-init first)" >&2
+      exit 1
+    fi
+    if ! jq -e . "$json_file" >/dev/null 2>&1; then
+      echo "error: invalid or unreadable JSON patch: $json_file" >&2
+      exit 1
+    fi
+    base_json=$(cat "$state_file")
+    patch_json=$(cat "$json_file")
+    tmp_file=$(mktemp "${state_file}.tmp.XXXXXX")
+    jq -S -n --argjson base "$base_json" --argjson patch "$patch_json" \
+      '$base + $patch' >"$tmp_file"
+    mv "$tmp_file" "$state_file"
+    exit 0
+    ;;
+  state-get)
+    if [ ! -f "$state_file" ]; then
+      echo "error: state file not found: $state_file" >&2
+      exit 1
+    fi
+    if [ -n "$key" ]; then
+      jq -S ".${key}" "$state_file"
+    else
+      jq -S . "$state_file"
+    fi
+    exit 0
+    ;;
 esac
 
 repo_view=$(gh repo view --json owner,name)
