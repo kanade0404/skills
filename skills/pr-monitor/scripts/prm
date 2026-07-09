@@ -63,6 +63,9 @@
 #                                  1) if the state file does not exist.
 # state-* output is passed through `jq -S` too, and these subcommands touch
 # only the local filesystem — they never call the GitHub API.
+# state-init/state-merge serialize against each other (per PR number) with an
+# mkdir-based lock so overlapping invocations can't race a read-modify-write
+# and lose one side's update — see acquire_state_lock below.
 #
 # All output is passed through `jq -S` for stable (sorted) key ordering.
 # Bad arguments print usage to stderr and exit 2.
@@ -122,6 +125,33 @@ esac
 
 state_dir=".claude/.pr-monitor"
 state_file="$state_dir/PR-$pr.json"
+lock_dir="$state_dir/.lock-$pr"
+
+# `state-init`/`state-merge` both do a naive read -> modify -> `mv` on the
+# same PR's state file. If two invocations overlap (e.g. a scheduled check
+# starts while the previous check-only run is still waiting on CI/review
+# dispatch), both can read the same base, merge independently, and `mv` their
+# result back — the later `mv` wins and silently drops the earlier process's
+# `known_*`/`escalations`/`cycle_ledger` update (lost update). `mkdir` is
+# atomic on every POSIX filesystem (unlike `flock`, which macOS's stock bash
+# doesn't have), so it's used here as a portable mutual-exclusion primitive:
+# of two concurrent `mkdir "$lock_dir"` calls, only one can succeed (the
+# other gets EEXIST). The trap releases the lock on any exit path (success,
+# error, or an unexpected signal) so a crash mid-merge can't wedge future
+# runs indefinitely.
+acquire_state_lock() {
+  mkdir -p "$state_dir"
+  local attempt=0 max_attempts=50
+  until mkdir "$lock_dir" 2>/dev/null; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge "$max_attempts" ]; then
+      echo "error: could not acquire state lock $lock_dir after ${max_attempts} attempts (stale lock left by a crashed run? remove it manually if so)" >&2
+      exit 1
+    fi
+    sleep 0.2
+  done
+  trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
+}
 
 # state-* サブコマンドは cwd 相対の state ファイルに対する read-modify-write の
 # みで完結し、GitHub API には一切触れない。呼び出し側 (skill 本文) は state
@@ -132,7 +162,7 @@ case "$cmd" in
       echo "error: invalid or unreadable JSON: $json_file" >&2
       exit 1
     fi
-    mkdir -p "$state_dir"
+    acquire_state_lock
     if [ -f "$state_file" ]; then
       echo "warning: overwriting existing state file: $state_file" >&2
     fi
@@ -142,12 +172,13 @@ case "$cmd" in
     exit 0
     ;;
   state-merge)
-    if [ ! -f "$state_file" ]; then
-      echo "error: state file not found: $state_file (run state-init first)" >&2
-      exit 1
-    fi
     if ! jq -e . "$json_file" >/dev/null 2>&1; then
       echo "error: invalid or unreadable JSON patch: $json_file" >&2
+      exit 1
+    fi
+    acquire_state_lock
+    if [ ! -f "$state_file" ]; then
+      echo "error: state file not found: $state_file (run state-init first)" >&2
       exit 1
     fi
     base_json=$(cat "$state_file")

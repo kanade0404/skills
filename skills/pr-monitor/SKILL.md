@@ -66,7 +66,7 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prm" <subcommand> <pr>
 | `prm status <pr>` | state / head SHA / 失敗・pending checks / 未解決レビュースレッド全量を 1 つの安定 JSON で返す。毎ポーリングで呼ぶのはこれ 1 回だけ |
 | `prm unresolved <pr>` | 未解決レビュースレッド全量のみ `{unresolved_count, threads}` |
 | `prm state-init <pr> <json-file>` | 監視 state ファイル `.claude/.pr-monitor/PR-<pr>.json` を新規作成する (既存があれば警告を stderr に出しつつ上書き)。初回登録でのみ使う |
-| `prm state-merge <pr> <json-file>` | 既存 state を読み、`<json-file>` の内容を `. + $patch` で shallow merge して書き戻す read-modify-write。以降の全更新はこれ経由で行う (下記 Step 2 参照) |
+| `prm state-merge <pr> <json-file>` | 既存 state を読み、`<json-file>` の内容を `. + $patch` で shallow merge して書き戻す read-modify-write。以降の全更新はこれ経由で行う (下記 Step 2 参照)。`state-init`/`state-merge` は同一 PR の state ファイルに対して `mkdir` ベースの lock (`.claude/.pr-monitor/.lock-<pr>`) で直列化されており、cron とスケジュール再入が重なっても read→merge→mv の途中を割り込ませない (ロスト update 防止) |
 | `prm state-get <pr> [key]` | state 全体 (または `.<key>`) を出力。state ファイルが無ければ exit 1 |
 
 `state-*` は `.claude/.pr-monitor/PR-<pr>.json` に対するローカルファイル操作のみで完結し、`gh` / GitHub API には一切触れない。
@@ -105,7 +105,7 @@ state が既に `MERGED` / `CLOSED` なら **Step 5 (retro 起動) へ直行** �
 
 consumer 側の **gitignore 前提パス** `.claude/.pr-monitor/PR-<number>.json` に記録する (リポを汚さない。配布先で `.claude/.pr-monitor/` を gitignore 推奨)。
 
-**このファイルは `prm state-init` / `prm state-merge` 経由でのみ作成・更新する — Write ツールで直接書いてはならない。** 理由 (F1): 長時間の check-only 自己再入ループでは、モデルが「自分が直前のターンで書いた内容」を実ディスク上の内容と同一視し、次の更新前の Read を省略する傾向が実測されている (retro 分析: state 更新 23 回中 22 回が Read を経ない全文 Write だった)。read-modify-write を `prm state-merge` 側に構造的に閉じ込めることで、モデルの Read 規律に依存せずこの抜けを構造的に防ぐ。
+**このファイルは `prm state-init` / `prm state-merge` 経由でのみ作成・更新する — Write ツールで直接書いてはならない。** 理由 (F1): 長時間の check-only 自己再入ループでは、モデルが「自分が直前のターンで書いた内容」を実ディスク上の内容と同一視し、次の更新前の Read を省略する傾向が実測されている (retro 分析: state 更新 23 回中 22 回が Read を経ない全文 Write だった)。read-modify-write を `prm state-merge` 側に構造的に閉じ込めることで、モデルの Read 規律に依存せずこの抜けを構造的に防ぐ。同じ read-modify-write は 2 プロセスが同時に走ると素朴には成立しない (両者が同じ base を読み、独立に merge した結果を `mv` し合うと後勝ちで前者の更新が消える) ため、`state-init`/`state-merge` 自体が `mkdir` ロックで直列化する (上表参照)。
 
 ```json
 {
