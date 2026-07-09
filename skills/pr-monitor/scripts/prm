@@ -16,7 +16,7 @@
 #   prm unresolved   <pr-number>
 #   prm state-init   <pr-number> <json-file>
 #   prm state-merge  <pr-number> <json-file>
-#   prm state-apply  <pr-number> <jq-filter-file> [--arg <name> <value>]...
+#   prm state-apply  <pr-number> <jq-filter-file> [--arg <name> <value> | --argjson <name> <value>]...
 #   prm state-get    <pr-number> [key]
 #
 # Output schema — `prm status <n>`:
@@ -79,7 +79,7 @@
 #                                  (pr-monitor's own cron/wakeup re-entry),
 #                                  use state-apply below for any update that
 #                                  touches an array field.
-#   state-apply <n> <jq-filter-file> [--arg <name> <value>]...
+#   state-apply <n> <jq-filter-file> [--arg <name> <value> | --argjson <name> <value>]...
 #                                  Acquire the same per-PR lock as
 #                                  state-init/state-merge, then (while still
 #                                  holding it) read the existing state file
@@ -134,6 +134,30 @@
 #                                  no adversarial-character risk (a git SHA,
 #                                  a numeric comment id) remain safe to
 #                                  interpolate as literals.
+#                                  `--argjson <name> <value>` pairs are also
+#                                  accepted, interspersed with `--arg` in any
+#                                  order; each is passed straight through to
+#                                  `jq --argjson`, which parses <value> as JSON
+#                                  and binds `$name` to that value's actual
+#                                  type (e.g. a bare `123` becomes the jq
+#                                  *number* 123, not the string "123"). Use
+#                                  this — not `--arg` — for any $name that a
+#                                  filter later compares against a field that
+#                                  is itself numeric elsewhere in the state
+#                                  (e.g. a review-stuck escalation's `key`,
+#                                  which must stay a number to compare equal
+#                                  to the numeric `comment_id` values in
+#                                  `known_comment_ids` / `unresolved_threads`).
+#                                  Binding such a value with `--arg` instead
+#                                  produces a JSON *string*, which never
+#                                  compares equal to the numeric `comment_id`
+#                                  it's meant to match — a filter that prunes
+#                                  "key not present in the current numeric ID
+#                                  set" then always considers the string key
+#                                  absent and deletes it on the very next
+#                                  prune, silently breaking the dedup the
+#                                  entry exists for (PR #78 review, comment
+#                                  3552918945).
 #   state-get   <n> [key]         Print the whole state object, or just
 #                                  `.<key>` when a key is given. Error (exit
 #                                  1) if the state file does not exist.
@@ -165,7 +189,7 @@ usage() {
 usage: prm <status|unresolved> <pr-number>
        prm state-init  <pr-number> <json-file>
        prm state-merge <pr-number> <json-file>
-       prm state-apply <pr-number> <jq-filter-file> [--arg <name> <value>]...
+       prm state-apply <pr-number> <jq-filter-file> [--arg <name> <value> | --argjson <name> <value>]...
        prm state-get   <pr-number> [key]
 EOF
   exit 2
@@ -208,6 +232,15 @@ case "$cmd" in
             '' | *[!a-zA-Z0-9_]*) usage ;;
           esac
           jq_args+=(--arg "$arg_name" "$3")
+          shift 3
+          ;;
+        --argjson)
+          [ "$#" -ge 3 ] || usage
+          arg_name="$2"
+          case "$arg_name" in
+            '' | *[!a-zA-Z0-9_]*) usage ;;
+          esac
+          jq_args+=(--argjson "$arg_name" "$3")
           shift 3
           ;;
         *)
