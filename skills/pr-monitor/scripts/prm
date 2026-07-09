@@ -16,6 +16,7 @@
 #   prm unresolved   <pr-number>
 #   prm state-init   <pr-number> <json-file>
 #   prm state-merge  <pr-number> <json-file>
+#   prm state-apply  <pr-number> <jq-filter-file>
 #   prm state-get    <pr-number> [key]
 #
 # Output schema — `prm status <n>`:
@@ -55,17 +56,52 @@
 #                                  as a JSON patch (`jq -e .`), shallow-merge
 #                                  it onto the existing state with
 #                                  `$base + $patch`, and write the merged
-#                                  result back. This read-modify-write is the
-#                                  only sanctioned path for state updates
-#                                  after the initial state-init.
+#                                  result back. Safe ONLY for patches whose
+#                                  fields are all scalars (e.g. a single
+#                                  `state` transition) — the shallow merge
+#                                  replaces array fields wholesale rather
+#                                  than appending, so a patch built from a
+#                                  `state-get` read taken before this call
+#                                  can silently discard array entries
+#                                  (known_comment_ids / known_failing_checks
+#                                  / escalations / cycle_ledger) written by a
+#                                  concurrent invocation in between. This is
+#                                  the single-writer-assumption path; in
+#                                  environments where invocations can overlap
+#                                  (pr-monitor's own cron/wakeup re-entry),
+#                                  use state-apply below for any update that
+#                                  touches an array field.
+#   state-apply <n> <jq-filter-file>  Acquire the same per-PR lock as
+#                                  state-init/state-merge, then (while still
+#                                  holding it) read the existing state file
+#                                  (error, exit 1, if it does not exist —
+#                                  run state-init first) and run the jq
+#                                  program in <jq-filter-file> against it
+#                                  with `.` bound to that freshly-read state,
+#                                  validate the result is a JSON object, and
+#                                  write it back atomically. Because the read
+#                                  happens inside the lock (unlike the
+#                                  state-get-then-state-merge protocol),
+#                                  array recomputation expressed in the
+#                                  filter itself — e.g.
+#                                  `.known_comment_ids = ((.known_comment_ids
+#                                  + [123]) | unique)` — always operates on
+#                                  the latest on-disk state, so two
+#                                  overlapping invocations each appending a
+#                                  different id both survive instead of the
+#                                  second stale-patch write clobbering the
+#                                  first. Use this (not state-get + patch +
+#                                  state-merge) for any update that includes
+#                                  known_comment_ids / known_failing_checks /
+#                                  escalations / cycle_ledger.
 #   state-get   <n> [key]         Print the whole state object, or just
 #                                  `.<key>` when a key is given. Error (exit
 #                                  1) if the state file does not exist.
 # state-* output is passed through `jq -S` too, and these subcommands touch
 # only the local filesystem — they never call the GitHub API.
-# state-init/state-merge serialize against each other (per PR number) with an
-# mkdir-based lock so overlapping invocations can't race a read-modify-write
-# and lose one side's update — see acquire_state_lock below.
+# state-init/state-merge/state-apply serialize against each other (per PR
+# number) with an mkdir-based lock so overlapping invocations can't race a
+# read-modify-write and lose one side's update — see acquire_state_lock below.
 #
 # All output is passed through `jq -S` for stable (sorted) key ordering.
 # Bad arguments print usage to stderr and exit 2.
@@ -89,6 +125,7 @@ usage() {
 usage: prm <status|unresolved> <pr-number>
        prm state-init  <pr-number> <json-file>
        prm state-merge <pr-number> <json-file>
+       prm state-apply <pr-number> <jq-filter-file>
        prm state-get   <pr-number> [key]
 EOF
   exit 2
@@ -103,6 +140,7 @@ case "$pr" in
 esac
 
 json_file=""
+filter_file=""
 key=""
 case "$cmd" in
   status | unresolved)
@@ -111,6 +149,10 @@ case "$cmd" in
   state-init | state-merge)
     [ "$#" -eq 3 ] || usage
     json_file="$3"
+    ;;
+  state-apply)
+    [ "$#" -eq 3 ] || usage
+    filter_file="$3"
     ;;
   state-get)
     { [ "$#" -eq 2 ] || [ "$#" -eq 3 ]; } || usage
@@ -186,6 +228,33 @@ case "$cmd" in
     tmp_file=$(mktemp "${state_file}.tmp.XXXXXX")
     jq -S -n --argjson base "$base_json" --argjson patch "$patch_json" \
       '$base + $patch' >"$tmp_file"
+    mv "$tmp_file" "$state_file"
+    exit 0
+    ;;
+  state-apply)
+    if [ ! -f "$filter_file" ]; then
+      echo "error: jq filter file not found: $filter_file" >&2
+      exit 1
+    fi
+    acquire_state_lock
+    if [ ! -f "$state_file" ]; then
+      echo "error: state file not found: $state_file (run state-init first)" >&2
+      exit 1
+    fi
+    tmp_file=$(mktemp "${state_file}.tmp.XXXXXX")
+    err_file=$(mktemp)
+    if ! jq -S -f "$filter_file" "$state_file" >"$tmp_file" 2>"$err_file"; then
+      err=$(cat "$err_file")
+      rm -f "$tmp_file" "$err_file"
+      echo "error: jq filter failed: $filter_file: ${err:-<no output>}" >&2
+      exit 1
+    fi
+    rm -f "$err_file"
+    if ! jq -e 'type == "object"' "$tmp_file" >/dev/null 2>&1; then
+      rm -f "$tmp_file"
+      echo "error: jq filter did not produce a JSON object: $filter_file" >&2
+      exit 1
+    fi
     mv "$tmp_file" "$state_file"
     exit 0
     ;;
