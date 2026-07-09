@@ -117,7 +117,7 @@ state が既に `MERGED` / `CLOSED` なら **Step 5 (retro 起動) へ直行** �
 
 ### Step 2 — 状態を永続化
 
-consumer 側の **gitignore 前提パス** `.claude/.pr-monitor/PR-<number>.json` に記録する (リポを汚さない。配布先で `.claude/.pr-monitor/` を gitignore 推奨)。
+consumer 側の **gitignore 前提パス** `.claude/.pr-monitor/PR-<number>.json` に記録する (リポを汚さない。配布先で `.claude/.pr-monitor/` を gitignore 推奨)。このパスは常に **repo root からの絶対パス**として解決される (`prm` が内部で `git rev-parse --show-toplevel` を起点に組み立てる — cwd 相対ではない)。subdirectory から `prm` を起動しても repo 直下の同じ state ファイルを読み書きするため、cron/wakeup の再入がどの cwd から起きても一貫する (PR #78 レビュー指摘: cwd 相対のままだと subdirectory 起動時に `subdir/.claude/.pr-monitor/` ができ、この gitignore パスの対象外になって誤コミットしうる)。
 
 **このファイルは `prm state-init` / `prm state-merge` / `prm state-apply` 経由でのみ作成・更新する — Write ツールで直接書いてはならない。** 理由 (F1): 長時間の check-only 自己再入ループでは、モデルが「自分が直前のターンで書いた内容」を実ディスク上の内容と同一視し、次の更新前の Read を省略する傾向が実測されている (retro 分析: state 更新 23 回中 22 回が Read を経ない全文 Write だった)。read-modify-write を `prm` 側に構造的に閉じ込めることで、モデルの Read 規律に依存せずこの抜けを構造的に防ぐ。同じ read-modify-write は 2 プロセスが同時に走ると素朴には成立しない (両者が同じ base を読み、独立に merge した結果を `mv` し合うと後勝ちで前者の更新が消える) ため、`state-init`/`state-merge`/`state-apply` 自体が `mkdir` ロックで直列化する (上表参照)。ただし lock による write の直列化だけでは配列フィールドのロスト update は防げない — `state-merge` 用の patch を lock **外**の `state-get` から組み立てるプロトコルだと、2 つの重なった実行がそれぞれ古い base から別々の配列を計算し、後勝ちの shallow merge が先勝ちの追記を握りつぶす (PR #78 レビュー指摘)。配列フィールドを含む更新に `state-apply` を使うのはこのため — 読み取り自体を lock の内側に置き、追記・prune を filter として表現する。
 
@@ -203,15 +203,42 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prm" status <n>
    - `escalations` の `kind: ci-halted` エントリ: `key` (`"<workflow>/<name>"`) が現在の `checks.failing` に **無ければ** 削除する (= 回復した。次に同じ `workflow/name` の check が失敗したら新インシデントとして再検知・再エスカレーション可能になる)。これは **push を伴わない回復** (手動 re-run 等で head_sha が変わらないまま check が green になるケース) を拾うための条件付きクリアであり、2 の「新 push 時の無条件全クリア」とは補完関係にある — 2 は新 head という事実だけで即座にクリアするのに対し、ここは `checks.failing` の実測結果を見て初めてクリアする。同じ `workflow/name` が failing のまま新 push が来た場合は 2 で先にクリア済みのため、この条件は素通りする (矛盾なく重複適用されるだけ)。
    - `known_comment_ids` を、現在の `unresolved_threads` の `comment_id` 集合 (`is_outdated` を問わず全件) との積集合に絞る (state ファイルの無限肥大防止 + resolve 済みスレッドが後で再オープンされた際に新規スレッドとして検知できるようにするため)。この集合を `is_outdated == false` に絞り込む**必要はない** — (5) が新規判定の対象自体を `is_outdated == false` に限定するため、outdated のまま残るスレッドの `comment_id` が `known_comment_ids` に居座っても再 dispatch には至らない (実害なし)。両者の絞り込み基準を分けることで、prune は「本当に resolve されたか」だけを見る単純な条件に保てる。
    - `escalations` の `kind: review-stuck` エントリ: `key` (comment_id) が現在の `unresolved_threads` に **無ければ** 削除する (= スレッドが resolve された)。
-4. `checks.failing` の中に (3 で prune 済みの) `known_failing_checks` に無い `"<workflow>/<name>"` がある → 新規失敗。`ci-self-heal` を使う subagent を Task で dispatch し (契約は次項)、対象を `"<workflow>/<name>"` 形式で `known_failing_checks` に追記する。
-   - 返った `verdict` が `HALTED` (3-failure architecture gate / flaky / env / infra) → 「エスカレーション分岐」(後述) に従う。`known_failing_checks` への追記はそのまま行い (再 dispatch させないため)、次回以降のポーリングでも 3 の prune で落ちない限り「新規」扱いにしない。
-5. `unresolved_threads` のうち **`is_outdated == false`** のものに限り、`comment_id` が `known_comment_ids` に無いものがある → 新規の未解決レビュースレッド。`pr-review-respond` を使う subagent を Task で dispatch し (新規分の author が全て CodeRabbit なら、契約入力に「修正適用は `coderabbit:autofix` skill に委譲する。plugin がある環境のみ、無ければ `pr-review-respond` 通常経路」と明記する)、対象 `comment_id` を `known_comment_ids` に追記する。
-   - `is_outdated == true` のスレッドは **dispatch しない**: `pr-review-respond` Phase A は `is_outdated == true` のスレッドを処理前に除外する設計であり、dispatch しても responder が skip するだけの空振りになる (fix push で古い会話が outdated になったが、reviewer がまだ resolve していないケースがこれに当たる)。この種のスレッドは `known_comment_ids` にも追記しない — 次回以降のポーリングでも同じ判定 (dispatch 対象外) を繰り返すだけで実害はなく、むしろ id を残さない方が「未対応のまま人間判断待ち」という状態を素直に表せる。代わりに出力フォーマットの監視サマリに一覧化し、resolve するか・追加コメントで再アクション喚起するかの判断を人間に残す。
-   - dispatch した subagent の handback が **終端分類 (VALID / INVALID_PUSH / VALID_DEFER / DUPLICATE) できないコメントの残存を報告した** (「未終端 n→m」で n>0) → 「エスカレーション分岐」(後述) に従う。`known_comment_ids` への追記はそのまま行う (再 dispatch しないため)。
+2〜3 (新 push 時の全クリア + prune) の結果は、4/5 の claim (次項) が判定の基準にする on-disk state そのものなので、**4/5 に入る前に 1 回の `prm state-apply` で先に書き戻す** (early apply)。これを怠って 4/5 の判定・claim を prune 前の state に対して行うと、回復済みの check/thread を誤って「既知」のまま残す、または新 push で本来クリアされるべき古いキーを基準に誤判定する、といった食い違いが起きる。
+
+4. `checks.failing` の中に (3 で prune 済みの) `known_failing_checks` に無い `"<workflow>/<name>"` がある → 新規失敗候補。**dispatch より前に** `prm state-apply` で claim する (PR #78 レビュー指摘: 2 つの `--check-only` 実行が重なると、両方が同じ prune 後 state を「新規」と読み、旧来の「dispatch 後に追記」の順序では両方が dispatch してしまう)。claim filter は CAS (compare-and-swap) 形にする:
+
+   ```jq
+   if (.known_failing_checks | index("<workflow>/<name>")) then
+     error("already-claimed")
+   else
+     .known_failing_checks = ((.known_failing_checks + ["<workflow>/<name>"]) | unique)
+   end
+   ```
+
+   `state-apply` は lock 内で読み直した最新 state に対してこの filter を評価し、結果を検証してから書き戻す仕組みのため、`error()` を投げた filter は非ゼロ exit・**書き込みなし**で失敗する (実測確認済み)。これにより:
+   - claim が **成功** (exit 0) した invocation だけが、その check について `ci-self-heal` を使う subagent を Task で dispatch する (契約は次項)。
+   - claim が **失敗** (exit 1, `already-claimed`) した invocation は、別の並走 invocation が既に claim 済みと分かるので **dispatch しない** (二重 dispatch 防止 — 本来の指摘への対処)。
+   - claim 成功後、**dispatch (Task 呼び出し自体) が例外・timeout で失敗した**とこの invocation が観測した場合に **限り**、`.known_failing_checks -= ["<workflow>/<name>"]` という filter で `prm state-apply` を呼び claim を **rollback** する (次ポーリングで再び「新規」として検知・再 dispatch できるようにする — claim を dispatch より前に動かした分の取りこぼし防止)。
+   - 返った `verdict` が `HALTED` (3-failure architecture gate / flaky / env / infra) → 「エスカレーション分岐」(後述) に従う。この場合は dispatch 自体は完了しているので **rollback しない** — claim は維持したまま、次回以降のポーリングでも 3 の prune で落ちない限り「新規」扱いにしない。
+5. `unresolved_threads` のうち **`is_outdated == false`** のものに限り、`comment_id` が `known_comment_ids` に無いものがある → 新規の未解決レビュースレッド候補。4 と同じ CAS claim パターンを `known_comment_ids` に対して適用する:
+
+   ```jq
+   if (.known_comment_ids | index(<comment_id>)) then
+     error("already-claimed")
+   else
+     .known_comment_ids = ((.known_comment_ids + [<comment_id>]) | unique)
+   end
+   ```
+
+   - claim **成功**時のみ `pr-review-respond` を使う subagent を Task で dispatch する (新規分の author が全て CodeRabbit なら、契約入力に「修正適用は `coderabbit:autofix` skill に委譲する。plugin がある環境のみ、無ければ `pr-review-respond` 通常経路」と明記する)。
+   - claim **失敗**時は dispatch しない (別の並走 invocation が既に処理中/済み)。
+   - claim 成功後に dispatch (Task 呼び出し自体) が例外・timeout で失敗したとこの invocation が観測した場合のみ、`.known_comment_ids -= [<comment_id>]` で rollback する。
+   - `is_outdated == true` のスレッドは claim も dispatch も **しない**: `pr-review-respond` Phase A は `is_outdated == true` のスレッドを処理前に除外する設計であり、dispatch しても responder が skip するだけの空振りになる (fix push で古い会話が outdated になったが、reviewer がまだ resolve していないケースがこれに当たる)。この種のスレッドは `known_comment_ids` にも追記しない — 次回以降のポーリングでも同じ判定 (dispatch 対象外) を繰り返すだけで実害はなく、むしろ id を残さない方が「未対応のまま人間判断待ち」という状態を素直に表せる。代わりに出力フォーマットの監視サマリに一覧化し、resolve するか・追加コメントで再アクション喚起するかの判断を人間に残す。
+   - dispatch した subagent の handback が **終端分類 (VALID / INVALID_PUSH / VALID_DEFER / DUPLICATE) できないコメントの残存を報告した** (「未終端 n→m」で n>0) → 「エスカレーション分岐」(後述) に従う。dispatch 自体は完了しているので rollback しない — claim は維持する (再 dispatch しないため)。
    - **`verdict: WAITING` それ自体はエスカレーション条件にならない**: `pr-review-respond` はヘッドレス subagent として dispatch された場合、「全スレッドを終端分類済みで CI 完了待ちのみ」のような **呼び出し元 (= 本スキル) が再開の責任を持つ待機**でも `WAITING` を返す契約になっている (`pr-review-respond` SKILL.md「実行環境前提」表)。pr-monitor はまさにその再開責任を持つ受け手であり、次ポーリングで自然に解消する (CI 完了は `checks` 側で既に追跡している。修正済みスレッドは Phase D で resolve 済みのため次回 `unresolved_threads` から消え、3 の prune で `known_comment_ids` も自然に落ちる)。エスカレーションすべきは上のとおり **未終端コメントが残っている場合のみ** — `WAITING` かつ未終端 n=0 (全コメント分類済み、待っているのは CI 完了や次ポーリングでの自然な収束だけ) なら、この分岐には該当させず Step 4 の残り (7・8) に進み監視を継続する。
-6. 4 と 5 の dispatch は **同一ポーリング内で逐次** (`ci-self-heal` → `pr-review-respond` の順)。同一 PR ブランチを共有し双方が push しうるため並列にしない。
+6. 4 と 5 の claim → dispatch → (必要なら) rollback は **同一ポーリング内で逐次** (`ci-self-heal` → `pr-review-respond` の順)。同一 PR ブランチを共有し双方が push しうるため並列にしない。
 7. 2・4・5 のいずれかに該当した (状態に変化があった) 場合、`poll_interval_seconds` を 60 に **リセット** する。いずれにも該当しなかった場合は現在値を 2 倍 (上限 1800) にする。
-8. 2〜7 で決まった全フィールド (`known_failing_checks` / `known_comment_ids` / `escalations` の prune 結果、`poll_interval_seconds`) と、`last_head_sha` を今回の `head_sha` に、`last_checked_at` を現在時刻に更新する値、このポーリングの要約 1 行 (例: 「no change, backoff 60→120s」「new failing check dispatched」) を積む `cycle_ledger` の追記を **1 つの jq filter にまとめ**、`prm state-apply` で state ファイルへ書き戻す。配列フィールド (`known_failing_checks` / `known_comment_ids` / `escalations` / `cycle_ledger`) を含むため `state-merge` ではなく `state-apply` を使う — filter 自身が `.` (lock 内で読み直された最新 state) を起点に prune/追記を計算するので、2〜5 で「こう変えるべき」と判断した内容を外部で完成させた配列として渡す必要がない (例: `.cycle_ledger += ["..."]` は既存全体を明示的に持ち回らなくても追記できる)。
+8. 4/5 の claim (と、あれば rollback・「エスカレーション分岐」の `escalations` 追記) は個別の `prm state-apply` 呼び出しで既にコミット済みなので、ここで改めて書く必要はない。残る `poll_interval_seconds` と、`last_head_sha` を今回の `head_sha` に、`last_checked_at` を現在時刻に更新する値、このポーリングの要約 1 行 (例: 「no change, backoff 60→120s」「new failing check dispatched」) を積む `cycle_ledger` の追記を **1 つの jq filter にまとめ**、`prm state-apply` で state ファイルへ書き戻す (最終 apply)。`cycle_ledger` が配列フィールドのため `state-merge` ではなく `state-apply` を使う — filter 自身が `.` (lock 内で読み直された最新 state) を起点に追記を計算するので、`.cycle_ledger += ["..."]` は既存全体を明示的に持ち回らなくても追記できる。`known_failing_checks` / `known_comment_ids` はこの最終 apply では触れない (4/5 で既に確定済みの値を上書きしないため)。
 
 state ファイルの `monitor_mode` で OPEN 時の次アクションを分岐する (再入時は `--check-only` 引数だけでは手段が判らないため。`MERGED` / `CLOSED` は分岐 1 で判定終了済み — Step 5 へ):
 
@@ -252,7 +279,18 @@ state ファイルの `monitor_mode` で OPEN 時の次アクションを分岐�
 - 入力: 対象 PR 番号 / 対象 (`ci-self-heal` なら failing checks の `"<workflow>/<name>"` 列、`pr-review-respond` なら新規 `unresolved_threads` の `thread_id`・`comment_id`・`author`・`url`・`body_head`) / (該当時) CodeRabbit 委譲の明記
 - 返す構造: `verdict` (`ci-self-heal` は PASS/HALTED、`pr-review-respond` は未終端 n→m)、`pushed_commits` (この task で push した SHA 列 / none)、`handback` (呼出側が次に判断するのに要る最小ブロック)
 
-本スキルは `verdict` / `pushed_commits` / `handback` だけを読み、`known_*` へ追記して次ポーリングへ戻る。dispatch 先が例外・timeout で失敗した場合は `known_*` への追記が起きないため、次回ポーリングで同じ check / thread が「新規」として再検知・再 dispatch される (取りこぼしより重複 dispatch を許容する設計)。`verdict` が HALTED / 終端未達の場合は上記「エスカレーション分岐」に従う。
+本スキルは `verdict` / `pushed_commits` / `handback` だけを読み、次ポーリングへ戻る。`known_*` への追記 (claim) は dispatch **より前**に行っている (Step 4 の 4/5 参照) — 2 つの並走 `--check-only` invocation が同じ check/thread を両方「新規」と判定して両方 dispatch してしまうレース (PR #78 レビュー指摘) を防ぐための機構で、claim に成功した invocation だけが dispatch を実行する。
+
+claim を dispatch より前に動かした副作用として、claim と dispatch は別の呼び出しになる。claim 成功後に **dispatch (Task 呼び出し自体) が例外・timeout で失敗する**と、何もしなければ claim だけが state に残り「既知」のまま扱われ、その check / thread は二度と再検知されない取りこぼしになる — これを防ぐため、dispatch 自体の失敗をこの invocation が観測した場合に限り claim を明示的に rollback する (Step 4 の 4/5 参照)。
+
+まとめると、2 つの機構はそれぞれ別の失敗モードに対応しており、どちらか一方だけでは両方を防げない:
+
+| 失敗モード | 防ぐ機構 |
+|---|---|
+| 2 つの並走 invocation が同じ check/thread を両方 dispatch する (二重 dispatch) | claim の CAS 化 (`state-apply` の `error()` による非ゼロ exit・書き込みなし失敗) |
+| claim 成功後、dispatch (Task 呼び出し自体) が例外・timeout で失敗し、対象が二度と再検知されなくなる (取りこぼし) | dispatch 失敗を observed した invocation 自身による claim rollback |
+
+`verdict` が HALTED / 終端未達の場合は dispatch 自体は完了しているためロールバックせず、claim を維持したまま上記「エスカレーション分岐」に従う。
 
 ### Step 5 — 決着したら retro
 
@@ -315,6 +353,6 @@ verdict: <MONITORING (<cron|wakeup|manual>) / SETTLED (<MERGED|CLOSED>) / ESCALA
 - **cron の可否は環境依存**: `/schedule` が無い環境では ScheduleWakeup (session 生存中のみ) か手動にフォールバックする。
 - **cron モードでは指数バックオフが効かない**: `/schedule` 登録は固定間隔 (30 分) のため、`poll_interval_seconds` の伸縮は state に記録されても待機間隔には反映されない。バックオフの実効果は `ScheduleWakeup` / `Monitor` 手段でのみ現れる。
 - **session 終了で ScheduleWakeup は途切れる**: 長期 (日単位) 監視は cron 手段が前提。手段 2 は session が生きている間だけ。
-- **dispatch 先 subagent の失敗は次ポーリングで再検知される**: `known_failing_checks` / `known_comment_ids` への追記は dispatch 呼び出しの後に行うため、dispatch 自体が例外・timeout で失敗すると追記が起きず、次回ポーリングで同じ check / thread が再 dispatch される。取りこぼしより重複実行を許容する設計だが、subagent が起動だけして完了しなかった場合の重複コストは残る。
+- **claim 後・rollback 前の pr-monitor プロセス自体のクラッシュは検知されない**: 二重 dispatch 防止のため `known_failing_checks` / `known_comment_ids` への追記 (claim) を dispatch より前に行うようにした (PR #78 レビュー指摘)。dispatch 先 subagent 自体の例外・timeout はこの invocation が観測して claim を rollback するため取りこぼさないが、claim 成功から「dispatch 完了 (HALTED 含む)」または「rollback」のどちらかに到達するまでの間に **pr-monitor プロセス自身が異常終了** (Task 呼び出しの例外ではなく、monitor を実行しているプロセス自体のクラッシュ/強制終了) した場合は、claim だけが state に残り rollback が走らないため、その check / thread は以後「新規」として再検知されない。取りこぼしを完全にゼロにはできず、この狭い窓に限定して残る。
 - **逐次 dispatch 前提でレイテンシが伸びる**: `ci-self-heal` と `pr-review-respond` を同一ブランチ push 競合回避のため並列にしない分、1 ポーリングあたりの所要時間は両方が完了するまで伸びる。
 - **マルチモデル未検証**: trigger eval は本セッションのモデルのみ。

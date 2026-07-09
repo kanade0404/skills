@@ -43,7 +43,9 @@
 # { "unresolved_count": int, "threads": [ <same shape as unresolved_threads[]> ] }
 #
 # State subcommands — target file `.claude/.pr-monitor/PR-<n>.json`
-# (cwd-relative; created on first `state-init`):
+# (anchored to the repo root via `git rev-parse --show-toplevel`, not cwd;
+# created on first `state-init`. See state_dir resolution below for why —
+# PR #78 review):
 #   state-init  <n> <json-file>   Validate <json-file> is exactly one JSON
 #                                  object (`jq -es 'length == 1 and (.[0] |
 #                                  type == "object")'` — rejects arrays,
@@ -178,7 +180,29 @@ case "$cmd" in
   *) usage ;;
 esac
 
-state_dir=".claude/.pr-monitor"
+# state-* subcommands anchor their state directory to the repo root, not
+# cwd. Without this, invoking `prm` from a subdirectory (e.g. a package
+# checkout) makes state-init create `<subdir>/.claude/.pr-monitor/` instead
+# of the repo-root path this skill's docs and this repo's own top-level
+# .gitignore assume — a later wakeup/cron run from the repo root then can't
+# find that state file, and the subdirectory copy isn't covered by the
+# `.claude/.pr-monitor/` gitignore entry (which is anchored to the location
+# of the .gitignore file, i.e. the repo root — git-scm.com/docs/gitignore),
+# so it can end up committed by accident (PR #78 review). `status` /
+# `unresolved` never touch the filesystem (GitHub API only), so they stay
+# cwd-agnostic and don't pay for a git call they don't need.
+case "$cmd" in
+  state-init | state-merge | state-apply | state-get)
+    repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || {
+      echo "error: not inside a git working tree (state-* subcommands anchor .claude/.pr-monitor/ at the repo root; run from within a git clone)" >&2
+      exit 1
+    }
+    state_dir="$repo_root/.claude/.pr-monitor"
+    ;;
+  *)
+    state_dir=".claude/.pr-monitor"
+    ;;
+esac
 state_file="$state_dir/PR-$pr.json"
 lock_dir="$state_dir/.lock-$pr"
 
@@ -208,9 +232,11 @@ acquire_state_lock() {
   trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
 }
 
-# state-* サブコマンドは cwd 相対の state ファイルに対する read-modify-write の
-# みで完結し、GitHub API には一切触れない。呼び出し側 (skill 本文) は state
-# ファイルを Write ツールで直接書いてはならず、必ずこの経路を通す (F1 対策)。
+# state-* サブコマンドは repo root 直下の state ファイルに対する
+# read-modify-write のみで完結し (cwd ではなく `git rev-parse --show-toplevel`
+# 起点 — 上記 state_dir 解決参照)、GitHub API には一切触れない。呼び出し側
+# (skill 本文) は state ファイルを Write ツールで直接書いてはならず、必ずこの
+# 経路を通す (F1 対策)。
 case "$cmd" in
   state-init)
     if ! jq -es 'length == 1 and (.[0] | type == "object")' "$json_file" >/dev/null 2>&1; then
