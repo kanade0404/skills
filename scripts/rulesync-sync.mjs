@@ -97,15 +97,22 @@ try {
       );
       for (const d of diffs) console.error(`  ${d}`);
       for (const s of stale) {
-        console.error(`  ${s} (stale — no longer generated; source skill/rule likely deleted or renamed)`);
+        console.error(`  ${s} (stale — no longer generated in this shape; source skill/rule likely deleted, renamed, or changed between file and directory)`);
       }
       process.exit(1);
     }
     console.log('rulesync-sync --check: up to date.');
   } else {
+    // Remove stale paths BEFORE overlaying the freshly generated tree (not
+    // after, as a plain "copy then sweep" order would do): a stale entry can
+    // now be a directory that must replace a file (or vice versa) at the
+    // same relative path, and `cpSync` cannot perform that type change over
+    // an existing conflicting path even with `force: true`. Clearing it
+    // first guarantees `cpSync` only ever writes into a location that is
+    // either absent or already the same type.
     const stale = findStaleFiles(genOut, ROOT);
+    for (const s of stale) rmSync(join(ROOT, s), { recursive: true, force: true });
     cpSync(genOut, ROOT, { recursive: true });
-    for (const s of stale) rmSync(join(ROOT, s), { force: true });
     for (const dir of MIRRORED_DIRS) pruneEmptyDirs(join(ROOT, dir));
   }
 } finally {
@@ -208,24 +215,39 @@ function diffTree(generatedRoot, targetRoot, rel = '') {
 }
 
 // The inverse of diffTree: walks the TARGET (repo) side of each MIRRORED_DIRS
-// root and reports every file that has no counterpart at the same relative
-// path under `generatedRoot`. `diffTree` alone can never surface these because
-// it only ever walks paths that exist in `generatedRoot` in the first place —
-// a source skill/rule deleted or renamed leaves its old generated mirror
-// behind, `--check` stays green, and (since materialize is a non-deleting
-// `cpSync` overlay) `write` mode never removes it either, so agents keep
-// seeing a skill/rule that no longer has a source of truth.
+// root and reports every path that has no counterpart at the same relative
+// path under `generatedRoot`, OR whose counterpart there exists but changed
+// type (file <-> directory) at the same relative path. `diffTree` alone can
+// never surface either case because it only ever walks paths that exist in
+// `generatedRoot` in the first place — a source skill/rule deleted or renamed
+// leaves its old generated mirror behind, `--check` stays green, and (since
+// materialize is a non-deleting `cpSync` overlay) `write` mode never removes
+// it either, so agents keep seeing a skill/rule that no longer has a source
+// of truth. The type-mismatch case additionally matters because `cpSync`
+// cannot overlay a directory onto an existing file, or a file onto an
+// existing directory, even with `force: true` — an existence-only check
+// would treat the old-typed path as "not stale" (something IS there) and let
+// `write` mode crash mid-copy instead of clearing the conflicting path first.
 function findStaleFiles(generatedRoot, targetRoot) {
   const stale = [];
   const walk = (absDir, relDir) => {
     for (const entry of readdirSync(absDir, { withFileTypes: true })) {
       const relPath = join(relDir, entry.name);
       const absPath = join(absDir, entry.name);
-      if (entry.isDirectory()) {
-        walk(absPath, relPath);
+      const genPath = join(generatedRoot, relPath);
+      if (!existsSync(genPath)) {
+        stale.push(relPath);
         continue;
       }
-      if (!existsSync(join(generatedRoot, relPath))) stale.push(relPath);
+      if (statSync(genPath).isDirectory() !== entry.isDirectory()) {
+        // Same relative path exists on both sides but changed shape — do not
+        // recurse into it (its children aren't comparable across the type
+        // change); report the whole path so the caller removes it wholesale
+        // before copying the newly-shaped generated content over it.
+        stale.push(relPath);
+        continue;
+      }
+      if (entry.isDirectory()) walk(absPath, relPath);
     }
   };
   for (const dir of MIRRORED_DIRS) {
