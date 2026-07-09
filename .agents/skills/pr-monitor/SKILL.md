@@ -139,7 +139,7 @@ JSON はインラインコメントを書けないため、各フィールドの
 
 - `origin_transcript` は **初回登録時の現セッション transcript** を入れる (retro が解析すべきは「PR を生んだ作業」。後の check-only 監視セッションではない)。パス特定は `retro` Step 1 と同じ slug 規則 (`pwd` の `/` `.` を `-` 置換 → `~/.claude/projects/<slug>/` 最新 `*.jsonl`)。
 - 初回登録は上記スキーマを一時 JSON ファイルに書き、`prm state-init <n> <一時json>` に渡して行う。`known_comment_ids: []` / `known_failing_checks: []` / `escalations: []` / `cycle_ledger: []` / `last_head_sha: <Step1 で観測した head_sha>` / `poll_interval_seconds: 60` で開始する。
-- `--check-only` で再入した時は `prm state-get <n>` で現在の state を**表示目的で**読む (今回のポーリングの判定材料 — `checks.failing` / `unresolved_threads` との突き合わせに使う)。Step 4 の判定後の実際の書き戻しは、この読み取り結果をそのまま patch の base にしない — **配列フィールド (`known_comment_ids` / `known_failing_checks` / `escalations` / `cycle_ledger`) を 1 つでも含む更新は必ず `prm state-apply <n> <一時filter>` を使う**。一時ファイルには JSON patch ではなく jq プログラムを書く。例:
+- `--check-only` で再入した時は `prm state-get <n>` で現在の state を**表示目的で**読む (今回のポーリングの判定材料 — `checks.failing` / `unresolved_threads` との突き合わせに使う)。この読み取り結果の `last_head_sha` が Step 4 冒頭で言う「前回スナップショット」であり、分岐 2 の CAS filter が比較基準にする `$snapshot_head` の値そのものになる (詳細は分岐 2 参照)。Step 4 の判定後の実際の書き戻しは、この読み取り結果をそのまま patch の base にしない — **配列フィールド (`known_comment_ids` / `known_failing_checks` / `escalations` / `cycle_ledger`) を 1 つでも含む更新は必ず `prm state-apply <n> <一時filter>` を使う**。一時ファイルには JSON patch ではなく jq プログラムを書く。例:
 
   ```jq
   .known_failing_checks = ((.known_failing_checks + [$key]) | unique)
@@ -185,19 +185,19 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prm" status <n>
 を 1 回叩き、返った JSON と state ファイルの前回スナップショットを突き合わせて、次の順で分岐する:
 
 1. `pr.state` が `MERGED` / `CLOSED` → **決着**。`prm state-merge` で状態ファイルの `state` を更新し (この patch は `state` 1 フィールドの scalar 上書きのみで配列を含まないため `state-merge` のままでよい)、`monitor_mode: cron` なら `schedule_id` の cron を解除 (one-shot で消さないと check-only が鳴り続け `retro` が再起動し続ける)。**ここで判定終了** (以下は評価しない) — Step 5 へ。
-2. **新 push 検知は on-disk `last_head_sha` への CAS で行う** (ローカルの「前回スナップショットとの比較」だけで新 push の有無を決めない)。今回 `prm status` が返した `head_sha` を `$observed_head` として、他の何より先に次の filter を `prm state-apply <n> <filter-file> --arg observed_head "<head_sha>"` で試みる:
+2. **新 push 検知は on-disk `last_head_sha` への CAS で行う** (ローカルの「前回スナップショットとの比較」だけで新 push の有無を決めない — 比較結果を CAS filter の書き込み条件そのものに埋め込み、on-disk 値に対して直接判定させる)。Step 2 で読んだ「前回スナップショット」(`--check-only` 再入時の `prm state-get` 結果) の `last_head_sha` を `$snapshot_head` として保持し、今回 `prm status` が返した `head_sha` を `$observed_head` として、他の何より先に次の filter を `prm state-apply <n> <filter-file> --arg snapshot_head "<前回スナップショットの last_head_sha>" --arg observed_head "<head_sha>"` で試みる:
 
    ```jq
-   if .last_head_sha == $observed_head then
-     error("already-recorded")
-   else
+   if .last_head_sha == $snapshot_head and $snapshot_head != $observed_head then
      .known_failing_checks = []
      | .escalations = (.escalations | map(select(.kind != "ci-halted")))
      | .last_head_sha = $observed_head
+   else
+     error("head already advanced or no change")
    end
    ```
 
-   `state-apply` は lock 内で読み直した最新の `.last_head_sha` に対してこの filter を評価するため、判定は常にその瞬間の on-disk 値に対して行われる。`error()` (非ゼロ exit・書き込みなし) は「今回はまだ新 push を観測していない (通常サイクル)」と「別の `--check-only` invocation が同じ新 head を既に検知してこの CAS を通過済み」の 2 ケースをどちらも指すが、区別する必要はない — どちらも「クリアはもう自分の仕事ではない」という意味で同じであり、失敗しても後続の 3 (prune) 以降には影響しない。
+   `state-apply` は lock 内で読み直した最新の `.last_head_sha` に対してこの filter を評価するため、判定は常にその瞬間の on-disk 値に対して行われる。条件は 2 つを同時に見る: `$snapshot_head != $observed_head` は「このポーリングで新 push を観測したか」、`.last_head_sha == $snapshot_head` は「自分が起点にしたスナップショット以降、on-disk が他の invocation によって既に更新されていないか」。**後者が無いと**、古いスナップショットのまま観測していた invocation が、既に別の invocation によって新しい head へ更新済みの on-disk 値を「自分の観測 head と一致しない」というだけの理由で無条件に上書きし、新しい head を自分の古い観測 head で巻き戻してしまう (PR #78 レビュー指摘: 2 つの `--check-only` invocation が併走し、新しい head を検知した側が先に CAS を成功させた後、古いスナップショットのまま観測していた側が「on-disk が自分の観測 head と違う」ことを理由に CAS を成功させ、古い head で上書きしてしまうケース)。両条件を `and` で束ねることで、on-disk が自分のスナップショットから 1 度でも動いていれば `.last_head_sha == $snapshot_head` が偽になって無条件に `error()` で弾かれ、書き込みは起きない。`error()` (非ゼロ exit・書き込みなし) は「今回はまだ新 push を観測していない (通常サイクル、`$snapshot_head == $observed_head`)」「別の invocation が同じ新 head を既に検知してこの CAS を通過済み」「自分のスナップショットが既に stale — 別の invocation が別の (より新しい) head で先に on-disk を更新済み」の 3 ケースをまとめて指すが、区別する必要はない — いずれも「クリアと `last_head_sha` の更新はもう自分の仕事ではない」という意味で同じであり、失敗した invocation は状態を巻き戻すことも再試行することもなく、そのまま次段 (3 の prune 以降) に進めばよい。3 以降・4/5 の判定は元々この CAS の成功可否に関わらず `state-get` で改めて読み直した最新 state を基準にする設計であるため (前掲、分岐 4 直前の段落を参照)、CAS に失敗した invocation が個別に復帰処理を挟む必要はない。
 
    CAS が **成功** (exit 0) した invocation だけが実際に `known_failing_checks` を全クリアし、`escalations` の `kind: ci-halted` エントリを全クリアし、`last_head_sha` を更新する。クリアが必要な理由自体は変わらない: `known_failing_checks` のクリアは CI が新しい head で再走するため、前回の失敗キーを引き継ぐと新 CI 上の再失敗を見落とすため。`escalations[kind=ci-halted]` のクリアが必要なのは、3 の prune が「`key` (`"<workflow>/<name>"`) が現在の `checks.failing` に無ければ削除」という条件しか持たず、**人間の修正 push 後も同じ check が引き続き failing のケース**を救えないため — この条件だけに任せると、新 head で `ci-self-heal` が再度 `HALTED` を返しても古いエスカレーション記録の `key` が一致し続けて dedup が効いてしまい、新しいインシデントの needs-human コメントが二度と投稿されなくなる。**新 head = 新インシデント境界**という原則に従い、同一 `workflow/name` の再失敗・再 HALTED であっても新 SHA 上では独立した事象として扱い、再エスカレーションを許可する。
 
@@ -275,7 +275,7 @@ state ファイルの `monitor_mode` で OPEN 時の次アクションを分岐�
      pr-monitor は監視を継続します。対応後の新しい push で該当 check が prune されれば自動的に再検知されます。
      ```
 
-  2. `gh pr comment` の**投稿成功を確認してから**、`prm state-apply` で state の `escalations` に `{kind: ci-halted|review-stuck, key: <"<workflow>/<name>"|comment_id>, at: <ISO8601>}` を追記する (`escalations` は配列フィールドのため `state-merge` ではなく `state-apply` — filter は `.escalations += [{kind: "...", key: $key, at: $at}]` の形)。`kind: ci-halted` の `key` (`"<workflow>/<name>"`) は分岐 4 と同じ理由で `--arg key "<workflow>/<name>"` 経由の `$key` 参照にする。`kind: review-stuck` の `key` (comment_id) は整数のためリテラル埋め込みのままで安全。投稿が失敗した場合 (network / rate-limit / permission 等) は追記せず、次ポーリングで再試行される — ここでも「確認された成功後にのみ state を更新する」原則 (次項「dispatch 契約」参照) を守り、通知未達のまま dedup が効いて以後の再エスカレーションが永久に握りつぶされる事態を防ぐ。
+  2. `gh pr comment` の**投稿成功を確認してから**、`prm state-apply` で state の `escalations` に `{kind: ci-halted|review-stuck, key: <"<workflow>/<name>"|comment_id>, at: <ISO8601>}` を追記する (`escalations` は配列フィールドのため `state-merge` ではなく `state-apply` — filter は `.escalations += [{kind: "...", key: $key, at: $at}]` の形)。呼び出しは `prm state-apply <n> <filter-file> --arg key "<workflow>/<name>|<comment_id>" --arg at "<ISO8601>"` — filter が参照する `$key` と `$at` の**両方**を `--arg` で束縛する (`$key` の束縛だけでは `$at` が未束縛のまま残り、jq が undefined `$at` で非ゼロ exit して escalation が記録されない — PR #78 レビュー指摘)。`kind: ci-halted` の `key` (`"<workflow>/<name>"`) は分岐 4 と同じ理由で `--arg key "<workflow>/<name>"` 経由の `$key` 参照にする。`kind: review-stuck` の `key` (comment_id) は整数のためリテラル埋め込みのままで安全。`$at` は `gh pr comment` の投稿成功を確認した時点の現在時刻 ISO8601 文字列を `--arg at "<ISO8601>"` で束縛する。投稿が失敗した場合 (network / rate-limit / permission 等) は追記せず、次ポーリングで再試行される — ここでも「確認された成功後にのみ state を更新する」原則 (次項「dispatch 契約」参照) を守り、通知未達のまま dedup が効いて以後の再エスカレーションが永久に握りつぶされる事態を防ぐ。
 
 人間が対応した後の新 push で `known_failing_checks` が (2 の全クリア、または 3 の prune で) 落ちれば、次のポーリングで自然に再検知・再 dispatch される。
 
