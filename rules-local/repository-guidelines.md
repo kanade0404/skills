@@ -16,7 +16,8 @@ This repository is a catalog and **rulesync distribution source** for Claude Cod
 - `skills/<name>/`: Agent Skills. The directories and `SKILL.md` frontmatter are the inventory source of truth.
 - `rules/`: **distributable** cross-cutting rules. Consumers fetch every file in this directory, so it must contain only frontmattered rule files (no README, no repo-local content) — machine-checked by `tests/`.
 - `rules-local/`: repo-local rules (this file included). Staged into this repo's own generated configs by `scripts/rulesync-sync.mjs` but **not** part of the fetched `rules` feature.
-- `subagents/`, `commands/`, `hooks/`: distribution feature slots, currently placeholders (README only).
+- `subagents/`, `commands/`, `hooks/`: distribution feature slots, currently placeholders (README only). Never place repo-local content in `hooks/` — a consumer's `rulesync fetch --features hooks` fetches everything under it.
+- `hooks-local/`: repo-local hooks (mirrors `rules-local/`). `scripts/rulesync-sync.mjs` reads `hooks-local/claude-code-hooks.json` and merges it into this repo's generated `.claude/settings.json`; it is not part of the fetched `hooks` feature.
 
 Each skill directory uses this layout:
 
@@ -36,20 +37,22 @@ Third-party skills are generally not vendored here; consumers `rulesync fetch` u
 - Frontmatter `description` must be ≤1024 characters (other agents' skill loaders reject longer ones), specific, third-person, and describe both what the skill does and when to use it.
 - Keep each `SKILL.md` under 500 lines; move detail into `references/<topic>.md`.
 - The authoring / trigger-eval norms live in `skills/skill-builder/SKILL.md` (source of truth for skill creation).
-- These invariants are machine-checked by `tests/` (run via `python3 -m unittest discover -s tests`) and the trigger-evals CI.
+- These invariants are machine-checked by `tests/` (run via `uv run python3 -m unittest discover -s tests`) and the trigger-evals CI.
 
 ## Build, Test, and Development Commands
 
 There is no project-wide build. Useful commands:
 
-- `python3 -m unittest discover -s tests`: frontmatter invariants + CI checker unit tests.
+- `uv run python3 -m unittest discover -s tests`: frontmatter invariants + CI checker unit tests.
 - `uv run python .github/scripts/check_trigger_evals.py`: full trigger-eval scan (known failures live in `.github/trigger-evals-known-failures.json`).
 - `uv run python skills/skill-builder/scripts/score_triggers.py --cases <cases> --preds <results>`: score one skill's trigger predictions.
 - `node scripts/rulesync-sync.mjs [--check]`: regenerate (or verify) generated agent configs.
 
+Bare `python3` / `python` (without `uv run`) resolve to a broken alias in some development environments used against this repository — this has been independently rediscovered by multiple subagents. Always invoke Python through `uv run`, as all commands above already do.
+
 ## Testing Guidelines
 
-For trigger evals, place cases in `skills/<skill>/evals/<skill>-trigger.json` and predictions in `skills/<skill>/evals/<skill>-trigger-results-YYYY-MM-DD.jsonl`. Include both should-trigger and should-skip prompts, with tags such as `explicit`, `ambiguous`, `adjacent`, and `distractor`. When a skill's frontmatter (trigger surface) changes, re-measure and add a new dated results file — CI enforces this.
+For trigger evals, place cases in `skills/<skill>/evals/<skill>-trigger.json` and predictions in `skills/<skill>/evals/<skill>-trigger-results-YYYY-MM-DD.jsonl`. Include both should-trigger and should-skip prompts, with tags such as `explicit`, `ambiguous`, `adjacent`, and `distractor`. When a skill's frontmatter (trigger surface) changes, re-measure and add a new dated results file — CI enforces this. When that change adds or alters a trigger surface (new wording, new condition), also add at least 2-3 new eval cases that target the new surface directly before re-measuring — re-scoring only the old cases cannot detect false triggers/misses on the new surface (observed in PR #74).
 
 ## Commit & Pull Request Guidelines
 

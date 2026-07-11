@@ -25,6 +25,10 @@ consumer は `rulesync fetch kanade0404/skills@vX.Y.Z --features skills,...` で
    `.github/workflows/consumer-update.yml`（本リポジトリの reusable workflow）を
    schedule で呼び出し、新タグを検知すると pin 更新 + 再生成の PR を自動作成する
    （merge は人間）。急ぐ場合は consumer 側で workflow_dispatch を手動実行する。
+   **master に merge しただけでは consumer に届かない** — installed skill
+   (`~/.claude/skills` 等の fetch 済みコピー) はタグ更新までは古い版のまま
+   固定されている。タグを切り、consumer 側で `rulesync fetch` が走って初めて
+   反映される。
 
 ## consumer 側の配線
 
