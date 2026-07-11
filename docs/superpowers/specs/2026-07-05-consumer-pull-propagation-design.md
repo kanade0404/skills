@@ -52,8 +52,12 @@ kanade0404/agegis          kanade0404/dotfiles
 
 `on: workflow_call`。1 job で以下を順に行う:
 
-1. **最新タグ解決**: `gh api repos/kanade0404/skills/tags` から `v*` (semver) の最新を選ぶ。
+1. **最新タグ解決**: `gh api repos/kanade0404/skills/tags` で `v*` タグ全件を取得し、
+   **semver ソートの最大値**を採用する (tags API は commit 順で semver 順を保証しないため
+   API の並び順に依存しない)。プレリリース形式 (`v1.0.0-rc1` 等) は除外。
    GitHub Release の作成には依存しない (このリポのリリースは git タグのみ)。
+   MAJOR bump も自動で PR を立てる — breaking の防波堤は「人間が merge する」ゲートに
+   既にあり、PR body に MAJOR 警告 (削除/リネームを compare リンクで確認せよ) を自動で載せる。
 2. **冪等チェック**: ブランチ `chore/skills-<tag>` が既に存在する、または同ブランチの
    open PR がある場合はスキップ終了 (多重 PR 防止)。
 3. **no-op 判定 (2 方式)**:
@@ -79,16 +83,28 @@ kanade0404/agegis          kanade0404/dotfiles
 | `update-command` | input (required) | `SKILLS_TAG` を受けて pin 更新 + fetch + generate を行うコマンド |
 | `pr-notes` | input (optional) | PR body に追記する markdown (人間確認チェックリスト等) |
 | `setup-node` | input (optional, default true) | `actions/setup-node` を実行するか (両 consumer とも npm script 前提) |
-| `pr-token` | secret (required) | PR 作成・push 用の repo 限定 fine-grained PAT |
+| `app-id` | input (required) | PR 作成用 GitHub App の App ID |
+| `app-private-key` | secret (required) | 同 App の private key (PEM) |
 
-**PAT を要求する理由**: `GITHUB_TOKEN` で作成した PR には CI が自動起動しない
-(GitHub の再帰防止仕様)。consumer 側は「CI green を確認して merge」の運用なので、
-CI が走るトークンで PR を作る必要がある。PAT は各 consumer リポに repo 限定・
-contents/pull-requests write の最小権限で置く。
+**GITHUB_TOKEN でなく GitHub App token を使う理由**: `GITHUB_TOKEN` で作成した PR には
+CI が自動起動しない (GitHub の再帰防止仕様)。consumer 側は「CI green を確認して merge」の
+運用なので、CI が走るトークンで PR を作る必要がある。fine-grained PAT は有効期限必須
+(最長 1 年) で年次更新チョアと失効リスクを抱えるため、**無期限の GitHub App** を採用する:
+
+- App は個人アカウント配下に 1 つ作成し、権限は Contents / Pull requests の
+  Read & Write のみ。インストール先は agegis / dotfiles に限定する。
+- token 発行 (`actions/create-github-app-token`、1 時間有効の installation token) は
+  reusable workflow 側に埋め込み、consumer は `APP_ID` / `APP_PRIVATE_KEY` を
+  渡すだけにする。
+- PR author は `<app名>[bot]` になり、自動化 PR と一目で区別できる。
+- App の description に用途 (skills release pull 追随) を明記する
+  (将来の「この App 何だっけ」防止)。
 
 ### 2. consumer 側 wrapper `skills-pull.yml` (agegis / dotfiles、各 1 本)
 
-- trigger: `schedule` (日次 cron) + `workflow_dispatch` (リリース直後に即時反映したい時)
+- trigger: `schedule` (日次 cron `17 21 * * *` UTC = JST 朝 6:17。正時は GitHub の cron
+  混雑で遅延・スキップが起きやすいため半端な分を使う。時刻自体に意味はなく変更自由) +
+  `workflow_dispatch` (リリース直後に即時反映したい時)
 - 本体は `uses: kanade0404/skills/.github/workflows/consumer-pull.yml@master` に
   自リポ固有の inputs を渡すだけ。
   - agegis: pin は `package.json` の `rulesync:fetch` script 内 `kanade0404/skills@<ref>`。
@@ -119,7 +135,7 @@ contents/pull-requests write の最小権限で置く。
   → 現 pin と比較 (current-ref-command がある場合) ─ 同じ → 終了 (no-op)
   → update-command 実行 (pin 更新 + rulesync fetch + generate)
   → git diff 空 (current-ref-command 無しの場合の no-op) → 終了
-  → PR 作成 (PAT) → consumer CI 起動 → 人間が review / merge
+  → PR 作成 (GitHub App installation token) → consumer CI 起動 → 人間が review / merge
 ```
 
 ## エラーハンドリング
@@ -139,9 +155,23 @@ contents/pull-requests write の最小権限で置く。
   重複 PR が立たないこと (冪等) を確認する。
 - skills 側は workflow lint (actionlint 等、手元実行) のみ。build/test 基盤は無い。
 
+## 移行手順 (段階移行)
+
+一気に切り替えず、consumer 側の動作確認が取れるまで既存の Devin 経路を残す:
+
+1. skills リポに `consumer-pull.yml` (reusable workflow) を追加する PR。
+   この時点で `release-propagate.yml` は削除しない (共存に害はない)。
+2. agegis / dotfiles に wrapper (`skills-pull.yml`) を追加し、GitHub App の作成・
+   インストール・secrets 設定を行い、workflow_dispatch でドライラン検証
+   (no-op / PR 作成 / 冪等スキップの 3 ケース)。
+3. 検証が通ったら skills 側で `release-propagate.yml` / `.github/devin/consumer-update.md`
+   を削除し RELEASING.md を更新する PR。secrets `DEVIN_API_KEY` / `DEVIN_ORG_ID` の
+   削除もこの時点で行う。
+
 ## スコープ外
 
-- consumer リポ (agegis / dotfiles) への wrapper 追加と PAT 設定は各リポでの作業。
+- consumer リポ (agegis / dotfiles) への wrapper 追加、GitHub App の作成・インストール・
+  secrets (`APP_ID` / `APP_PRIVATE_KEY`) 設定は各リポ / アカウント設定での作業。
   本リポの変更とは別 PR (実装計画には含めるが、この repo の PR には入らない)。
 - dotfiles のパッチスクリプト削除そのものは、初回 pull PR のチェックリストで
   人間が判断する一回性のタスク。
