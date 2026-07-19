@@ -1,7 +1,7 @@
 # consumer pull 型リリース追随 (Devin push 廃止) — 設計
 
 日付: 2026-07-05
-状態: 承認待ち
+状態: 承認済み (ADR 0001 として決定を記録: docs/adr/0001-consumer-pull-release-propagation.md)
 
 ## 背景 / 問題
 

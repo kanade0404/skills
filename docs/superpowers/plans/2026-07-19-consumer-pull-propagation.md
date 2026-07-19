@@ -131,7 +131,7 @@ jobs:
           fi
           current=""
           if [ -n "$CURRENT_REF_COMMAND" ]; then
-            current=$(bash -c "$CURRENT_REF_COMMAND")
+            current=$(bash -c "set -euo pipefail; $CURRENT_REF_COMMAND")
             if [ "$current" = "$TAG" ]; then
               echo "現 pin ($current) が最新タグと一致、スキップ (no-op)"
               echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
@@ -173,7 +173,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          bash -c "$UPDATE_COMMAND"
+          bash -c "set -euo pipefail; $UPDATE_COMMAND"
 
       - name: Create PR
         if: ${{ steps.gate.outputs.skip == 'false' }}
