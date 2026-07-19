@@ -37,8 +37,8 @@ push 型 (skills → Devin → consumer) を廃止し、**pull 型** に置き�
 ```
 kanade0404/skills
 ├── .github/workflows/consumer-pull.yml   # 新設: reusable workflow (workflow_call)
-├── .github/workflows/release-propagate.yml   # 削除
-└── .github/devin/consumer-update.md           # 削除
+├── .github/workflows/release-propagate.yml   # Task 7 (検証後) で削除予定
+└── .github/devin/consumer-update.md           # Task 7 (検証後) で削除予定
 
 kanade0404/agegis          kanade0404/dotfiles
 └── .github/workflows/      └── .github/workflows/
