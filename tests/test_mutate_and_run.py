@@ -184,7 +184,7 @@ class TsHeuristicsNoteTest(unittest.TestCase):
     silently swallowed), so a SKIP with 0 candidates on a TS file is
     explainable by the reader."""
 
-    def _run_main(self, suffix, source):
+    def _run_main(self, suffix: str, source: str) -> tuple[int, dict[str, Any]]:
         with tempfile.TemporaryDirectory() as tmp:
             impl = Path(tmp) / f"impl{suffix}"
             impl.write_text(source, encoding="utf-8")
