@@ -62,11 +62,13 @@ kanade0404/agegis          kanade0404/dotfiles
    open PR がある場合はスキップ終了 (多重 PR 防止)。
 3. **no-op 判定 (2 方式)**:
    - `current-ref-command` (optional input) がある場合: それを実行して現 pin を stdout で
-     受け取り、最新タグと一致すれば成功終了 (agegis はこちら。pin が `package.json` に
-     明示されている)。
-   - 無い場合: 判定を後段に回し、update 実行後に `git diff` が空なら成功終了
-     (dotfiles はこちら。declarative source 方式で「現在の pin」を持たないため、
-     実際に更新を走らせて差分の有無で判定する)。
+     受け取り、最新タグと一致すれば成功終了。
+     **実機確認の結果、両 consumer ともこちらを使える**: agegis は `package.json` の
+     `rulesync:fetch` script に `@vX.Y.Z`、dotfiles は `rulesync.jsonc` と
+     `rulesync-claude/rulesync.jsonc` の 2 箇所に `"ref": "vX.Y.Z"` を明示している。
+   - 無い場合: 判定を後段に回し、update 実行後に `git diff` が空なら成功終了。
+     現 consumer では使わないが、pin を持たない将来の consumer 向けの安全弁として残す
+     (update が実質空振りだった場合に空 PR を作らない防御を兼ねる)。
 4. **更新実行**: input の `update-command` を環境変数 `SKILLS_TAG=<新タグ>` 付きで実行。
    pin 書き換え・rulesync fetch・generate は全て consumer 側リポ既存のスクリプトに委譲し、
    生成物を手編集しない (現 playbook の不変条件を引き継ぐ)。
@@ -82,7 +84,7 @@ kanade0404/agegis          kanade0404/dotfiles
 | `current-ref-command` | input (optional) | 現在の pin を stdout に出すシェルコマンド。無指定時は update 後の差分有無で no-op 判定 |
 | `update-command` | input (required) | `SKILLS_TAG` を受けて pin 更新 + fetch + generate を行うコマンド |
 | `pr-notes` | input (optional) | PR body に追記する markdown (人間確認チェックリスト等) |
-| `setup-node` | input (optional, default true) | `actions/setup-node` を実行するか (両 consumer とも npm script 前提) |
+| `runtime` | input (optional, default `node`) | `node` (setup-node lts + corepack enable。agegis は pnpm) / `bun` (setup-bun。dotfiles) / `none` |
 | `app-id` | input (required) | PR 作成用 GitHub App の App ID |
 | `app-private-key` | secret (required) | 同 App の private key (PEM) |
 
@@ -107,10 +109,13 @@ CI が自動起動しない (GitHub の再帰防止仕様)。consumer 側は「C
   `workflow_dispatch` (リリース直後に即時反映したい時)
 - 本体は `uses: kanade0404/skills/.github/workflows/consumer-pull.yml@master` に
   自リポ固有の inputs を渡すだけ。
-  - agegis: pin は `package.json` の `rulesync:fetch` script 内 `kanade0404/skills@<ref>`。
-    update は fetch script の ref 書き換え + `rulesync:fetch` + generate 系 script。
-  - dotfiles: `rulesync.jsonc` の declarative source 方式。
-    `rulesync:skills:update` / `rulesync:skills:claude:update` を実行。
+  - agegis (pnpm): pin は `package.json` の `rulesync:fetch` script 内
+    `kanade0404/skills@vX.Y.Z`。update は sed で pin 書き換え (jq だと整形差分が出る) +
+    `pnpm run rulesync:fetch` + `pnpm run rulesync:generate`。
+  - dotfiles (bun): pin は `rulesync.jsonc` と `rulesync-claude/rulesync.jsonc` の
+    2 箇所の `"ref": "vX.Y.Z"`。JSONC (コメント入り) のため書き換えは sed、
+    読み取りは grep で行い jq に依存しない。update は両ファイルの ref 書き換え +
+    `bun run rulesync:skills:update` + `bun run rulesync:skills:claude:update`。
     `pr-notes` に `scripts/patch-rulesync-skill-frontmatter.ts` の削除可否確認
     (skills v0.5.0 以降不要の可能性) をチェックリストとして渡す。
 - reusable workflow の参照は `@master` 固定。skills 自体のタグは skill 配布の
