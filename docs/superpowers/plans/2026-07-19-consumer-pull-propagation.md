@@ -82,6 +82,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   pull:
@@ -121,7 +122,7 @@ jobs:
       - name: Gate (idempotency / no-op)
         id: gate
         env:
-          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.latest.outputs.tag }}
           CURRENT_REF_COMMAND: ${{ inputs.current-ref-command }}
         run: |
@@ -141,7 +142,14 @@ jobs:
             fi
           fi
           resume=false
-          if gh api "repos/${GITHUB_REPOSITORY}/branches/${branch}" >/dev/null 2>&1; then
+          branch_exists=false
+          if out=$(gh api "repos/${GITHUB_REPOSITORY}/branches/${branch}" 2>&1); then
+            branch_exists=true
+          elif ! printf '%s' "$out" | grep -q 'HTTP 404'; then
+            echo "::error::branch 存在確認が 404 以外で失敗: ${out}"
+            exit 1
+          fi
+          if [ "$branch_exists" = "true" ]; then
             closed_prs=$(gh pr list -R "$GITHUB_REPOSITORY" --head "$branch" --state closed --json number --jq length)
             if [ "$closed_prs" != "0" ]; then
               # 人間が close (または merge 後 branch 未削除) した PR を毎日作り直さない。
@@ -376,6 +384,7 @@ name: skills pull
 # pin は rulesync.jsonc / rulesync-claude/rulesync.jsonc の 2 箇所の "ref"。
 # 両ファイルとも JSONC (コメント入り) のため jq でなく sed / grep で扱う。
 # skills 以外の source (planetscale) に ref キーは無い前提 (追加時は sed の対象を見直す)。
+# ref は 2 ファイルの一致を確認し、食い違いは update 実行で自己修復する。
 on:
   schedule:
     - cron: '17 21 * * *' # JST 朝 6:17。正時は GitHub cron が混雑するため回避
@@ -388,7 +397,9 @@ jobs:
       app-id: ${{ vars.SKILLS_PULL_APP_ID }}
       runtime: bun
       current-ref-command: |
-        grep -oE '"ref": *"v[0-9]+\.[0-9]+\.[0-9]+"' rulesync.jsonc | head -n1 | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+'
+        r1=$(grep -oE '"ref": *"v[0-9]+\.[0-9]+\.[0-9]+"' rulesync.jsonc | head -n1 | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+')
+        r2=$(grep -oE '"ref": *"v[0-9]+\.[0-9]+\.[0-9]+"' rulesync-claude/rulesync.jsonc | head -n1 | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+')
+        if [ "$r1" = "$r2" ]; then echo "$r1"; else echo "refs-diverged"; fi
       update-command: |
         sed -i -E 's|"ref": *"v[0-9]+\.[0-9]+\.[0-9]+"|"ref": "'"$SKILLS_TAG"'"|' rulesync.jsonc rulesync-claude/rulesync.jsonc
         bun install --frozen-lockfile
@@ -421,12 +432,12 @@ commit 要約: `ci: skills リリースへの日次 pull 追随 workflow を追�
 
 - [ ] **Step 1: no-op ケース (agegis)**
 
-Run: `gh workflow run skills-pull.yml -R kanade0404/agegis` → `gh run watch -R kanade0404/agegis` で完了確認
+Run: `gh workflow run skills-pull.yml -R kanade0404/agegis` → `gh run watch --exit-status -R kanade0404/agegis` で完了確認
 Expected: run 成功。Gate step のログに「現 pin (v0.8.0) が最新タグと一致、スキップ (no-op)」(agegis は既に最新のため)。PR は作られない
 
 - [ ] **Step 2: PR 作成ケース (dotfiles)**
 
-Run: `gh workflow run skills-pull.yml -R kanade0404/dotfiles` → `gh run watch -R kanade0404/dotfiles`
+Run: `gh workflow run skills-pull.yml -R kanade0404/dotfiles` → `gh run watch --exit-status -R kanade0404/dotfiles`
 Expected: run 成功。`chore/skills-v0.8.0` ブランチで PR が 1 件でき、body に compare リンク (`compare/v0.6.0...v0.8.0`) とパッチ削除可否のチェックリストがある。author は `skills-release-pull[bot]`。**PR 上で dotfiles の CI が起動している** (App token の狙いどおり)
 
 - [ ] **Step 3: 冪等ケース (dotfiles 再実行)**
