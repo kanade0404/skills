@@ -70,9 +70,10 @@ kanade0404/agegis          kanade0404/dotfiles
      現 consumer では使わないが、pin を持たない将来の consumer 向けの安全弁として残す
      (update が実質空振りだった場合に空 PR を作らない防御を兼ねる)。
 4. **resume 判定**: open PR は無いが同ブランチ `chore/skills-<tag>` が既に存在する場合、
-   「前回 run が push 成功 → PR 作成前に失敗」した形跡とみなし resume モードに入る。
-   resume 中は更新実行 (次項) を丸ごとスキップし、既存ブランチから PR 作成のみを再実行する
-   (自動復旧)。
+   まず closed/merged PR の履歴を確認し、あればスキップする (却下された PR を再作成しない。
+   再実行したい場合は branch を削除する)。履歴が無ければ「前回 run が push 成功 → PR 作成前
+   に失敗」した形跡とみなし resume モードに入る (更新実行をスキップし、既存ブランチから
+   PR 作成のみを再実行する自動復旧)。
 5. **更新実行**: resume でない場合のみ、input の `update-command` を環境変数
    `SKILLS_TAG=<新タグ>` 付きで実行。pin 書き換え・rulesync fetch・generate は全て
    consumer 側リポ既存のスクリプトに委譲し、生成物を手編集しない
@@ -148,7 +149,8 @@ CI が自動起動しない (GitHub の再帰防止仕様)。consumer 側は「C
   → 最新タグ解決 (skills は public、読み取りに認証不要)
   → chore/skills-<tag> ブランチの open PR 既存 → 終了 (冪等)
   → 現 pin と比較 (current-ref-command がある場合) ─ 同じ → 終了 (no-op)
-  → chore/skills-<tag> ブランチが open PR 無しで既存 → resume (PR 作成のみ再実行、自動復旧)
+  → chore/skills-<tag> ブランチが存在し closed/merged PR 履歴あり → 終了 (再作成しない)
+  → 同ブランチが存在し PR 履歴なし → resume (PR 作成のみ再実行、自動復旧)
   → (resume でなければ) update-command 実行 (pin 更新 + rulesync fetch + generate)
   → git diff 空 (current-ref-command 無しの場合の no-op) → 終了
   → PR 作成 (GitHub App installation token) → consumer CI 起動 → 人間が review / merge
@@ -164,7 +166,8 @@ CI が自動起動しない (GitHub の再帰防止仕様)。consumer 側は「C
 - タグが日次間隔より速く連続した場合: 古いタグの open PR が残っていても、新タグは
   別ブランチ名なので新 PR が立つ。古い PR の close は人間の判断に委ねる。
 - 「push 成功 → PR 作成前に失敗」の部分失敗は、次回 run が既存 branch から PR 作成のみを
-  再実行して自動復旧する。
+  再実行して自動復旧する。自動復旧は「PR 履歴の無い branch」に限る。人間が PR を close した
+  branch は再作成せずスキップし、意図的な再実行は branch 削除で行う。
 
 ## テスト / 検証
 

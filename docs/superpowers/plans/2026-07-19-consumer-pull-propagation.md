@@ -80,6 +80,9 @@ on:
         description: 'PR 作成用 GitHub App の private key (PEM)'
         required: true
 
+permissions:
+  contents: read
+
 jobs:
   pull:
     runs-on: ubuntu-latest
@@ -93,14 +96,14 @@ jobs:
     steps:
       - name: Create GitHub App token
         id: app
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
         with:
           app-id: ${{ inputs.app-id }}
           private-key: ${{ secrets.app-private-key }}
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          token: ${{ steps.app.outputs.token }}
+          persist-credentials: false
 
       - name: Resolve latest skills tag
         id: latest
@@ -138,9 +141,16 @@ jobs:
             fi
           fi
           resume=false
-          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+          if gh api "repos/${GITHUB_REPOSITORY}/branches/${branch}" >/dev/null 2>&1; then
+            closed_prs=$(gh pr list -R "$GITHUB_REPOSITORY" --head "$branch" --state closed --json number --jq length)
+            if [ "$closed_prs" != "0" ]; then
+              # 人間が close (または merge 後 branch 未削除) した PR を毎日作り直さない。
+              # 意図的に再実行したい場合は branch を削除する。
+              echo "branch $branch には closed/merged PR の履歴があるためスキップ (PR は再作成しない)"
+              echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
+            fi
             # 前回 run が「push 成功 → PR 作成前に失敗」した形跡。既存 branch から PR 作成のみ再試行する
-            echo "branch $branch は存在するが open PR が無いため、PR 作成のみ再実行する (自動復旧)"
+            echo "branch $branch は存在するが PR 履歴が無いため、PR 作成のみ再実行する (自動復旧)"
             resume=true
           fi
           {
@@ -151,7 +161,7 @@ jobs:
 
       - name: Setup node
         if: ${{ steps.gate.outputs.skip == 'false' && steps.gate.outputs.resume == 'false' && inputs.runtime == 'node' }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 'lts/*'
 
@@ -161,7 +171,7 @@ jobs:
 
       - name: Setup bun
         if: ${{ steps.gate.outputs.skip == 'false' && steps.gate.outputs.resume == 'false' && inputs.runtime == 'bun' }}
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
       - name: Run update command
         if: ${{ steps.gate.outputs.skip == 'false' && steps.gate.outputs.resume == 'false' }}
@@ -198,7 +208,7 @@ jobs:
             # 生成物のパスは consumer ごとに異なるため全差分を commit 対象にする
             git add -A
             git commit -m "chore: kanade0404/skills ${TAG} へ追随"
-            git push origin "$branch"
+            git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${branch}"
           fi
           {
             echo "kanade0404/skills のリリース **${TAG}** への追随 (pull workflow による自動生成 PR)。"

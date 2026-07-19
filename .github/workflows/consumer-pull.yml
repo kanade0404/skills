@@ -96,9 +96,16 @@ jobs:
             fi
           fi
           resume=false
-          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+          if gh api "repos/${GITHUB_REPOSITORY}/branches/${branch}" >/dev/null 2>&1; then
+            closed_prs=$(gh pr list -R "$GITHUB_REPOSITORY" --head "$branch" --state closed --json number --jq length)
+            if [ "$closed_prs" != "0" ]; then
+              # 人間が close (または merge 後 branch 未削除) した PR を毎日作り直さない。
+              # 意図的に再実行したい場合は branch を削除する。
+              echo "branch $branch には closed/merged PR の履歴があるためスキップ (PR は再作成しない)"
+              echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
+            fi
             # 前回 run が「push 成功 → PR 作成前に失敗」した形跡。既存 branch から PR 作成のみ再試行する
-            echo "branch $branch は存在するが open PR が無いため、PR 作成のみ再実行する (自動復旧)"
+            echo "branch $branch は存在するが PR 履歴が無いため、PR 作成のみ再実行する (自動復旧)"
             resume=true
           fi
           {
