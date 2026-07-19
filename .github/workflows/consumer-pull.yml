@@ -37,6 +37,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   pull:
@@ -76,7 +77,7 @@ jobs:
       - name: Gate (idempotency / no-op)
         id: gate
         env:
-          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.latest.outputs.tag }}
           CURRENT_REF_COMMAND: ${{ inputs.current-ref-command }}
         run: |
@@ -96,7 +97,14 @@ jobs:
             fi
           fi
           resume=false
-          if gh api "repos/${GITHUB_REPOSITORY}/branches/${branch}" >/dev/null 2>&1; then
+          branch_exists=false
+          if out=$(gh api "repos/${GITHUB_REPOSITORY}/branches/${branch}" 2>&1); then
+            branch_exists=true
+          elif ! printf '%s' "$out" | grep -q 'HTTP 404'; then
+            echo "::error::branch 存在確認が 404 以外で失敗: ${out}"
+            exit 1
+          fi
+          if [ "$branch_exists" = "true" ]; then
             closed_prs=$(gh pr list -R "$GITHUB_REPOSITORY" --head "$branch" --state closed --json number --jq length)
             if [ "$closed_prs" != "0" ]; then
               # 人間が close (または merge 後 branch 未削除) した PR を毎日作り直さない。

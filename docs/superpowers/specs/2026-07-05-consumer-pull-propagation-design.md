@@ -108,10 +108,11 @@ CI が自動起動しない (GitHub の再帰防止仕様)。consumer 側は「C
 - PR author は `<app名>[bot]` になり、自動化 PR と一目で区別できる。
 - App の description に用途 (skills release pull 追随) を明記する
   (将来の「この App 何だっけ」防止)。
-- workflow 本体は `permissions: contents: read` を明示し、外部 action は full commit SHA に
-  pin する。checkout は `persist-credentials: false` とし、App token は push / PR 作成の
-  瞬間のみ供給する (untrusted な依存インストールや update-command 実行中に token を
-  git config に残さない)。
+- workflow 本体は `permissions: contents: read + pull-requests: read` を明示し、外部 action は
+  full commit SHA に pin する。checkout は `persist-credentials: false` とし、App token は
+  push / PR 作成の瞬間のみ供給する (untrusted な依存インストールや update-command 実行中に
+  token を git config に残さない)。Gate の読み取り API と consumer コマンド実行には read-only
+  の `github.token` のみを使い、App token は Create PR step (push / PR 作成) にしか渡さない。
 
 ### 2. consumer 側 wrapper `skills-pull.yml` (agegis / dotfiles、各 1 本)
 
