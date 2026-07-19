@@ -528,6 +528,20 @@ def main(argv=None):
         is_ts = impl_path.suffix.lower() in (".ts", ".tsx")
         skip_type_alias_bools = is_ts
         skip_generic_comparisons = is_ts
+        if is_ts:
+            # Disclose the TS/TSX-only candidate exclusions up front so a
+            # SKIP (0 candidates) on a TS file is explainable by the reader -
+            # references/mutation-recipes.md promises these limitations are
+            # never silently swallowed.
+            notes.append(
+                "TS/TSX heuristics active: bool-flip candidates on type-alias "
+                "declaration lines and single-char </> comparison-flip "
+                "candidates on generic declaration lines "
+                "(function/type/interface/class) are excluded. The generic "
+                "skip is line-level, so a runtime comparison sharing a "
+                "generic declaration's line (one-line body) is excluded too - "
+                "see references/mutation-recipes.md."
+            )
         all_candidates = discover_candidates(
             original_lines,
             comment_prefixes,

@@ -13,8 +13,12 @@ still be discovered.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
@@ -172,6 +176,45 @@ class RegressionGuardTest(unittest.TestCase):
         )
         bool_flips = [c for c in candidates if c["kind"] == "bool-flip"]
         self.assertEqual(bool_flips, [], "existing skip_type_alias_bools behavior must be unaffected by this change")
+
+
+class TsHeuristicsNoteTest(unittest.TestCase):
+    """main() must disclose the TS/TSX-only candidate exclusions in `notes`
+    (references/mutation-recipes.md promises these limitations are never
+    silently swallowed), so a SKIP with 0 candidates on a TS file is
+    explainable by the reader."""
+
+    def _run_main(self, suffix, source):
+        with tempfile.TemporaryDirectory() as tmp:
+            impl = Path(tmp) / f"impl{suffix}"
+            impl.write_text(source, encoding="utf-8")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = MOD.main(["--impl-file", str(impl), "--test-cmd", "true"])
+            return rc, json.loads(out.getvalue())
+
+    def test_ts_file_discloses_heuristics_note(self):
+        # Generic decl line + candidate-free body -> the TS-only exclusions
+        # leave 0 candidates (SKIP); the note must say the exclusions were
+        # active so the SKIP is attributable.
+        rc, result = self._run_main(
+            ".ts", "function identity<T>(x: T): T {\n  return x;\n}\n"
+        )
+        self.assertEqual(rc, 0, "SKIP is not an error exit")
+        self.assertEqual(result["verdict"], "SKIP", "candidate-free TS file must SKIP")
+        self.assertTrue(
+            any("TS/TSX heuristics active" in n for n in result["notes"]),
+            f"expected a TS/TSX heuristics disclosure note, got: {result['notes']}",
+        )
+
+    def test_non_ts_file_has_no_ts_heuristics_note(self):
+        rc, result = self._run_main(".py", "def identity(x):\n    return x\n")
+        self.assertEqual(rc, 0, "SKIP is not an error exit")
+        self.assertEqual(result["verdict"], "SKIP", "candidate-free .py file must SKIP")
+        self.assertFalse(
+            any("TS/TSX heuristics active" in n for n in result["notes"]),
+            "the TS/TSX disclosure note must not appear for non-TS files",
+        )
 
 
 if __name__ == "__main__":
