@@ -1,0 +1,176 @@
+name: consumer pull
+
+# kanade0404/skills のリリースタグへ追随する PR を consumer リポに作る reusable workflow。
+# consumer は cron + workflow_dispatch の薄い wrapper から uses: で呼ぶ。
+# 設計: docs/adr/0001-consumer-pull-release-propagation.md /
+#       docs/superpowers/specs/2026-07-05-consumer-pull-propagation-design.md
+on:
+  workflow_call:
+    inputs:
+      update-command:
+        description: 'SKILLS_TAG 環境変数を受けて pin 更新 + rulesync fetch/generate を行うコマンド'
+        required: true
+        type: string
+      current-ref-command:
+        description: '現在追随している skills の ref を stdout へ出すコマンド。空なら update 実行後の差分有無で no-op 判定'
+        required: false
+        type: string
+        default: ''
+      pr-notes:
+        description: 'PR body 末尾「要確認」節に載せる markdown (機械判断できない項目のチェックリスト)'
+        required: false
+        type: string
+        default: ''
+      runtime:
+        description: 'node (setup-node lts + corepack enable) / bun (setup-bun) / none'
+        required: false
+        type: string
+        default: 'node'
+      app-id:
+        description: 'PR 作成用 GitHub App の App ID'
+        required: true
+        type: string
+    secrets:
+      app-private-key:
+        description: 'PR 作成用 GitHub App の private key (PEM)'
+        required: true
+
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: skills-pull-${{ github.repository }}
+      cancel-in-progress: false
+    env:
+      NO_COLOR: '1'
+      CLICOLOR_FORCE: '0'
+    steps:
+      - name: Create GitHub App token
+        id: app
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ inputs.app-id }}
+          private-key: ${{ secrets.app-private-key }}
+
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ steps.app.outputs.token }}
+
+      - name: Resolve latest skills tag
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # tags API は semver 順を保証しないため全件を semver ソートして最大を採る。
+          # プレリリース (v1.0.0-rc1 等ハイフン付き) は除外。
+          tag=$(gh api --paginate repos/kanade0404/skills/tags --jq '.[].name' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)
+          [ -n "$tag" ] || { echo "::error::kanade0404/skills に v* タグが見つからない"; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Gate (idempotency / no-op)
+        id: gate
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          TAG: ${{ steps.latest.outputs.tag }}
+          CURRENT_REF_COMMAND: ${{ inputs.current-ref-command }}
+        run: |
+          set -euo pipefail
+          branch="chore/skills-${TAG}"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "branch $branch が既に存在するためスキップ (冪等)"
+            echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          open_prs=$(gh pr list -R "$GITHUB_REPOSITORY" --head "$branch" --state open --json number --jq length)
+          if [ "$open_prs" != "0" ]; then
+            echo "branch $branch の open PR が既にあるためスキップ (冪等)"
+            echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          current=""
+          if [ -n "$CURRENT_REF_COMMAND" ]; then
+            current=$(bash -c "$CURRENT_REF_COMMAND")
+            if [ "$current" = "$TAG" ]; then
+              echo "現 pin ($current) が最新タグと一致、スキップ (no-op)"
+              echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+          fi
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Setup node
+        if: ${{ steps.gate.outputs.skip == 'false' && inputs.runtime == 'node' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+
+      - name: Enable corepack
+        if: ${{ steps.gate.outputs.skip == 'false' && inputs.runtime == 'node' }}
+        run: corepack enable
+
+      - name: Setup bun
+        if: ${{ steps.gate.outputs.skip == 'false' && inputs.runtime == 'bun' }}
+        uses: oven-sh/setup-bun@v2
+
+      - name: Run update command
+        if: ${{ steps.gate.outputs.skip == 'false' }}
+        env:
+          SKILLS_TAG: ${{ steps.latest.outputs.tag }}
+          UPDATE_COMMAND: ${{ inputs.update-command }}
+          # rulesync fetch 等が GitHub API を叩く。匿名クォータ (60req/h) 回避のため明示的に渡す
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash -c "$UPDATE_COMMAND"
+
+      - name: Create PR
+        if: ${{ steps.gate.outputs.skip == 'false' }}
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          TAG: ${{ steps.latest.outputs.tag }}
+          CURRENT: ${{ steps.gate.outputs.current }}
+          PR_NOTES: ${{ inputs.pr-notes }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "update 後の差分が無いため PR を作らない (no-op)"; exit 0
+          fi
+          branch="chore/skills-${TAG}"
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${APP_SLUG}[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          # 生成物のパスは consumer ごとに異なるため全差分を commit 対象にする
+          git add -A
+          git commit -m "chore: kanade0404/skills ${TAG} へ追随"
+          git push origin "$branch"
+          {
+            echo "kanade0404/skills のリリース **${TAG}** への追随 (pull workflow による自動生成 PR)。"
+            echo
+            echo "- pin / 取得内容を \`${TAG}\` に更新し、リポ既存スクリプトで設定を再生成"
+            if [ -n "$CURRENT" ]; then
+              echo "- 差分: https://github.com/kanade0404/skills/compare/${CURRENT}...${TAG}"
+              cur_major="${CURRENT#v}"; cur_major="${cur_major%%.*}"
+              new_major="${TAG#v}"; new_major="${new_major%%.*}"
+              if [ "$cur_major" != "$new_major" ]; then
+                echo
+                echo "> [!WARNING]"
+                echo "> **MAJOR bump** です。skill の削除 / リネーム / 挙動契約の変更を含みます。上の compare リンクで確認してから merge してください。"
+              fi
+            else
+              echo "- リリースタグ: https://github.com/kanade0404/skills/releases/tag/${TAG}"
+            fi
+            if [ -n "$PR_NOTES" ]; then
+              echo
+              echo "## 要確認 (機械判断できない項目)"
+              echo
+              echo "$PR_NOTES"
+            fi
+          } > pr-body.md
+          gh pr create -R "$GITHUB_REPOSITORY" \
+            --base "$BASE_BRANCH" --head "$branch" \
+            --title "chore: skills ${TAG} への追随" \
+            --body-file pr-body.md
