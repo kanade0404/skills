@@ -35,6 +35,9 @@ on:
         description: 'PR 作成用 GitHub App の private key (PEM)'
         required: true
 
+# 注意: reusable workflow は caller の権限を下げることしかできない。caller 側 job にも
+#   permissions: { contents: read, pull-requests: read }
+# を明示すること (restricted default の repo では pull-requests が欠けて Gate が 403 になる)。
 permissions:
   contents: read
   pull-requests: read
@@ -177,7 +180,7 @@ jobs:
             echo "kanade0404/skills のリリース **${TAG}** への追随 (pull workflow による自動生成 PR)。"
             echo
             echo "- pin / 取得内容を \`${TAG}\` に更新し、リポ既存スクリプトで設定を再生成"
-            if [ -n "$CURRENT" ]; then
+            if printf '%s' "$CURRENT" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
               echo "- 差分: https://github.com/kanade0404/skills/compare/${CURRENT}...${TAG}"
               cur_major="${CURRENT#v}"; cur_major="${cur_major%%.*}"
               new_major="${TAG#v}"; new_major="${new_major%%.*}"
@@ -188,6 +191,9 @@ jobs:
               fi
             else
               echo "- リリースタグ: https://github.com/kanade0404/skills/releases/tag/${TAG}"
+              if [ -n "$CURRENT" ]; then
+                echo "- 注記: 現 pin を単一タグとして特定できなかったため compare リンクは省略 (current-ref-command の出力: \`${CURRENT}\`)。pin の食い違いは今回の update で修復されている。"
+              fi
             fi
             if [ -n "$PR_NOTES" ]; then
               echo
