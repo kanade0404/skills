@@ -66,7 +66,7 @@ jobs:
           # tags API は semver 順を保証しないため全件を semver ソートして最大を採る。
           # プレリリース (v1.0.0-rc1 等ハイフン付き) は除外。
           tag=$(gh api --paginate repos/kanade0404/skills/tags --jq '.[].name' \
-            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)
+            | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V | tail -n1)
           [ -n "$tag" ] || { echo "::error::kanade0404/skills に v* タグが見つからない"; exit 1; }
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
@@ -79,10 +79,6 @@ jobs:
         run: |
           set -euo pipefail
           branch="chore/skills-${TAG}"
-          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
-            echo "branch $branch が既に存在するためスキップ (冪等)"
-            echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
           open_prs=$(gh pr list -R "$GITHUB_REPOSITORY" --head "$branch" --state open --json number --jq length)
           if [ "$open_prs" != "0" ]; then
             echo "branch $branch の open PR が既にあるためスキップ (冪等)"
@@ -96,25 +92,34 @@ jobs:
               echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
             fi
           fi
-          echo "current=$current" >> "$GITHUB_OUTPUT"
-          echo "skip=false" >> "$GITHUB_OUTPUT"
+          resume=false
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            # 前回 run が「push 成功 → PR 作成前に失敗」した形跡。既存 branch から PR 作成のみ再試行する
+            echo "branch $branch は存在するが open PR が無いため、PR 作成のみ再実行する (自動復旧)"
+            resume=true
+          fi
+          {
+            echo "resume=$resume"
+            echo "current=$current"
+            echo "skip=false"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Setup node
-        if: ${{ steps.gate.outputs.skip == 'false' && inputs.runtime == 'node' }}
+        if: ${{ steps.gate.outputs.skip == 'false' && steps.gate.outputs.resume == 'false' && inputs.runtime == 'node' }}
         uses: actions/setup-node@v4
         with:
           node-version: 'lts/*'
 
       - name: Enable corepack
-        if: ${{ steps.gate.outputs.skip == 'false' && inputs.runtime == 'node' }}
+        if: ${{ steps.gate.outputs.skip == 'false' && steps.gate.outputs.resume == 'false' && inputs.runtime == 'node' }}
         run: corepack enable
 
       - name: Setup bun
-        if: ${{ steps.gate.outputs.skip == 'false' && inputs.runtime == 'bun' }}
+        if: ${{ steps.gate.outputs.skip == 'false' && steps.gate.outputs.resume == 'false' && inputs.runtime == 'bun' }}
         uses: oven-sh/setup-bun@v2
 
       - name: Run update command
-        if: ${{ steps.gate.outputs.skip == 'false' }}
+        if: ${{ steps.gate.outputs.skip == 'false' && steps.gate.outputs.resume == 'false' }}
         env:
           SKILLS_TAG: ${{ steps.latest.outputs.tag }}
           UPDATE_COMMAND: ${{ inputs.update-command }}
@@ -134,19 +139,22 @@ jobs:
           PR_NOTES: ${{ inputs.pr-notes }}
           APP_SLUG: ${{ steps.app.outputs.app-slug }}
           BASE_BRANCH: ${{ github.event.repository.default_branch }}
+          RESUME: ${{ steps.gate.outputs.resume }}
         run: |
           set -euo pipefail
-          if [ -z "$(git status --porcelain)" ]; then
-            echo "update 後の差分が無いため PR を作らない (no-op)"; exit 0
-          fi
           branch="chore/skills-${TAG}"
-          git config user.name "${APP_SLUG}[bot]"
-          git config user.email "${APP_SLUG}[bot]@users.noreply.github.com"
-          git switch -c "$branch"
-          # 生成物のパスは consumer ごとに異なるため全差分を commit 対象にする
-          git add -A
-          git commit -m "chore: kanade0404/skills ${TAG} へ追随"
-          git push origin "$branch"
+          if [ "$RESUME" != "true" ]; then
+            if [ -z "$(git status --porcelain)" ]; then
+              echo "update 後の差分が無いため PR を作らない (no-op)"; exit 0
+            fi
+            git config user.name "${APP_SLUG}[bot]"
+            git config user.email "${APP_SLUG}[bot]@users.noreply.github.com"
+            git switch -c "$branch"
+            # 生成物のパスは consumer ごとに異なるため全差分を commit 対象にする
+            git add -A
+            git commit -m "chore: kanade0404/skills ${TAG} へ追随"
+            git push origin "$branch"
+          fi
           {
             echo "kanade0404/skills のリリース **${TAG}** への追随 (pull workflow による自動生成 PR)。"
             echo
