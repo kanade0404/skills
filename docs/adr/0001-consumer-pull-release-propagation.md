@@ -1,6 +1,6 @@
 # リリース追随を push 型 (Devin) から consumer pull 型に転換する
 
-Status: accepted (2026-07-19)
+Status: superseded by [0002](0002-consolidate-on-consumer-update.md) (2026-07-28)
 
 skills のリリースタグを consumer リポ (agegis / dotfiles) に追随させる仕組みは、当初
 skills 側の tag push を契機に Devin API へ session を作成する push 型だった。Devin の

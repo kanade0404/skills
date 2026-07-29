@@ -1,7 +1,9 @@
 # consumer pull 型リリース追随 (Devin push 廃止) — 設計
 
 日付: 2026-07-05
-状態: 承認済み (ADR 0001 として決定を記録: docs/adr/0001-consumer-pull-release-propagation.md)
+状態: **superseded** — 本設計の実装 (consumer-pull.yml) は稼働中の並行実装
+consumer-update.yml への一本化に伴い削除された。経緯と決定は
+[ADR 0002](../../adr/0002-consolidate-on-consumer-update.md) を参照。以下は歴史的記録。
 
 ## 背景 / 問題
 
