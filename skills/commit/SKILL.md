@@ -1,6 +1,6 @@
 ---
 name: commit
-description: git commit を「観測 → ガード → 明示パス staging → ファイル経由メッセージ → 検証」の固定順で作る skill。`git add -A` / `git add .` / heredoc を使わないため、permission / hook で汎用コマンドが拒否される環境でもブロックされずに完走する。「commit して」「コミット作って」「この変更コミットしといて」「stage して commit」「きりのいいところで commit 切って」「一区切りだから記録して」のような要請、および tdd / tidy-first / shipping の各サイクル終端の commit 作成で必ず起動すること。commit までが責務 — push・PR 作成は `shipping`(検証ループ付き)または `commit-commands:commit-push-pr` に、リリースタグは RELEASING.md の手順に、structural / behavioral の分割判断は `tidy-first` に渡す。履歴書き換え (amend / rebase / squash / reset / revert) と commit 取り消しは範囲外 — 新規 commit を作る要請だけを扱う。
+description: git commit を新規作成する全ての場面で、コマンドを打つ前に必ず起動する。トリガは「commit を作る」という行為そのもの — ユーザーの依頼、上流 skill (tdd / tidy-first / shipping) のサイクル終端、エージェント自身の判断による commit (CI 修正 commit・区切り commit 等) のいずれも同じ。「観測 → ガード → 明示パス staging → ファイル経由メッセージ → 検証」の固定手順で、permission / hook が汎用コマンドを拒否する環境でも一発で通る commit を作る。commit 作成までが責務 — push・PR 作成・リリースタグ・履歴書き換え (amend / rebase / squash / reset / revert) は範囲外。
 claudecode:
   allowed-tools:
     - Read
@@ -26,9 +26,9 @@ claudecode:
 
 ## いつ使うか / 使わない場面
 
-**使う**: コミット作成の要請すべて。「commit して」「コミットしといて」「この変更で commit
-作って」「stage して commit」「きりのいいところで commit 切って」。tdd の GREEN 直後、
-tidy-first の tidying 単位、shipping Phase 3 など上流 skill からの commit 局面も同じ。
+**使う**: git commit を新規作成する全ての場面。ユーザーの依頼、上流 skill からの局面
+(tdd の GREEN 直後、tidy-first の tidying 単位、shipping Phase 3)、エージェント自身の
+判断による commit (CI 修正 commit・区切り commit) のいずれかを問わない。
 
 **使わない** (成果物で線を引く):
 
