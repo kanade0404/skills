@@ -1,5 +1,9 @@
 # Consumer Pull 型リリース追随 Implementation Plan
 
+> **superseded (2026-07-28)**: 本計画の成果物 consumer-pull.yml は、稼働中の並行実装
+> consumer-update.yml への一本化 ([ADR 0002](../../adr/0002-consolidate-on-consumer-update.md))
+> に伴い削除された。Task 3 以降は無効。以下は歴史的記録。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** skills のリリース追随を Devin push 型から consumer 側 cron の pull 型に置き換え、Devin credit 依存を構成から消す。
