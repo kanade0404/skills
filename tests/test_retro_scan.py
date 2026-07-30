@@ -122,14 +122,25 @@ class TestSlugCollisionGuard(unittest.TestCase):
                 {"cwd": project + "/.claude/worktrees/x"},
             )
             no_cwd = self._write(slug_dir / "nocwd.jsonl", {"type": "summary"})
+            # 実測で cwd が 28 行目に初出する実 transcript が存在する —
+            # 検証窓は数十行の前置き (summary 等) を越えて cwd を見つけること
+            late = slug_dir / "late.jsonl"
+            late.write_text(
+                '{"type":"summary"}\n' * 40
+                + json.dumps({"cwd": project}) + "\n",
+                encoding="utf-8",
+            )
 
             args = make_args(project_dir=project, projects_root=str(root))
             found = retro_scan.discover(args)
 
             self.assertIn(own, found)
             self.assertIn(worktree, found)  # worktree cwd はこの project の履歴
-            self.assertIn(no_cwd, found)  # cwd 不明は防御的に保持 (形式は unstable)
+            self.assertIn(str(late), found)
             self.assertNotIn(alien, found)
+            # fail-closed: cwd を特定できないファイルは採用しない (実測で
+            # cwd 無しは journal.jsonl 等の非セッションファイルのみ)
+            self.assertNotIn(no_cwd, found)
 
 
 if __name__ == "__main__":

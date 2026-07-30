@@ -64,9 +64,11 @@ def project_slug(path):
     return project_path(path).replace("/", "-").replace(".", "-")
 
 
-def _transcript_cwd(path, max_lines=25):
-    """First 'cwd' recorded in the leading lines, or None. The transcript
-    format is officially internal/unstable, so absence is not an error."""
+def _transcript_cwd(path, max_lines=100):
+    """First 'cwd' recorded in the leading lines, or None. Measured over a
+    real ~/.claude/projects corpus (800 files): every session transcript
+    carries cwd within its first 28 lines; the only cwd-less files are
+    journal.jsonl bookkeeping files that hold no message/tool data."""
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
             for _ in range(max_lines):
@@ -85,8 +87,12 @@ def _transcript_cwd(path, max_lines=25):
 
 
 def _cwd_in_project(cwd, project):
+    # Fail closed: a file whose cwd cannot be established is not counted as
+    # this project's history (slug collisions would otherwise leak another
+    # project's sessions in). Explicit --transcript paths bypass this check,
+    # and discovery already exits loudly when the corpus comes up empty.
     if not cwd:
-        return True  # defensive: never drop files the unstable format hides
+        return False
     cwd = os.path.abspath(cwd)
     return cwd == project or cwd.startswith(project + os.sep)
 
@@ -131,8 +137,9 @@ def discover(args):
         ]
         # The slug is lossy ('/' and '.' both map to '-'), so sibling projects
         # like acme.prod and acme-prod share one storage dir name. Keep a
-        # transcript only if its own recorded cwd resolves into this project;
-        # cwd-less/unparseable files are kept (format is officially unstable).
+        # transcript only if its own recorded cwd resolves into this project
+        # (fail closed: cwd-less files are excluded — measured, those are only
+        # journal.jsonl bookkeeping files, never session transcripts).
         project = project_path(args.project_dir)
         files = [f for f in files if _cwd_in_project(_transcript_cwd(f), project)]
     if args.since:
