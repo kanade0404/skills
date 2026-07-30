@@ -64,6 +64,33 @@ def project_slug(path):
     return project_path(path).replace("/", "-").replace(".", "-")
 
 
+def _transcript_cwd(path, max_lines=25):
+    """First 'cwd' recorded in the leading lines, or None. The transcript
+    format is officially internal/unstable, so absence is not an error."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for _ in range(max_lines):
+                line = fh.readline()
+                if not line:
+                    return None
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(rec, dict) and rec.get("cwd"):
+                    return rec["cwd"]
+    except OSError:
+        pass
+    return None
+
+
+def _cwd_in_project(cwd, project):
+    if not cwd:
+        return True  # defensive: never drop files the unstable format hides
+    cwd = os.path.abspath(cwd)
+    return cwd == project or cwd.startswith(project + os.sep)
+
+
 def discover(args):
     if args.transcript:
         # --since only filters discovered corpora; silently ignoring it next
@@ -102,6 +129,12 @@ def discover(args):
             f for f in files
             if keep.fullmatch(os.path.relpath(f, root).split(os.sep)[0])
         ]
+        # The slug is lossy ('/' and '.' both map to '-'), so sibling projects
+        # like acme.prod and acme-prod share one storage dir name. Keep a
+        # transcript only if its own recorded cwd resolves into this project;
+        # cwd-less/unparseable files are kept (format is officially unstable).
+        project = project_path(args.project_dir)
+        files = [f for f in files if _cwd_in_project(_transcript_cwd(f), project)]
     if args.since:
         import datetime
 

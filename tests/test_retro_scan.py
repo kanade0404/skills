@@ -96,5 +96,41 @@ class TestSinceWithTranscript(unittest.TestCase):
             self.assertEqual(retro_scan.discover(args), [str(transcript)])
 
 
+class TestSlugCollisionGuard(unittest.TestCase):
+    """lossy slug (acme.prod / acme-prod が同一 slug) で別プロジェクトの
+    transcript を混ぜない (r3683948151)。"""
+
+    def _write(self, path: Path, record) -> str:
+        path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+        return str(path)
+
+    def test_discovery_drops_transcripts_of_colliding_project(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = str(Path(tmp) / "acme.prod")
+            colliding = str(Path(tmp) / "acme-prod")
+            root = Path(tmp) / "projects"
+            slug_dir = root / retro_scan.project_slug(project)
+            slug_dir.mkdir(parents=True)
+            # 両プロジェクトの slug が一致することがこのテストの前提
+            self.assertEqual(retro_scan.project_slug(project),
+                             retro_scan.project_slug(colliding))
+
+            own = self._write(slug_dir / "own.jsonl", {"cwd": project})
+            alien = self._write(slug_dir / "alien.jsonl", {"cwd": colliding})
+            worktree = self._write(
+                slug_dir / "wt.jsonl",
+                {"cwd": project + "/.claude/worktrees/x"},
+            )
+            no_cwd = self._write(slug_dir / "nocwd.jsonl", {"type": "summary"})
+
+            args = make_args(project_dir=project, projects_root=str(root))
+            found = retro_scan.discover(args)
+
+            self.assertIn(own, found)
+            self.assertIn(worktree, found)  # worktree cwd はこの project の履歴
+            self.assertIn(no_cwd, found)  # cwd 不明は防御的に保持 (形式は unstable)
+            self.assertNotIn(alien, found)
+
+
 if __name__ == "__main__":
     unittest.main()
