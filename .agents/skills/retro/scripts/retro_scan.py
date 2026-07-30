@@ -241,15 +241,31 @@ SQL = {
 }
 
 
+# Transcript-derived values (commands, sessions, timestamps) are untrusted
+# display input: a stray '|' breaks table cells, CR/LF splits rows, and
+# ANSI/C0 control sequences can spoof terminal output for the reader.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[@-_]")
+_CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def sanitize_cell(v):
+    if v is None:
+        return ""
+    s = _ANSI_RE.sub("", str(v))
+    s = re.sub(r"[\r\n]+", " ", s)
+    s = _CTRL_RE.sub("", s)
+    return s.replace("|", "\\|")
+
+
 def render_table(rows):
     if not rows:
         print("(none)")
         return
     cols = list(rows[0])
-    print("| " + " | ".join(cols) + " |")
+    print("| " + " | ".join(sanitize_cell(c) for c in cols) + " |")
     print("|" + "---|" * len(cols))
     for r in rows:
-        print("| " + " | ".join(str(r[c]) if r[c] is not None else "" for c in cols) + " |")
+        print("| " + " | ".join(sanitize_cell(r[c]) for c in cols) + " |")
 
 
 def main():
@@ -365,7 +381,7 @@ def main():
     c = out["corpus"][0]
     print(f"# retro scan — {len(files)} files "
           f"({c['main_files']} main / {c['sub_files']} subagent), "
-          f"{c['first_ts']} .. {c['last_ts']}\n")
+          f"{sanitize_cell(c['first_ts'])} .. {sanitize_cell(c['last_ts'])}\n")
     # Self-report counting definitions so auditors don't have to reverse-
     # engineer them (a blank-slate auditor flagged undefined denial criteria).
     print("- corpus: files under /subagents/ are counted as subagent transcripts; "

@@ -40,6 +40,41 @@ def make_args(**overrides):
     return args
 
 
+class TestMarkdownSanitization(unittest.TestCase):
+    """transcript 由来の値が Markdown 表・見出しを壊さない
+    (r3683948193 / r3683948146)。"""
+
+    def render(self, rows) -> list[str]:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            retro_scan.render_table(rows)
+        return buf.getvalue().splitlines()
+
+    def test_pipe_in_cell_is_escaped(self) -> None:
+        lines = self.render([{"command": "curl a | jq .x", "n": 3}])
+        self.assertEqual(lines[2], "| curl a \\| jq .x | 3 |")
+
+    def test_newlines_and_cr_become_spaces(self) -> None:
+        lines = self.render([{"command": "line1\nline2\rline3", "n": 1}])
+        # 1 データ行のまま (行の分裂なし) で、改行は空白に置換される
+        self.assertEqual(len(lines), 3)
+        self.assertIn("line1 line2 line3", lines[2])
+
+    def test_ansi_and_control_chars_are_stripped(self) -> None:
+        lines = self.render([{"session": "\x1b[31mred\x1b[0m\x07", "n": 1}])
+        self.assertEqual(lines[2], "| red | 1 |")
+
+    def test_none_still_renders_empty(self) -> None:
+        lines = self.render([{"command": None, "n": 1}])
+        self.assertEqual(lines[2], "|  | 1 |")
+
+    def test_sanitize_cell_is_used_for_heading_values(self) -> None:
+        self.assertEqual(
+            retro_scan.sanitize_cell("2026-01-01\x1b[2Jevil\n# fake"),
+            "2026-01-01evil # fake",
+        )
+
+
 class TestSinceWithTranscript(unittest.TestCase):
     """--transcript 併用時に --since が無言で無視されない (r3683948179)。"""
 
