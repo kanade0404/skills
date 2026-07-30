@@ -231,6 +231,17 @@ SQL = {
 }
 
 
+def render_table(rows):
+    if not rows:
+        print("(none)")
+        return
+    cols = list(rows[0])
+    print("| " + " | ".join(cols) + " |")
+    print("|" + "---|" * len(cols))
+    for r in rows:
+        print("| " + " | ".join(str(r[c]) if r[c] is not None else "" for c in cols) + " |")
+
+
 def main():
     ap = argparse.ArgumentParser(description="retro quantitative transcript scan")
     ap.add_argument("--transcript", action="append")
@@ -341,16 +352,6 @@ def main():
         print()
         return
 
-    def table(rows):
-        if not rows:
-            print("(none)")
-            return
-        cols = list(rows[0])
-        print("| " + " | ".join(cols) + " |")
-        print("|" + "---|" * len(cols))
-        for r in rows:
-            print("| " + " | ".join(str(r[c]) if r[c] is not None else "" for c in cols) + " |")
-
     c = out["corpus"][0]
     print(f"# retro scan — {len(files)} files "
           f"({c['main_files']} main / {c['sub_files']} subagent), "
@@ -380,7 +381,7 @@ def main():
     ]
     for key, title in titles:
         print(f"## {title}")
-        table(out[key])
+        render_table(out[key])
         print()
 
 
