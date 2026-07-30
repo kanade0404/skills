@@ -1,0 +1,20 @@
+{"id":"t01","predicted":true,"actual":true,"reason":"in-session 1-rater: description の『振り返り』に直接マッチ"}
+{"id":"t02","predicted":true,"actual":true,"reason":"in-session 1-rater: skill 名 retro の直接指定"}
+{"id":"t03","predicted":true,"actual":true,"reason":"in-session 1-rater: 『セッション分析』に直接マッチ"}
+{"id":"t04","predicted":false,"actual":true,"reason":"carried over from 2026-06-30 claude -p observation (0/1 triggered)。今回の description 変更は横断表面の追加で、この prompt が当たる『ハーネス改善』表面には触れていないため観測結果を維持 (known FN)"}
+{"id":"t05","predicted":true,"actual":true,"reason":"in-session 1-rater: 『allow リスト見直したい』に直接マッチ"}
+{"id":"t06","predicted":true,"actual":true,"reason":"in-session 1-rater: 『hooks 候補ある?』に直接マッチ"}
+{"id":"t07","predicted":true,"actual":true,"reason":"in-session 1-rater: 『なんでこの skill 起動しなかった?』に直接マッチ"}
+{"id":"t08","predicted":true,"actual":true,"reason":"in-session 1-rater: 長時間セッション後の運用振り返り意図 (token 浪費の列挙が該当)"}
+{"id":"t09","predicted":true,"actual":true,"reason":"in-session 1-rater: merge 後の主経路 (pr-monitor → retro) に該当"}
+{"id":"t10","predicted":false,"actual":false,"reason":"in-session 1-rater: コードのバグ分析は negative space (バグ修正のセッション分析ではない) に明記"}
+{"id":"t11","predicted":false,"actual":false,"reason":"in-session 1-rater: skill 新規作成は skill-builder へ、と description が明示"}
+{"id":"t12","predicted":false,"actual":false,"reason":"in-session 1-rater: trigger 調整の実行は skill-builder / ept へ、と description が明示"}
+{"id":"t13","predicted":false,"actual":false,"reason":"in-session 1-rater: PR コメント対応は範囲外 (pr-review-respond 領域)"}
+{"id":"t14","predicted":false,"actual":false,"reason":"in-session 1-rater: CI 修復は ci-self-heal 領域で retro の表面に無い"}
+{"id":"t15","predicted":false,"actual":false,"reason":"in-session 1-rater: 概念照会であり解析の要請ではない"}
+{"id":"t16","predicted":false,"actual":false,"reason":"in-session 1-rater: コードレビューは negative space に明記"}
+{"id":"t17","predicted":true,"actual":true,"reason":"in-session 1-rater: 新表面『過去のログを見て使われていない/発火実績の少ないハーネスを探して』に直接マッチ"}
+{"id":"t18","predicted":true,"actual":true,"reason":"in-session 1-rater: 新表面『全セッション横断で振り返って』に直接マッチ"}
+{"id":"t19","predicted":true,"actual":true,"reason":"in-session 1-rater: 『使われていないハーネスを探して』の言い換え (発火実績集計)"}
+{"id":"t20","predicted":false,"actual":false,"reason":"in-session 1-rater: DuckDB/ログはキーワード一致するが SQL 作成の実装タスクで、解析提案を返す retro の成果物と不一致"}
