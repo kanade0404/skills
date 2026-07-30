@@ -7,6 +7,7 @@ SKILL.md の観点と規律がどの先行事例・研究に接地している�
 ## 設計原則 (SKILL.md が実装しているもの)
 
 ### 1. finding は外部シグナルに接地させる — 純粋な自己反省を採用しない
+
 外部フィードバック無しの LLM 自己修正は改善せず悪化しうる (Huang et al. 2023,
 arXiv:2310.01798)。外部検証付き批評が決定的 (CRITIC, arXiv:2305.11738)。
 LLM judge には self-enhancement bias がある (Zheng et al. 2023, arXiv:2306.05685) ため、
@@ -14,18 +15,21 @@ LLM judge には self-enhancement bias がある (Zheng et al. 2023, arXiv:2306.
 (tool エラー / 拒否 / 中断・訂正 / CI / 発火実績) への接地が必須の補完になる。
 
 ### 2. 提案は行単位 delta、全文書き換え禁止
+
 全文改稿の反復は context collapse / brevity bias (要約のたびに暗黙知が脱落) を起こす
 (ACE, arXiv:2510.04618)。ExpeL (arXiv:2308.10144) の insight 操作
 (ADD/EDIT/UPVOTE/DOWNVOTE + importance カウンタ) と ACE の counter 付き bullet は
 独立研究の収斂進化。剪定 (dedup・削除) は追加と別パスで行う (grow-and-refine)。
 
 ### 3. 失敗だけでなく成功からも学ぶ (成功/失敗ペア比較)
+
 ExpeL は「同一タスクの成功/失敗ペア比較」と「成功群の共通パターン抽出」の 2 経路で
 insight を抽出する。成功 trajectory からの workflow 誘導だけでも大幅改善が出る
 (AWM, arXiv:2409.07429)。教訓の記述は因果形式「X すると Y になる」が転移性で優る
 (CLIN, arXiv:2310.10134)。
 
 ### 4. 編集の採否は eval が裁き、悪化したら roll-back
+
 DSPy/MIPROv2/GEPA (arXiv:2310.03714 / 2406.11695 / 2507.19457) は
 「メトリクスが編集を裁く」ことで人手調整を超えた。GEPA の Pareto 選択は
 「平均点だけで選ぶと特定ケース群へ過適合する」対策 — trigger evals のタグ別成績
@@ -36,6 +40,7 @@ lever「eval-case 追加」は業界の trace 分析製品 (LangSmith / Langfuse
 Husain 流 error analysis に共通する「失敗例を eval データセットへ還流する」出口に対応する。
 
 ### 5. taxonomy の確定と採否は人間、LLM は候補生成と集計まで
+
 Husain & Shankar の error analysis (hamel.dev/blog/posts/evals-faq): open coding は人間
 (tribal knowledge が LLM に無い)、axial coding のクラスタ提案のみ LLM 可。
 飽和基準は「新カテゴリが 20 件連続で出なければ停止」。
@@ -58,7 +63,7 @@ finding 採否の自動化は最後に回す。
 - **transcript 形式は公式に internal/unstable 宣言済み**
   (code.claude.com/docs/en/sessions.md)。retro_scan.py は ignore_errors +
   文字列マーカーの防御的検出で読む。長期的に安定な観測面は hooks
-  (PostToolUse/PostToolUseFailure 等) と OTel — スキーマ破壊で スクリプトが
+  (PostToolUse/PostToolUseFailure 等) と OTel — スキーマ破壊でスクリプトが
   沈黙し始めたらそちらへの移行を検討する。
 
 ## 取り込みを見送った設計 (再検討の材料)
@@ -78,6 +83,7 @@ finding 採否の自動化は最後に回す。
   自動書き込みが本スキルの Iron Law (提案のみ) と衝突するため設計参考に留める。
 
 ## 主要出典
+
 Reflexion arXiv:2303.11366 / ExpeL arXiv:2308.10144 / CRITIC arXiv:2305.11738 /
 Huang et al. arXiv:2310.01798 / DSPy arXiv:2310.03714 / MIPROv2 arXiv:2406.11695 /
 GEPA arXiv:2507.19457 / ACE arXiv:2510.04618 / AgentOptimizer arXiv:2402.11359 /
