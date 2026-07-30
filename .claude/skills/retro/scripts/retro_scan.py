@@ -66,6 +66,11 @@ def project_slug(path):
 
 def discover(args):
     if args.transcript:
+        # --since only filters discovered corpora; silently ignoring it next
+        # to an explicit file list would misrepresent the scanned period.
+        if args.since:
+            sys.exit("--since cannot be combined with --transcript "
+                     "(explicit files are always scanned as-is); drop one")
         files = []
         for f in args.transcript:
             p = os.path.abspath(f)
