@@ -49,14 +49,19 @@ except ImportError:
     )
 
 
-def project_slug(path):
+def project_path(path):
+    """Canonical project path: absolute, with a /.claude/worktrees/<name>
+    suffix stripped. Worktree cwds are still "this project's" history, so
+    scans resolve to the parent project."""
     path = os.path.abspath(path)
-    # Worktree cwds live under <project>/.claude/worktrees/<name>; sessions for
-    # them are still "this project's" history, so scan from the parent project.
     m = re.match(r"(.*?)/\.claude/worktrees/[^/]+$", path)
     if m:
         path = m.group(1)
-    return path.replace("/", "-").replace(".", "-")
+    return path
+
+
+def project_slug(path):
+    return project_path(path).replace("/", "-").replace(".", "-")
 
 
 def discover(args):
