@@ -1,6 +1,6 @@
 {
   "target_skill": "retro",
-  "version": "1",
+  "version": "2",
   "cases": [
     {"id":"t01","prompt":"このセッションの振り返りして","should_trigger":true,"rationale":"retro 直接","tags":["explicit"]},
     {"id":"t02","prompt":"retro して","should_trigger":true,"rationale":"skill 名直接","tags":["explicit"]},
@@ -17,6 +17,10 @@
     {"id":"t13","prompt":"PR のコメント対応して","should_trigger":false,"rationale":"pr-review-respond 領域","tags":["adjacent"]},
     {"id":"t14","prompt":"CI 直して","should_trigger":false,"rationale":"ci-self-heal 領域","tags":["distractor"]},
     {"id":"t15","prompt":"retro って何?","should_trigger":false,"rationale":"概念照会","tags":["distractor"]},
-    {"id":"t16","prompt":"このコードレビューして","should_trigger":false,"rationale":"code-review 領域","tags":["distractor"]}
+    {"id":"t16","prompt":"このコードレビューして","should_trigger":false,"rationale":"code-review 領域","tags":["distractor"]},
+    {"id":"t17","prompt":"過去のclaudeのログを見て発火実績があまりないハーネスを一つ見つけて","should_trigger":true,"rationale":"横断スコープの発火実績集計 = retro の新表面","tags":["explicit","cross-session"]},
+    {"id":"t18","prompt":"全セッション横断で振り返りして","should_trigger":true,"rationale":"横断スコープの retro 直接指定","tags":["explicit","cross-session"]},
+    {"id":"t19","prompt":"使われてないスキルどれか調べて","should_trigger":true,"rationale":"発火実績 0 の skill 探索 = 横断 retro","tags":["ambiguous","cross-session"]},
+    {"id":"t20","prompt":"transcript のログを DuckDB で集計する SQL 書いて","should_trigger":false,"rationale":"DuckDB/ログのキーワードを含むが SQL 作成タスクで retro ではない","tags":["distractor","cross-session"]}
   ]
 }
