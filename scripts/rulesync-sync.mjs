@@ -86,6 +86,7 @@ try {
   execFileSync('npx', args, { cwd: ROOT, stdio: 'inherit' });
 
   mergeRepoLocalHooks(genOut);
+  mergeRepoLocalEnv(genOut);
   restoreSourceExecutableBits(genOut);
 
   if (check) {
@@ -135,13 +136,83 @@ try {
 // deterministically (JSON.parse always yields the same key order from a static
 // source file, and `settings.hooks = ...` always appends `hooks` after the freshly
 // generated `permissions` key), so repeated runs produce byte-identical output.
+// Fail-closed reader for the repo-local settings fragments below: a missing
+// source file is a valid state (both fragments are optional features — the
+// caller skips the merge), but a file that EXISTS yet doesn't parse to a JSON
+// object means the fragment would be merged as garbage or silently dropped —
+// exit 1 loudly instead (rules/fail-closed.md).
+function readFragmentObject(sourcePath, what) {
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(sourcePath, 'utf8'));
+  } catch (err) {
+    console.error(`rulesync-sync: ${sourcePath} exists but is not valid JSON (${err.message})`);
+    process.exit(1);
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    console.error(
+      `rulesync-sync: ${sourcePath} must hold a JSON object (a settings.json \`${what}\` fragment), `
+      + `got ${parsed === null ? 'null' : Array.isArray(parsed) ? 'an array' : typeof parsed}`,
+    );
+    process.exit(1);
+  }
+  return parsed;
+}
+
+// `existsSync` returns false for ANY failure (EACCES, EIO, ENOTDIR, ...), which
+// would silently skip merging a fragment that actually exists but is unreadable
+// — the generated settings.json would ship without it, symptom-free
+// (rules/fail-closed.md). Treat only ENOENT as "absent"; rethrow everything else.
+function optionalFragmentExists(path) {
+  try {
+    statSync(path);
+    return true;
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return false;
+    throw err;
+  }
+}
+
 function mergeRepoLocalHooks(outRoot) {
   const hooksSource = join(ROOT, 'hooks-local', 'claude-code-hooks.json');
   const settingsPath = join(outRoot, '.claude', 'settings.json');
-  if (!existsSync(hooksSource) || !existsSync(settingsPath)) return;
+  if (!optionalFragmentExists(hooksSource)) return; // optional fragment — nothing to merge
+  requireGeneratedSettings(settingsPath, hooksSource, 'hooks');
   const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
-  const hooks = JSON.parse(readFileSync(hooksSource, 'utf8'));
-  settings.hooks = hooks;
+  settings.hooks = readFragmentObject(hooksSource, 'hooks');
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+}
+
+// A fragment source that EXISTS while the generated settings.json it must be
+// merged into does NOT is a broken generation (e.g. the permissions feature
+// stopped emitting `.claude/settings.json`): returning silently would ship a
+// settings.json without the fragment this repo declares, with no symptom until
+// the missing hooks/env bite downstream. Exit 1 loudly (rules/fail-closed.md).
+function requireGeneratedSettings(settingsPath, sourcePath, what) {
+  if (existsSync(settingsPath)) return;
+  console.error(
+    `rulesync-sync: ${sourcePath} exists but ${settingsPath} was not generated; `
+    + `cannot merge the \`${what}\` fragment (refusing to silently drop it)`,
+  );
+  process.exit(1);
+}
+
+// `hooks-local/claude-code-env.json` holds a raw Claude Code settings.json `env`
+// fragment (repo-local, same non-distributed contract as claude-code-hooks.json
+// above). Injected as the generated `.claude/settings.json`'s `env` key so every
+// session in this repo runs with terminal decoration structurally disabled
+// (`NO_COLOR=1`, `CLICOLOR_FORCE=0`): with `CLICOLOR_FORCE=1` inherited from the
+// environment, `gh`'s raw JSON output gets ANSI-colored even when piped and
+// silently breaks downstream `jq` (observed 3+ times — see
+// rules/bash-and-api-discipline.md). Key order stays deterministic: `env` is
+// always appended after `permissions` and `hooks`.
+function mergeRepoLocalEnv(outRoot) {
+  const envSource = join(ROOT, 'hooks-local', 'claude-code-env.json');
+  const settingsPath = join(outRoot, '.claude', 'settings.json');
+  if (!optionalFragmentExists(envSource)) return; // optional fragment — nothing to merge
+  requireGeneratedSettings(settingsPath, envSource, 'env');
+  const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
+  settings.env = readFragmentObject(envSource, 'env');
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
 }
 
