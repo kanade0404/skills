@@ -28,12 +28,15 @@ _spec.loader.exec_module(retro_scan)
 
 
 def make_args(**overrides):
+    # 既定は「何も明示されていない」状態 (argparse の None sentinel と同じ) —
+    # validate_flag_combinations は None-vs-explicit を判定に使う
     args = argparse.Namespace(
         transcript=None,
-        project_dir=str(REPO_ROOT),
-        projects_root="~/.claude/projects",
+        project_dir=None,
+        projects_root=None,
         all_projects=False,
         since=None,
+        pr=None,
     )
     for key, value in overrides.items():
         setattr(args, key, value)
@@ -75,25 +78,119 @@ class TestMarkdownSanitization(unittest.TestCase):
         )
 
 
-class TestSinceWithTranscript(unittest.TestCase):
-    """--transcript 併用時に --since が無言で無視されない (r3683948179)。"""
+class TestDeadFlagValidation(unittest.TestCase):
+    """明示フラグが選択された scan 経路で消費されない組合せを、実行前に
+    一括で拒否する (2 巡目 code-review Important-1; rules/fail-closed.md)。
+
+    validate_flag_combinations は「明示フラグ集合 − 経路が消費するフラグ集合」
+    の差集合が非空なら exit 1 する — 組合せの個別列挙ではなく class ごと
+    閉じていることをここで固定する。"""
+
+    def assert_rejected(self, args, *dead_flags: str) -> str:
+        with self.assertRaises(SystemExit) as ctx:
+            retro_scan.validate_flag_combinations(args)
+        msg = str(ctx.exception.code)
+        for flag in dead_flags:
+            self.assertIn(flag, msg)
+        return msg
+
+    def test_standalone_pr_with_project_dir_is_rejected(self) -> None:
+        self.assert_rejected(
+            make_args(pr=[7], project_dir="/tmp/proj"), "--project-dir")
+
+    def test_standalone_pr_with_projects_root_is_rejected(self) -> None:
+        self.assert_rejected(
+            make_args(pr=[7], projects_root="/tmp/root"), "--projects-root")
+
+    def test_pr_with_transcript_and_project_dir_is_rejected(self) -> None:
+        # --transcript を足しても --project-dir は生きない — 経路単位で dead
+        self.assert_rejected(
+            make_args(pr=[7], transcript=["/tmp/s.jsonl"],
+                      project_dir="/tmp/proj"),
+            "--project-dir")
 
     def test_since_with_transcript_is_rejected(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            transcript = Path(tmp) / "session.jsonl"
-            transcript.write_text('{"type":"user"}\n', encoding="utf-8")
-            args = make_args(transcript=[str(transcript)], since="2026-01-01")
-            with self.assertRaises(SystemExit) as ctx:
-                retro_scan.discover(args)
-            self.assertIn("--since", str(ctx.exception.code))
-            self.assertIn("--transcript", str(ctx.exception.code))
+        # 旧 discover 内の個別チェック (r3683948179) の class 統合先
+        self.assert_rejected(
+            make_args(transcript=["/tmp/s.jsonl"], since="2026-01-01"),
+            "--since")
 
-    def test_transcript_without_since_still_works(self) -> None:
+    def test_all_projects_with_transcript_is_rejected(self) -> None:
+        self.assert_rejected(
+            make_args(transcript=["/tmp/s.jsonl"], all_projects=True),
+            "--all-projects")
+
+    def test_all_projects_with_project_dir_is_rejected(self) -> None:
+        self.assert_rejected(
+            make_args(all_projects=True, project_dir="/tmp/proj"),
+            "--project-dir")
+
+    def test_error_does_not_suggest_dead_alternatives(self) -> None:
+        # 旧メッセージは standalone --pr + --project-dir に対し --transcript /
+        # --all-projects を提案していたが、どちらの経路でも --project-dir は
+        # dead のまま — 生きない選択肢へ誘導しないことを固定する
+        msg = self.assert_rejected(
+            make_args(pr=[7], project_dir="/tmp/proj"), "--project-dir")
+        self.assertNotIn("--transcript", msg)
+        self.assertNotIn("--all-projects", msg)
+
+    def test_valid_combinations_pass(self) -> None:
+        for args in (
+            make_args(),  # 全て default (slug discovery)
+            make_args(pr=[7]),  # standalone --pr
+            make_args(pr=[7], since="2026-01-01",
+                      project_dir="/tmp/proj", projects_root="/tmp/root"),
+            make_args(transcript=["/tmp/s.jsonl"]),
+            make_args(all_projects=True, projects_root="/tmp/root",
+                      since="2026-01-01"),
+            make_args(project_dir="/tmp/proj", projects_root="/tmp/root"),
+        ):
+            retro_scan.validate_flag_combinations(args)  # raise しないこと
+
+
+class TestTranscriptDiscovery(unittest.TestCase):
+    def test_explicit_transcript_is_returned_as_is(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             transcript = Path(tmp) / "session.jsonl"
             transcript.write_text('{"type":"user"}\n', encoding="utf-8")
             args = make_args(transcript=[str(transcript)])
             self.assertEqual(retro_scan.discover(args), [str(transcript)])
+
+
+class TestFirstLineSanitization(unittest.TestCase):
+    """--pr モードの summary (_first_line) が ANSI/C0 を strip する
+    (2 巡目 code-review Minor-2)。"""
+
+    def test_ansi_and_c0_are_stripped(self) -> None:
+        self.assertEqual(
+            retro_scan._first_line("\x1b[31mred\x1b[0m\x07 title\nsecond line"),
+            "red title",
+        )
+
+    def test_truncation_applies_after_strip(self) -> None:
+        self.assertEqual(
+            retro_scan._first_line("\x1b[2J" + "a" * 100),
+            "a" * 77 + "...",
+        )
+
+    def test_empty_body_is_empty(self) -> None:
+        self.assertEqual(retro_scan._first_line(None), "")
+
+
+class TestJsonPayloadScrub(unittest.TestCase):
+    """transcript-scan の --json payload に載る SQL 結果値も control-strip
+    される (2 巡目 code-review Minor-1; scrub_value は markdown/--json 分岐の
+    手前で適用される)。"""
+
+    def test_string_values_are_control_stripped(self) -> None:
+        self.assertEqual(
+            retro_scan.scrub_value("\x1b[31mgit\x1b[0m status\r\nnext\x07"),
+            "git status next",
+        )
+
+    def test_non_strings_pass_through(self) -> None:
+        for value in (3, 1.5, True, None):
+            self.assertIs(retro_scan.scrub_value(value), value)
 
 
 class TestSlugCollisionGuard(unittest.TestCase):

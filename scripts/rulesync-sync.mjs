@@ -152,7 +152,7 @@ function readFragmentObject(sourcePath, what) {
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     console.error(
       `rulesync-sync: ${sourcePath} must hold a JSON object (a settings.json \`${what}\` fragment), `
-      + `got ${Array.isArray(parsed) ? 'an array' : typeof parsed}`,
+      + `got ${parsed === null ? 'null' : Array.isArray(parsed) ? 'an array' : typeof parsed}`,
     );
     process.exit(1);
   }
@@ -162,10 +162,25 @@ function readFragmentObject(sourcePath, what) {
 function mergeRepoLocalHooks(outRoot) {
   const hooksSource = join(ROOT, 'hooks-local', 'claude-code-hooks.json');
   const settingsPath = join(outRoot, '.claude', 'settings.json');
-  if (!existsSync(hooksSource) || !existsSync(settingsPath)) return;
+  if (!existsSync(hooksSource)) return; // optional fragment — nothing to merge
+  requireGeneratedSettings(settingsPath, hooksSource, 'hooks');
   const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
   settings.hooks = readFragmentObject(hooksSource, 'hooks');
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+}
+
+// A fragment source that EXISTS while the generated settings.json it must be
+// merged into does NOT is a broken generation (e.g. the permissions feature
+// stopped emitting `.claude/settings.json`): returning silently would ship a
+// settings.json without the fragment this repo declares, with no symptom until
+// the missing hooks/env bite downstream. Exit 1 loudly (rules/fail-closed.md).
+function requireGeneratedSettings(settingsPath, sourcePath, what) {
+  if (existsSync(settingsPath)) return;
+  console.error(
+    `rulesync-sync: ${sourcePath} exists but ${settingsPath} was not generated; `
+    + `cannot merge the \`${what}\` fragment (refusing to silently drop it)`,
+  );
+  process.exit(1);
 }
 
 // `hooks-local/claude-code-env.json` holds a raw Claude Code settings.json `env`
@@ -180,7 +195,8 @@ function mergeRepoLocalHooks(outRoot) {
 function mergeRepoLocalEnv(outRoot) {
   const envSource = join(ROOT, 'hooks-local', 'claude-code-env.json');
   const settingsPath = join(outRoot, '.claude', 'settings.json');
-  if (!existsSync(envSource) || !existsSync(settingsPath)) return;
+  if (!existsSync(envSource)) return; // optional fragment — nothing to merge
+  requireGeneratedSettings(settingsPath, envSource, 'env');
   const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
   settings.env = readFragmentObject(envSource, 'env');
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');

@@ -35,11 +35,15 @@
 #                          and report per-PR breakdowns plus a cross-PR
 #                          dir-by-class recurrence table. Repeatable. Standalone
 #                          by default: transcripts are scanned alongside only when
-#                          --transcript / --all-projects / --since is also given;
-#                          an explicit --project-dir/--projects-root without one
-#                          of those is rejected (it would otherwise be silently
-#                          ignored)
+#                          --transcript / --all-projects / --since is also given
 #   --repo OWNER/NAME      repository for --pr (default: gh repo view)
+#
+# Any explicitly passed discovery flag that the selected scan path would not
+# consume (e.g. --project-dir next to standalone --pr or next to --transcript,
+# --all-projects next to --transcript, --since next to --transcript) is
+# rejected up front by validate_flag_combinations() instead of being silently
+# ignored — the check is a set comparison (explicit flags vs consumed flags),
+# so the whole dead-flag class fails closed, not just known pairs.
 #
 # Corpus discovery globs <root>/<slug>*/**/*.jsonl so worktree-session dirs
 # (slug prefix + suffix) and subagent transcripts (<session>/subagents/**)
@@ -105,11 +109,9 @@ def _cwd_in_project(cwd, project):
 
 def discover(args):
     if args.transcript:
-        # --since only filters discovered corpora; silently ignoring it next
-        # to an explicit file list would misrepresent the scanned period.
-        if args.since:
-            sys.exit("--since cannot be combined with --transcript "
-                     "(explicit files are always scanned as-is); drop one")
+        # Dead-flag combinations (e.g. --since or --project-dir next to an
+        # explicit file list) are rejected before discovery ever runs — see
+        # validate_flag_combinations().
         files = []
         for f in args.transcript:
             p = os.path.abspath(f)
@@ -157,6 +159,72 @@ def discover(args):
             sys.exit(f"--since must be YYYY-MM-DD, got: {args.since!r}")
         files = [f for f in files if os.path.getmtime(f) >= cutoff]
     return sorted(set(files))
+
+
+def standalone_pr(args):
+    """True when --pr runs standalone (review-loop scan only, no transcript
+    scan): no transcript-corpus flag was passed next to it. Shared by
+    validate_flag_combinations() and main() so the two can't drift."""
+    return bool(args.pr) and not (args.transcript or args.all_projects
+                                  or args.since)
+
+
+def validate_flag_combinations(args):
+    """Reject every explicitly passed discovery flag that the selected scan
+    path would not consume (fail closed, rules/fail-closed.md).
+
+    Written as one set comparison — the set of explicitly passed discovery
+    flags vs the set the selected path actually consumes — so the whole
+    "explicit flag silently ignored" class is closed at once, instead of
+    growing one pairwise check per rediscovered combination. The path table
+    mirrors main()/discover() exactly:
+
+      standalone --pr   (no transcript scan)  consumes nothing
+      --transcript      (explicit file list)  consumes --transcript only;
+                        files are always scanned as-is, so --since /
+                        --project-dir / --projects-root / --all-projects
+                        cannot contribute
+      --all-projects    (whole projects root) consumes --all-projects,
+                        --projects-root, --since; --project-dir cannot
+                        contribute (no slug is derived)
+      slug discovery    (default)             consumes --project-dir,
+                        --projects-root, --since
+    """
+    explicit = set()
+    if args.transcript:
+        explicit.add("--transcript")
+    if args.project_dir is not None:
+        explicit.add("--project-dir")
+    if args.projects_root is not None:
+        explicit.add("--projects-root")
+    if args.all_projects:
+        explicit.add("--all-projects")
+    if args.since is not None:
+        explicit.add("--since")
+
+    if standalone_pr(args):
+        path, consumed = "standalone --pr (no transcript scan runs)", set()
+    elif args.transcript:
+        path, consumed = ("--transcript (explicit files are scanned as-is)",
+                          {"--transcript"})
+    elif args.all_projects:
+        path, consumed = ("--all-projects",
+                          {"--all-projects", "--projects-root", "--since"})
+    else:
+        path, consumed = ("project-slug discovery",
+                          {"--project-dir", "--projects-root", "--since"})
+
+    dead = sorted(explicit - consumed)
+    if dead:
+        # Name only what is true of the selected path — never point at
+        # alternatives that would leave the flag equally dead.
+        sys.exit(
+            f"{', '.join(dead)}: no effect on the selected scan path "
+            f"[{path}], which consumes "
+            f"{', '.join(sorted(consumed)) if consumed else 'no discovery flags'}"
+            " — refusing to silently ignore explicit flags; drop them or use"
+            " a scan path that consumes them (see --help)"
+        )
 
 
 # Pattern marking a tool_result as a permission denial / hook block; shared by
@@ -301,6 +369,15 @@ def strip_controls(v):
     s = _ANSI_RE.sub("", str(v))
     s = re.sub(r"[\r\n]+", " ", s)
     return _CTRL_RE.sub("", s)
+
+
+def scrub_value(v):
+    """Scrub one SQL result cell: string values are transcript-derived
+    (commands, session names, timestamps, skill names) and feed both the
+    markdown and --json output paths, so controls are stripped once here —
+    JSON consumers must never receive raw ANSI/C0 either. Non-strings
+    (counts, ratios, booleans, None) pass through untouched."""
+    return strip_controls(v) if isinstance(v, str) else v
 
 
 def sanitize_cell(v):
@@ -578,7 +655,7 @@ def render_pr_report(data):
 def main():
     ap = argparse.ArgumentParser(description="retro quantitative transcript scan")
     ap.add_argument("--transcript", action="append")
-    # None sentinels, not eager defaults: the standalone --pr gate below must
+    # None sentinels, not eager defaults: validate_flag_combinations() must
     # distinguish "explicitly passed" from "defaulted" (rules/fail-closed.md).
     # The real defaults (cwd / ~/.claude/projects) are filled in right before
     # transcript discovery.
@@ -606,22 +683,18 @@ def main():
 
     if args.repo and not args.pr:
         sys.exit("--repo requires --pr")
+    if args.pr and args.latest:
+        sys.exit("--latest cannot be combined with --pr")
+    # Reject dead flag combinations before any work runs (fail closed): the
+    # check compares the explicit flag set against the flag set the selected
+    # scan path consumes, so the whole silently-ignored class is caught here.
+    validate_flag_combinations(args)
+
     pr_data = None
     if args.pr:
-        if args.latest:
-            sys.exit("--latest cannot be combined with --pr")
         # --pr alone is a standalone review-loop scan; transcripts are scanned
-        # alongside only when explicitly requested next to it. An explicit
-        # --project-dir/--projects-root next to standalone --pr would be dead
-        # flags — error out instead of silently ignoring them (fail closed).
-        standalone = not (args.transcript or args.all_projects or args.since)
-        if standalone and (args.project_dir is not None
-                           or args.projects_root is not None):
-            sys.exit(
-                "--project-dir/--projects-root have no effect with standalone "
-                "--pr (no transcript scan runs). Add --since / --transcript / "
-                "--all-projects to scan transcripts alongside, or drop them."
-            )
+        # alongside only when explicitly requested next to it.
+        standalone = standalone_pr(args)
         pr_data = scan_prs(args.pr, args.repo)
         if standalone:
             if args.as_json:
@@ -632,9 +705,9 @@ def main():
                 render_pr_report(pr_data)
             return
 
-    # Fill the real defaults only after the standalone --pr gate has seen the
-    # raw None-vs-explicit distinction; downstream code keeps the historical
-    # behavior (cwd-derived slug under ~/.claude/projects).
+    # Fill the real defaults only after validate_flag_combinations() has seen
+    # the raw None-vs-explicit distinction; downstream code keeps the
+    # historical behavior (cwd-derived slug under ~/.claude/projects).
     if args.project_dir is None:
         args.project_dir = os.getcwd()
     if args.projects_root is None:
@@ -735,7 +808,12 @@ def main():
     for key, sql in SQL.items():
         cur = con.execute(sql, params[key])
         cols = [d[0] for d in cur.description]
-        out[key] = [dict(zip(cols, row)) for row in cur.fetchall()]
+        # scrub_value before the markdown/--json fork so both paths emit
+        # sanitized transcript-derived text (same contract as --pr mode).
+        out[key] = [
+            {c: scrub_value(v) for c, v in zip(cols, row)}
+            for row in cur.fetchall()
+        ]
 
     if args.as_json:
         payload = {"files_scanned": len(files), **out}
