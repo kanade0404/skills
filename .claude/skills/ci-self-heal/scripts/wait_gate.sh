@@ -29,11 +29,13 @@ interval="${3:-30}"
 # 依存で macOS 標準に無いため、bash のみで watchdog を実装する。
 gh_call_cap=60
 
-# gh pr checks を有界実行する。stdout を $2 のファイルへ書き、
+# gh pr checks を有界実行する。stdout を $2 のファイルへ、stderr を $3 の
+# ファイルへ書き (gh-unreachable 診断で認証エラー / ネットワーク障害を区別
+# するため破棄しない)、
 # exit code: gh の exit code そのまま / 124 = cap 超過で強制終了 (timeout(1) 互換)
 bounded_gh_checks() {
-  local out_file="$1" cap="$2" pid waited=0
-  gh pr checks "$pr" --json name,bucket >"$out_file" 2>/dev/null &
+  local out_file="$1" err_file="$2" cap="$3" pid waited=0
+  gh pr checks "$pr" --json name,bucket >"$out_file" 2>"$err_file" &
   pid=$!
   while kill -0 "$pid" 2>/dev/null; do
     if [ "$waited" -ge "$cap" ]; then
@@ -51,7 +53,8 @@ start=$(date +%s)
 prev=""
 errs=0
 gh_out=$(mktemp)
-trap 'rm -f "$gh_out"' EXIT
+gh_err=$(mktemp)
+trap 'rm -f "$gh_out" "$gh_err"' EXIT
 
 while :; do
   # deadline 契約の厳守: gh 呼び出しの前に残り時間を確認し、呼び出し 1 回の
@@ -64,7 +67,7 @@ while :; do
   fi
   call_cap=$gh_call_cap
   [ "$remaining" -lt "$call_cap" ] && call_cap=$remaining
-  bounded_gh_checks "$gh_out" "$call_cap"
+  bounded_gh_checks "$gh_out" "$gh_err" "$call_cap"
   rc=$?
   s=$(<"$gh_out")
   # gh pr checks は pending を含むと exit 8 を返すため、exit code ではなく
@@ -90,7 +93,10 @@ while :; do
   else
     errs=$((errs + 1))
     if [ "$errs" -ge 5 ]; then
-      echo "WAIT_GATE_RESULT=gh-unreachable (gh pr checks が ${errs} 回連続で観測不能 — 失敗または ${gh_call_cap} 秒 cap 超過)"
+      # 直近呼び出しの stderr 末尾を診断に含める (認証エラー / ネットワーク
+      # 障害 / rate limit を escalate 後の人間が区別できるように)
+      last_err=$(tail -c 300 "$gh_err" 2>/dev/null | tr '\n' ' ')
+      echo "WAIT_GATE_RESULT=gh-unreachable (gh pr checks が ${errs} 回連続で観測不能 — 失敗または ${gh_call_cap} 秒 cap 超過; last stderr: ${last_err:-<empty>})"
       exit 3
     fi
   fi
