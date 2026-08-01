@@ -60,7 +60,9 @@ gh pr checks <PR>
 
 **`Monitor` ツールは使わない**: 満了通知の不達が実測されており (PR #96, 2026-07-30: 30 分 timeout の Monitor が満了通知なしに約 8 時間放置)、subagent 内では上記のとおり return 時に回収されて最初から存在しない。wait_gate は deadline で必ず exit するため、通知配送に依存する待ちがそもそも発生しない。
 
-exit code の分岐: `0` → 緑 (修復ループ中なら完了判定へ)。`1` → 失敗として Step 2 へ (`cancel` を緑と誤認しない)。`3` → 完了判定せずユーザに escalate (silent spin 防止)。`2` の累計超過 → escalate。また **自動レビュー (CodeRabbit 等) の完了待ちを CI watch の完了条件に含めない** — 本スキルの終端は checks の終端 bucket のみで判定する (レビュー対応は `pr-review-respond` の領域で、待ち合わせると review 側を starve する)。
+exit code の分岐: `0` → 緑 (修復ループ中なら完了判定へ)。`1` → 失敗として Step 2 へ (`cancel` を緑と誤認しない)。`3` → 完了判定せずユーザに escalate (silent spin 防止)。`2` の累計超過 → escalate。
+
+**判定の source of truth は出力の `WAIT_GATE_RESULT=` 行** (green / red / deadline / gh-unreachable...) とする — foreground なら tool result を、background なら output ファイルを Read して読む。exit code は補助情報。bg 呼び出し時にコマンド末尾へ `; echo "exit=$?"` 等を連結しない — 連結した echo が最後のコマンドになり、task 通知の exit code が 0 に上書きされる (実測: main が red を「緑」と誤読しかけた)。また **自動レビュー (CodeRabbit 等) の完了待ちを CI watch の完了条件に含めない** — 本スキルの終端は checks の終端 bucket のみで判定する (レビュー対応は `pr-review-respond` の領域で、待ち合わせると review 側を starve する)。
 
 ### Step 2 — 失敗 check の特定
 
