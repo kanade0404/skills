@@ -50,6 +50,28 @@ ACE の Generator/Reflector/Curator 構成と同型で、この文献群と整�
 自動化を進める場合は承認ゲートの**後ろ** (編集適用・eval 実行・集計) からにし、
 finding 採否の自動化は最後に回す。
 
+### 6. main は薄いオーケストレータ — 収集と評価の分離、レビューループのデータソース化 (2026-08-01 再設計)
+
+初期設計は「main が scope を特定し、単一の解析 subagent に丸ごと任せる」だったが、
+実走で 2 つの限界が出た:
+
+- **main の context 圧迫**: main が transcript 特定・結果受領のために生データへ
+  近づくほど context を消費する (transcript の手組み丸読みは実測 ~94k tokens)。
+  対策として main は scope 決定・dispatch・findings 合成・承認ゲートのみを持ち、
+  subagent が返してよいのは構造化サマリだけ (引用は接地根拠 1 行まで) に制限した。
+- **transcript に閉じた観測範囲**: 実開発ループの主要なフィードバック面 —
+  PR レビュー往復・実装計画へのレビューとの往復 — が観測できない。PR #96/#97 の
+  決着後 retro で、レビュースレッド 20 件の遡及分類から **PR 横断の再発クラス 3 種**
+  が見つかり、transcript 単独では得られない findings の存在が実証された。
+
+これを受け、(a) 収集 (transcript / PR レビューループ) と評価を別 subagent に分離し
+(§5 の ACE Generator/Reflector/Curator 分離と同型)、(b) PR 決着データの取得を
+retro_scan.py `--pr` (gh GraphQL reviewThreads の cursor pagination 全件取得 +
+返信パターンからの終端分類の下読み) として機械化した。下読み分類は純関数
+(classify_thread、tests/test_retro_pr_classification.py で固定) に閉じ、確定判断は
+評価 subagent が行う — §5 の「LLM は候補生成と集計まで」の分担をスクリプトと
+subagent の間でも繰り返す入れ子構造になっている。
+
 ## 定量観点の出典 (retro_scan.py が実装しているもの)
 
 - **tool エラー taxonomy**: コミュニティで確立された Claude Code エラー分類
@@ -74,7 +96,8 @@ finding 採否の自動化は最後に回す。
   事後一括解析 + 承認ゲートの現行設計を維持する。
 - **outcome mode** (netresearch/retro-skill, MIT+CC-BY-SA-4.0): セッション後の現実
   (revert された commit / reject された PR / 後続 CI 失敗) と findings を照合する軸。
-  価値は高いが PR 決着データの取得設計が必要なため未実装。次の拡張候補第 1 位。
+  2026-08-01 の再設計 (§6) で、レビュースレッド側は retro_scan.py `--pr` として
+  部分実装した。revert された commit / 後続 CI 失敗との照合は未実装のまま残る。
 - **insight の confidence カウンタ運用** (ExpeL / ACE / ECC v2 の instinct):
   提案の delta 化までを実装し、カウンタ管理は未実装。findings の再出現を
   retro が横断スコープで数えられるようになった時点で導入を再検討する。
