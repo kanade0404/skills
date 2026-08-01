@@ -111,7 +111,8 @@
 #                                  first. Use this (not state-get + patch +
 #                                  state-merge) for any update that includes
 #                                  known_comment_ids / known_failing_checks /
-#                                  escalations / cycle_ledger.
+#                                  known_conflict_head / escalations /
+#                                  cycle_ledger.
 #                                  Zero or more `--arg <name> <value>` pairs
 #                                  may follow the filter file; each is passed
 #                                  straight through to `jq --arg`, which

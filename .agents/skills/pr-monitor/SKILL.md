@@ -67,7 +67,7 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prm" <subcommand> <pr>
 | `prm status <pr>` | state / head SHA / mergeable (conflict 判定材料) / 失敗・pending checks / 未解決レビュースレッド全量を 1 つの安定 JSON で返す。毎ポーリングで呼ぶのはこれ 1 回だけ |
 | `prm unresolved <pr>` | 未解決レビュースレッド全量のみ `{unresolved_count, threads}` |
 | `prm state-init <pr> <json-file>` | 監視 state ファイル `.claude/.pr-monitor/PR-<pr>.json` を新規作成する (既存があれば警告を stderr に出しつつ上書き)。初回登録でのみ使う |
-| `prm state-merge <pr> <json-file>` | 既存 state を読み、`<json-file>` の内容を `. + $patch` で shallow merge して書き戻す read-modify-write。**単一 writer 前提の簡易経路** — patch の全フィールドが scalar (例: `state` の単一遷移) の時だけ安全に使える。配列フィールド (`known_comment_ids` / `known_failing_checks` / `escalations` / `cycle_ledger`) を含む patch には使わない (下記 `state-apply` 参照。理由は次項) |
+| `prm state-merge <pr> <json-file>` | 既存 state を読み、`<json-file>` の内容を `. + $patch` で shallow merge して書き戻す read-modify-write。**単一 writer 前提の簡易経路** — patch の全フィールドが scalar (例: `last_checked_at` の単独更新) の時だけ安全に使える。配列フィールド (`known_comment_ids` / `known_failing_checks` / `escalations` / `cycle_ledger`) を含む patch には使わない (下記 `state-apply` 参照。理由は次項)。また **CAS 経由でのみ更新するフィールド — `known_conflict_head` / `last_head_sha` / 決着遷移の `state` — は scalar でも `state-merge` で触れてはならない**: 無条件の shallow merge は CAS filter の前提条件チェックを素通りし、並走 invocation の claim / 遷移を上書きするため、これらの更新は必ず Step 4 の各 CAS filter (`state-apply`) 経由で行う |
 | `prm state-apply <pr> <jq-filter-file>` | `state-init`/`state-merge` と同じ per-PR lock を取得した**まま**既存 state を読み、`<jq-filter-file>` の jq プログラムを (`.` にその state を束縛して) 適用し、結果が JSON object であることを検証してから書き戻す read-apply-write。配列フィールドを含む更新は **これを使う** — `state-get` (lock 外) で読んだ内容から呼び出し側が完成済み配列を組み立てて `state-merge` に渡す旧プロトコルは、2 つの `--check-only` 実行が重なった時に「両者が同じ古い base から別々の配列を計算し、後勝ちの `state-merge` が shallow merge で先勝ちの配列を丸ごと上書きする」ロスト update を起こす (lock は書き込みの直列化だけを保証し、lock **外**で行われた読み取り自体の陳腐化は防げない)。`state-apply` は読み取りも lock の内側で行うため、filter 自体が `.known_comment_ids = ((.known_comment_ids + [123]) \| unique)` のように**その場の最新 state を起点に**追記・prune を表現でき、2 つの重なった呼び出しがそれぞれ別の要素を追記しても両方生き残る (下記 Step 2/4 参照) |
 | `prm state-get <pr> [key]` | state 全体 (または `.<key>`) を出力。state ファイルが無ければ exit 1 |
 
@@ -152,7 +152,7 @@ JSON はインラインコメントを書けないため、各フィールドの
 
   呼び出しは `prm state-apply <n> <filter> --arg key "<workflow>/<name>"` — `<workflow>/<name>` は GitHub 側の自由形式文字列で quote / backslash / 改行を含みうるため、filter 本文へのリテラル埋め込みではなく `--arg` で束縛した `$key` を参照する (詳細と理由は分岐 4 を参照)。`last_head_sha` の更新はこの種の汎用 filter に混ぜず、分岐 2 専用の CAS filter でのみ行う (下記)。
 
-  `.known_failing_checks` や `.cycle_ledger` の右辺はこの filter 自身が `.` (= lock 内で読み直された最新 state) を起点に計算するため、`state-get` で読んだ古い値を外部で組み立てて上書きする必要がない — 2 つの `--check-only` 実行が重なっても、それぞれの filter が最新 state に対して追記するので両方の更新が残る (`state-apply` の項参照)。`monitor_mode` / `schedule_id` / `origin_transcript` のようなフィールドは filter で触れなければ既存値がそのまま保持される。スカラーのみの更新 (例: `state` 単独の遷移) は引き続き `prm state-merge` で構わない。
+  `.known_failing_checks` や `.cycle_ledger` の右辺はこの filter 自身が `.` (= lock 内で読み直された最新 state) を起点に計算するため、`state-get` で読んだ古い値を外部で組み立てて上書きする必要がない — 2 つの `--check-only` 実行が重なっても、それぞれの filter が最新 state に対して追記するので両方の更新が残る (`state-apply` の項参照)。`monitor_mode` / `schedule_id` / `origin_transcript` のようなフィールドは filter で触れなければ既存値がそのまま保持される。スカラーのみの更新 (例: `last_checked_at` 単独の更新) は引き続き `prm state-merge` で構わない — ただし CAS 管理フィールド (`known_conflict_head` / `last_head_sha` / 決着遷移の `state`) は scalar でも `state-merge` の対象外 (前掲 `state-merge` の項参照)。
 
 ### Step 3 — 待機手段を優先順で選ぶ
 
@@ -227,7 +227,7 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prm" status <n>
 
    CAS が **成功** (exit 0) した invocation だけが実際に `known_failing_checks` を全クリアし、`known_conflict_head` を null にクリアし、`escalations` の `kind: ci-halted` / `kind: conflict-stuck` エントリを全クリアし、`last_head_sha` を更新する。`known_conflict_head` / `conflict-stuck` のクリアも同じ**新 head = 新インシデント境界**の原則に従う — `pr-conflict-resolver` (または人間) の解消 push で head が進んだら dedup を解き、新 head がなお `CONFLICTING` なら分岐 6 で独立した事象として再検知・再 dispatch できるようにするため。クリアが必要な理由自体は変わらない: `known_failing_checks` のクリアは CI が新しい head で再走するため、前回の失敗キーを引き継ぐと新 CI 上の再失敗を見落とすため。`escalations[kind=ci-halted]` のクリアが必要なのは、3 の prune が「`key` (`"<workflow>/<name>"`) が現在の `checks.failing` に無ければ削除」という条件しか持たず、**人間の修正 push 後も同じ check が引き続き failing のケース**を救えないため — この条件だけに任せると、新 head で `ci-self-heal` が再度 `HALTED` を返しても古いエスカレーション記録の `key` が一致し続けて dedup が効いてしまい、新しいインシデントの needs-human コメントが二度と投稿されなくなる。**新 head = 新インシデント境界**という原則に従い、同一 `workflow/name` の再失敗・再 HALTED であっても新 SHA 上では独立した事象として扱い、再エスカレーションを許可する。
 
-   `last_head_sha` の更新をこの CAS 自身に含め、かつ「クリアしてよいか」の判定自体を on-disk 値との比較にしたのは、次の事故を防ぐためである (PR #78 レビュー指摘)。以前の版は「ローカルで `pr.head_sha != last_head_sha` を比較してからクリアを実行し、`last_head_sha` の書き込み自体は Step 8 の最終 apply まで遅延する」設計だった。この場合、2 つの `--check-only` invocation が両方とも (まだ更新されていない) 古い `last_head_sha` を読んで「新 push だ」と判定でき、片方が 4 の CAS claim で `known_failing_checks` に追記した **後** に、もう片方が (自分も新 push だと思い込んだまま) 同じ全クリアを実行して先発の claim を握りつぶし、握りつぶされた分だけ後発自身の claim も成功してしまう — 同一の新規失敗に対して `ci-self-heal` が二重 dispatch される。クリアの実行可否そのものを on-disk `last_head_sha` との CAS に一本化することで、2 度目の実行は `error()` で弾かれて書き込みが起きず、この二重クリアの窓が閉じる。
+   `last_head_sha` の更新をこの CAS 自身に含め、かつ「クリアしてよいか」の判定自体を on-disk 値との比較にしたのは、次の事故を防ぐためである (PR #78 レビュー指摘)。以前の版は「ローカルで `pr.head_sha != last_head_sha` を比較してからクリアを実行し、`last_head_sha` の書き込み自体はポーリング末尾の最終 apply まで遅延する」設計だった。この場合、2 つの `--check-only` invocation が両方とも (まだ更新されていない) 古い `last_head_sha` を読んで「新 push だ」と判定でき、片方が 4 の CAS claim で `known_failing_checks` に追記した **後** に、もう片方が (自分も新 push だと思い込んだまま) 同じ全クリアを実行して先発の claim を握りつぶし、握りつぶされた分だけ後発自身の claim も成功してしまう — 同一の新規失敗に対して `ci-self-heal` が二重 dispatch される。クリアの実行可否そのものを on-disk `last_head_sha` との CAS に一本化することで、2 度目の実行は `error()` で弾かれて書き込みが起きず、この二重クリアの窓が閉じる。
 
    この CAS 呼び出しを failing check の評価 (4) より **前** に行う点は変わらない — push と同時に来た新規失敗が、クリア前の古い `known_failing_checks` と比較されて同一ポーリング内で「既知」と誤判定されるのを防ぐ (M1)。
 3. `known_failing_checks` を **prune** する: 現在の `checks.failing` の各要素を `"<workflow>/<name>"` に組んだ集合との積集合に絞る (2 の全クリアは、新 push 時に積集合を取るまでもなく丸ごと消せるという、この prune の特殊形)。`workflow` を含めて key するのは、複数 workflow に同名 job があるリポジトリで check 名だけを key にすると別 workflow の失敗が同一視され、`ci-self-heal` が dispatch されなくなるため (`gh pr checks --json` は `workflow` フィールドを提供する)。回復して `checks.failing` から消えた `workflow/name` は積集合から自然に落ち、後日再失敗した際に (4) で「新規」として再検知される。ただし `ci-self-heal` が `HALTED` を返し続けている check は `checks.failing` に居座り続けるため prune で落ちず、再 dispatch されないまま「エスカレーション分岐」(後述) の状態を維持する。
@@ -236,8 +236,19 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prm" status <n>
    - `escalations` の `kind: ci-halted` エントリ: `key` (`"<workflow>/<name>"`) が現在の `checks.failing` に **無ければ** 削除する (= 回復した。次に同じ `workflow/name` の check が失敗したら新インシデントとして再検知・再エスカレーション可能になる)。これは **push を伴わない回復** (手動 re-run 等で head_sha が変わらないまま check が green になるケース) を拾うための条件付きクリアであり、2 の「新 push 時の無条件全クリア」とは補完関係にある — 2 は新 head という事実だけで即座にクリアするのに対し、ここは `checks.failing` の実測結果を見て初めてクリアする。同じ `workflow/name` が failing のまま新 push が来た場合は 2 で先にクリア済みのため、この条件は素通りする (矛盾なく重複適用されるだけ)。
    - `known_comment_ids` を、現在の `unresolved_threads` の `comment_id` 集合 (`is_outdated` を問わず全件) との積集合に絞る (state ファイルの無限肥大防止 + resolve 済みスレッドが後で再オープンされた際に新規スレッドとして検知できるようにするため)。この集合を `is_outdated == false` に絞り込む**必要はない** — (5) が新規判定の対象自体を `is_outdated == false` に限定するため、outdated のまま残るスレッドの `comment_id` が `known_comment_ids` に居座っても再 dispatch には至らない (実害なし)。両者の絞り込み基準を分けることで、prune は「本当に resolve されたか」だけを見る単純な条件に保てる。
    - `escalations` の `kind: review-stuck` エントリ: `key` (comment_id) が現在の `unresolved_threads` に **無ければ** 削除する (= スレッドが resolve された)。
-   - `known_conflict_head` と `escalations` の `kind: conflict-stuck` エントリ: 今回の `pr.mergeable` が **`MERGEABLE` の場合のみ** 前者を null に、後者を削除する (= conflict が解消された。push を伴わず base 側の変化だけで解消するケースを拾う条件付きクリアで、2 の新 push 時の無条件クリアと補完関係にあるのは ci-halted と同じ)。`CONFLICTING` は継続中、`UNKNOWN` は GitHub 側の計算中の一時状態なのでどちらもクリアしない — `UNKNOWN` を「解消」と誤認して dedup を失効させると、計算完了後の同一 conflict へ二重 dispatch しうる。`pr.mergeable` は観測値のため filter へは `--arg mergeable "<MERGEABLE|CONFLICTING|UNKNOWN>"` で束縛して比較する。
-2 (新 push の CAS) と 3 (prune) は、4〜6 の claim (次項以降) が判定の基準にする on-disk state そのものを作る工程なので、**どちらも 4〜6 に入る前に完了させる** (early apply)。2 は前述のとおり成功でも `error()` による no-op でも構わない独立した `prm state-apply` 呼び出しであり、3 は (2 の結果を踏まえた最新 state に対して) 常に実行する別の `prm state-apply` 呼び出しである。この 2 回の呼び出しを 4〜6 より前に完了させずに判定・claim を行うと、回復済みの check/thread/conflict を誤って「既知」のまま残す、または新 push で本来クリアされるべき古いキーを基準に誤判定する、といった食い違いが起きる。
+   - `known_conflict_head` と `escalations` の `kind: conflict-stuck` エントリ: 今回の `pr.mergeable` が **`MERGEABLE` の場合のみ** クリア候補とする (= conflict が解消された。push を伴わず base 側の変化だけで解消するケースを拾う条件付きクリアで、2 の新 push 時の無条件クリアと補完関係にあるのは ci-halted と同じ)。`CONFLICTING` は継続中、`UNKNOWN` は GitHub 側の計算中の一時状態なのでどちらもクリアしない — `UNKNOWN` を「解消」と誤認して dedup を失効させると、計算完了後の同一 conflict へ二重 dispatch しうる。ただしこのクリアは他の prune と違い、**冒頭の `prm status` 観測をそのまま根拠にしてはならない**: 冒頭観測は判定の間に stale になりうるため、stale な `MERGEABLE` を持つ invocation が、その観測より後に別 invocation が行った `CONFLICTING` の claim (分岐 6) をここで null 化すると、次のポーリングが同じ conflict を再び「新規」と誤検知して resolver を二重 dispatch する (head SHA を条件に束ねても閉じない — 同一 head のまま base 側だけで `CONFLICTING`⇄`MERGEABLE` が揺れるケースを区別できない)。そこで手順を 2 段にする: (i) まず `prm state-get <n> known_conflict_head` を読み、null ならこの項は丸ごとスキップする (claim が無ければ `conflict-stuck` の残存も無い — `conflict-stuck` は claim 維持が前提のため)。(ii) non-null なら **その場で `prm status <n>` を取り直し (fresh 再観測)、fresh 観測の `pr.mergeable` も `MERGEABLE` のときのみ**、次の CAS filter で null 化する — fresh 観測が `CONFLICTING` / `UNKNOWN` ならクリアしない:
+
+     ```jq
+     if .known_conflict_head != null then
+       .known_conflict_head = null
+       | .escalations = (.escalations | map(select(.kind != "conflict-stuck")))
+     else
+       error("no-conflict-claim")
+     end
+     ```
+
+     `.known_conflict_head != null` を前提条件に含めた CAS 形にするのは、(ii) の再観測から書き込みまでの間にも並走はありうるためで、「claim が実在するときだけ、fresh な `MERGEABLE` 観測を根拠に消す」ことを filter 自体に保証させる。fresh 再観測 + CAS の組で初めて、stale 観測が直後の claim を握りつぶして二重 dispatch を許す窓が閉じる (fresh 観測が `MERGEABLE` なら、その時点で conflict は GitHub 側の事実として解消済みであり、クリアは新インシデントの再検知を許す正しい動作になる)。
+2 (新 push の CAS) と 3 (prune) は、4〜6 の claim (次項以降) が判定の基準にする on-disk state そのものを作る工程なので、**どちらも 4〜6 に入る前に完了させる** (early apply)。2 は前述のとおり成功でも `error()` による no-op でも構わない独立した `prm state-apply` 呼び出しであり、3 は (2 の結果を踏まえた最新 state に対して) 常に実行する別の `prm state-apply` 呼び出しである (ただし 3 のうち conflict クリアの項だけは、fresh 再観測を挟む独立した CAS 呼び出しになる — 該当項参照。スキップ / no-op でも 4〜6 の前に決着させる点は同じ)。この 2 回の呼び出しを 4〜6 より前に完了させずに判定・claim を行うと、回復済みの check/thread/conflict を誤って「既知」のまま残す、または新 push で本来クリアされるべき古いキーを基準に誤判定する、といった食い違いが起きる。
 
 `state-apply` は書き戻すだけで更新後の state を stdout に返さない (`prm` 実装参照) ため、2/3 が on-disk を書き換えても、Step 4 冒頭で読んだ「前回スナップショット」はその変更を自動では反映しない。**4〜6 の候補判定 (`known_failing_checks` / `known_comment_ids` に無いものを探す、`known_conflict_head` と突合する) は、冒頭スナップショットをそのまま使い回さず、2/3 完了後に `prm state-get <n>` (または `state-get <n> known_failing_checks` / `known_comment_ids` / `known_conflict_head`) で改めて読み直した最新 state を基準にする** (PR #78 レビュー指摘)。これを怠ると、同じ `workflow/name` が failing のままの新 push で、2 が on-disk 側の `known_failing_checks` を全クリアしたにもかかわらず、4 が冒頭スナップショットの (クリア前の) 古い `known_failing_checks` と比較して「既知」と誤判定し、claim (state-apply) を試みずに新規失敗の dispatch を見送ってしまう。この再読はローカルの dedup 台帳 (`known_failing_checks` / `known_comment_ids` / `known_conflict_head`) の陳腐化対策であり、`checks.failing` / `unresolved_threads` / `pr.mergeable` という GitHub 側の観測値自体の陳腐化とは別問題である — 後者が起こりうるケースと復帰手順は分岐 2 末尾を参照。
 
@@ -289,7 +300,7 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prm" status <n>
    - claim 成功後に dispatch (Task 呼び出し自体) が例外・timeout で失敗したとこの invocation が観測した場合のみ rollback する。rollback も CAS 形 (`if .known_conflict_head == $head then .known_conflict_head = null else error("stale") end`、`--arg head` 束縛) にする — 無条件の null 代入だと、失敗観測までの間に別 invocation が新しい head で claim し直していた場合にその claim を消してしまう。
    - resolver の handback が **解消不能 / 失敗** (`verdict: ESCALATED` — needs-human 投稿済みの撤退、または verify 不通過等での停止) を報告した → 「エスカレーション分岐」(後述) に `kind: conflict-stuck` で従う。dispatch 自体は完了しているので rollback しない — claim は維持し、同一 head への再 dispatch を防ぐ。
 7. 4〜6 の claim → dispatch → (必要なら) rollback は **同一ポーリング内で逐次** (`ci-self-heal` → `pr-review-respond` → `pr-conflict-resolver` の順)。同一 PR ブランチを共有しいずれも push しうるため並列にしない。
-8. 2・4・5・6 のいずれかに該当した (状態に変化があった) 場合、`poll_interval_seconds` を 60 に **リセット** する。いずれにも該当しなかった場合は現在値を 2 倍 (上限 1800) にする。
+8. 2・4・5・6 のいずれかに該当した (状態に変化があった) 場合、`poll_interval_seconds` を 60 に **リセット** する。ここで言う「該当」は、2 は CAS 成功 (新 push を実際に claim した)、4・5・6 は **claim が成功した (新規の失敗 / スレッド / conflict を検知した) 場合のみ** を指す — claim 失敗 (`already-claimed`。claim 済み `CONFLICTING` の継続もここに入る) や分岐 6 の `UNKNOWN` は状態変化に数えず、リセットしない (継続中の既知 conflict を毎回「該当」に数えると、それを抱えている間バックオフが永久に効かなくなる)。いずれにも該当しなかった場合は現在値を 2 倍 (上限 1800) にする。
 9. 2 の CAS (`last_head_sha` の更新を含む)・4/5/6 の claim (と、あれば rollback・「エスカレーション分岐」の `escalations` 追記) は個別の `prm state-apply` 呼び出しで既にコミット済みなので、ここで改めて書く必要はない。**`last_head_sha` はここでは触れない** — 分岐 2 の CAS filter だけがこの値の唯一の書き込み経路であり、最終 apply で再度 `head_sha` を書くと「2 の CAS が本当に成功したか」に関わらず無条件に上書きしてしまい、CAS を一本化した意味が失われる。残るのは `poll_interval_seconds` の更新、`last_checked_at` を現在時刻に更新する値、このポーリングの要約 1 行 (例: 「no change, backoff 60→120s」「new failing check dispatched」) を積む `cycle_ledger` の追記であり、これらを **1 つの jq filter にまとめ**、`prm state-apply` で state ファイルへ書き戻す (最終 apply)。`cycle_ledger` が配列フィールドのため `state-merge` ではなく `state-apply` を使う — filter 自身が `.` (lock 内で読み直された最新 state) を起点に追記を計算するので、`.cycle_ledger += ["..."]` は既存全体を明示的に持ち回らなくても追記できる。`known_failing_checks` / `known_comment_ids` / `known_conflict_head` / `last_head_sha` はこの最終 apply では触れない (2 および 4〜6 で既に確定済みの値を上書きしないため)。
 
 state ファイルの `monitor_mode` で OPEN 時の次アクションを分岐する (再入時は `--check-only` 引数だけでは手段が判らないため。`MERGED` / `CLOSED` は分岐 1 で判定終了済み — Step 5 へ):
@@ -303,7 +314,7 @@ state ファイルの `monitor_mode` で OPEN 時の次アクションを分岐�
 4〜6 で dispatch した subagent が上記の条件 (HALTED / 終端未達 / 解消不能) を返した場合、**対象の check / comment_id / head SHA は `known_*` に残したまま再 dispatch しない**。ただし **監視自体は継続する** — merge / close 検知 (分岐 1) は止めず、Step 4 の残り (8・9) やバックオフ・待機手段の予約も通常どおり行う。
 
 - 対応する `key` (`ci-halted` は `"<workflow>/<name>"`、`review-stuck` は `comment_id`、`conflict-stuck` は検知時の head SHA) が state の `escalations` に既に同じ `kind` で記録されている場合、**同じ事象への 2 度目のコメント投稿はしない** (dedup)。
-- `conflict-stuck` に限り、`pr-conflict-resolver` は自身のエスカレーション時に `needs-human` ラベル + 構造化コメントを投稿する契約を持つ (`pr-conflict-resolver` SKILL.md 4 章「エスカレーション」)。handback がその投稿完了 (コメント URL) を報告している場合は、下記 1 のコメント投稿をスキップして二重投稿を避け、2 の `escalations` 追記 (dedup 記帳) だけ行う — 「確認された成功後にのみ state を更新する」原則の成功確認は resolver の投稿をもって満たされている。
+- `conflict-stuck` に限り、`pr-conflict-resolver` は自身のエスカレーション時に `needs-human` ラベル + 構造化コメントを投稿する契約を持つ (`pr-conflict-resolver` SKILL.md「エスカレーション (無理しない撤退)」節)。handback がその投稿完了 (コメント URL) を報告している場合は、下記 1 のコメント投稿をスキップして二重投稿を避け、2 の `escalations` 追記 (dedup 記帳) だけ行う — 「確認された成功後にのみ state を更新する」原則の成功確認は resolver の投稿をもって満たされている。
 - 未記録なら:
   1. `gh pr comment <n>` で needs-human 向けの構造化コメントを 1 件投稿する。最低構成:
 
@@ -312,9 +323,10 @@ state ファイルの `monitor_mode` で OPEN 時の次アクションを分岐�
 
      - What: <HALTED になった "<workflow>/<name>" / 終端分類できなかったコメントの URL / 解消不能な conflict の head SHA と branch>
      - Handback: <dispatch した subagent の handback 要点 1-2 文>
-     - Next: <人間が取るべき次の一手 1 文 (例: architecture 再考 / 該当スレッドへの直接判断)>
+     - Next: <人間が取るべき次の一手 1 文 (例: architecture 再考 / 該当スレッドへの直接判断 / conflict の手動解消)>
+     - Recovery: <kind に応じた自動回復パス 1 文 — ci-halted: 対応後の新しい push で該当 check の dedup が解け自動再検知 / review-stuck: 該当スレッドの resolve または再オープンで自動追随 / conflict-stuck: 解消 push または base 側の変化 (`MERGEABLE` 観測) で dedup が自動クリアされ、以後の conflict は新インシデントとして再検知>
 
-     pr-monitor は監視を継続します。対応後の新しい push で該当 check が prune されれば自動的に再検知されます。
+     pr-monitor は監視を継続します。
      ```
 
   2. `gh pr comment` の**投稿成功を確認してから**、`prm state-apply` で state の `escalations` に `{kind: ci-halted|review-stuck|conflict-stuck, key: <"<workflow>/<name>"|comment_id|head SHA>, at: <ISO8601>}` を追記する (`escalations` は配列フィールドのため `state-merge` ではなく `state-apply` — filter は `.escalations += [{kind: "...", key: $key, at: $at}]` の形)。`$key` の束縛方法は `kind` によって**異なる**: `kind: ci-halted` の `key` (`"<workflow>/<name>"`) は分岐 4 と同じ理由で `--arg key "<workflow>/<name>"` (文字列) 経由の `$key` 参照にする。`kind: review-stuck` の `key` (comment_id) は **`--argjson key <comment_id>` (数値) を使う** — `--arg` で束縛すると `$key` が JSON 文字列 (`"123"`) になり、3 の prune が行う「`key` が `unresolved_threads[].comment_id`（常に JSON 数値）に無ければ削除」という比較が jq の型付き等価性の下で常に不一致になる。結果、記録した直後の次ポーリングで prune が「無い」と誤判定してこのエントリを毎回消してしまい、`escalations` に一度も居座れないため dedup が機能せず、同じ事象への needs-human コメントが際限なく再投稿されうる (PR #78 レビュー指摘、comment 3552918945)。`known_comment_ids` (分岐 4/5) や `unresolved_threads[].comment_id` が一貫して数値として扱われているのに合わせ、`review-stuck` の `key` も数値のまま保持する。呼び出しは kind ごとに次のようになる:
@@ -359,6 +371,8 @@ claim を dispatch より前に動かした副作用として、claim と dispat
 | claim 成功後、dispatch (Task 呼び出し自体) が例外・timeout で失敗し、対象が二度と再検知されなくなる (取りこぼし) | dispatch 失敗を observed した invocation 自身による claim rollback |
 
 `verdict` が HALTED / 終端未達 / ESCALATED の場合は dispatch 自体は完了しているためロールバックせず、claim を維持したまま上記「エスカレーション分岐」に従う。
+
+subagent が **契約どおりの `verdict` を返さずに終了した場合** (不明な verdict / 構造化 handback の無い終了・無応答。dispatch 自体は成立しており、Task 呼び出しの例外・timeout による rollback の対象ではない) も silent stall にしない — 保守的に失敗側の verdict (`ci-self-heal` なら `HALTED`、`pr-review-respond` なら終端未達、`pr-conflict-resolver` なら `ESCALATED`) 相当として扱い、claim を維持したまま「エスカレーション分岐」に従う。特に `pr-conflict-resolver` が `RESOLVED` / `ESCALATED` のどちらも返さなかった場合、resolver 自身の needs-human 投稿 (コメント URL) は確認できていないため、エスカレーション分岐の `conflict-stuck` 特例 (resolver 投稿済みなら pr-monitor のコメント投稿をスキップ) は適用**しない** — pr-monitor 自身が分岐内 1 の needs-human コメント (`kind: conflict-stuck`) を投稿し、2 の `escalations` 追記 (dedup 記帳) を既存どおり行う。
 
 ### Step 5 — 決着したら retro
 
@@ -425,6 +439,6 @@ verdict: <MONITORING (<cron|wakeup|manual>) / SETTLED (<MERGED|CLOSED>) / ESCALA
 - **cron の可否は環境依存**: `/schedule` が無い環境では ScheduleWakeup (session 生存中のみ) か手動にフォールバックする。
 - **cron モードでは指数バックオフが効かない**: `/schedule` 登録は固定間隔 (30 分) のため、`poll_interval_seconds` の伸縮は state に記録されても待機間隔には反映されない。バックオフの実効果は `ScheduleWakeup` / `Monitor` 手段でのみ現れる。
 - **session 終了で ScheduleWakeup は途切れる**: 長期 (日単位) 監視は cron 手段が前提。手段 2 は session が生きている間だけ。
-- **claim 後・rollback 前の pr-monitor プロセス自体のクラッシュは検知されない**: 二重 dispatch 防止のため `known_failing_checks` / `known_comment_ids` への追記 (claim) を dispatch より前に行うようにした (PR #78 レビュー指摘)。dispatch 先 subagent 自体の例外・timeout はこの invocation が観測して claim を rollback するため取りこぼさないが、claim 成功から「dispatch 完了 (HALTED 含む)」または「rollback」のどちらかに到達するまでの間に **pr-monitor プロセス自身が異常終了** (Task 呼び出しの例外ではなく、monitor を実行しているプロセス自体のクラッシュ/強制終了) した場合は、claim だけが state に残り rollback が走らないため、その check / thread は以後「新規」として再検知されない。取りこぼしを完全にゼロにはできず、この狭い窓に限定して残る。
-- **逐次 dispatch 前提でレイテンシが伸びる**: `ci-self-heal` と `pr-review-respond` を同一ブランチ push 競合回避のため並列にしない分、1 ポーリングあたりの所要時間は両方が完了するまで伸びる。
+- **claim 後・rollback 前の pr-monitor プロセス自体のクラッシュは検知されない**: 二重 dispatch 防止のため `known_failing_checks` / `known_comment_ids` への追記・`known_conflict_head` の設定 (claim) を dispatch より前に行うようにした (PR #78 レビュー指摘)。dispatch 先 subagent 自体の例外・timeout はこの invocation が観測して claim を rollback するため取りこぼさないが、claim 成功から「dispatch 完了 (HALTED 含む)」または「rollback」のどちらかに到達するまでの間に **pr-monitor プロセス自身が異常終了** (Task 呼び出しの例外ではなく、monitor を実行しているプロセス自体のクラッシュ/強制終了) した場合は、claim だけが state に残り rollback が走らないため、その check / thread / conflict (同一 head のもの) は以後「新規」として再検知されない。取りこぼしを完全にゼロにはできず、この狭い窓に限定して残る。
+- **逐次 dispatch 前提でレイテンシが伸びる**: `ci-self-heal`・`pr-review-respond`・`pr-conflict-resolver` を同一ブランチ push 競合回避のため並列にしない分、1 ポーリングあたりの所要時間は dispatch した全てが完了するまで伸びる。
 - **マルチモデル未検証**: trigger eval は本セッションのモデルのみ。
