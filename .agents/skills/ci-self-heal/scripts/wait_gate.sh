@@ -96,7 +96,7 @@ while :; do
       # 直近呼び出しの stderr 末尾を診断に含める (認証エラー / ネットワーク
       # 障害 / rate limit を escalate 後の人間が区別できるように)
       last_err=$(tail -c 300 "$gh_err" 2>/dev/null | tr '\n' ' ')
-      echo "WAIT_GATE_RESULT=gh-unreachable (gh pr checks が ${errs} 回連続で観測不能 — 失敗または ${gh_call_cap} 秒 cap 超過; last stderr: ${last_err:-<empty>})"
+      echo "WAIT_GATE_RESULT=gh-unreachable (gh pr checks が ${errs} 回連続で観測不能 — 失敗または ${call_cap} 秒 cap 超過; last stderr: ${last_err:-<empty>})"
       exit 3
     fi
   fi
