@@ -23,7 +23,9 @@
 # {
 #   "pr": {
 #     "state": "OPEN|MERGED|CLOSED", "merged_at": str|null,
-#     "url": str, "branch": str, "head_sha": str
+#     "url": str, "branch": str, "head_sha": str,
+#     "mergeable": "MERGEABLE|CONFLICTING|UNKNOWN",
+#     "merge_state_status": str   # gh mergeStateStatus: CLEAN|DIRTY|BLOCKED|BEHIND|UNSTABLE|...
 #   },
 #   "checks": {
 #     "failing": [ {"name": str, "bucket": "fail"|"cancel", "link": str, "workflow": str} ],
@@ -476,9 +478,12 @@ fetch_unresolved_threads() {
       } ]' <<<"$all"
 }
 
+# `mergeable` は GitHub 側の mergeability 計算が終わるまで UNKNOWN を返すことが
+# ある (push 直後など)。ここでは観測値をそのまま透過する — UNKNOWN を CONFLICTING
+# と同一視しない判断は消費側 (SKILL.md Step 4 の conflict 分岐) が持つ。
 fetch_state() {
-  gh pr view "$pr" --repo "$owner/$repo" --json state,mergedAt,url,headRefName,headRefOid \
-    --jq '{state, merged_at: .mergedAt, url, branch: .headRefName, head_sha: .headRefOid}'
+  gh pr view "$pr" --repo "$owner/$repo" --json state,mergedAt,url,headRefName,headRefOid,mergeable,mergeStateStatus \
+    --jq '{state, merged_at: .mergedAt, url, branch: .headRefName, head_sha: .headRefOid, mergeable, merge_state_status: .mergeStateStatus}'
 }
 
 # `gh pr checks` exits 1 when a check failed, 8 when checks are still
