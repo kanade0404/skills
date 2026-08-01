@@ -161,7 +161,7 @@ subagent の指摘が技術的に不適切と判断した場合、`receiving-cod
 
 ### 出力する成果物
 
-- **10 観点 × severity 三分類の findings リスト** (Critical / Important / Minor / What's good の固定構造)
+- **12 観点 × severity 三分類の findings リスト** (Critical / Important / Minor / What's good の固定構造)
 - **Verdict** (PASS / PASS_WITH_FIXES / FAIL + 次の手 1 行)
 - **Pushback リスト** (subagent 指摘を却下した分は根拠 1 行と共に明示)
 
