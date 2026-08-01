@@ -86,6 +86,7 @@ try {
   execFileSync('npx', args, { cwd: ROOT, stdio: 'inherit' });
 
   mergeRepoLocalHooks(genOut);
+  mergeRepoLocalEnv(genOut);
   restoreSourceExecutableBits(genOut);
 
   if (check) {
@@ -142,6 +143,24 @@ function mergeRepoLocalHooks(outRoot) {
   const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
   const hooks = JSON.parse(readFileSync(hooksSource, 'utf8'));
   settings.hooks = hooks;
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+}
+
+// `hooks-local/claude-code-env.json` holds a raw Claude Code settings.json `env`
+// fragment (repo-local, same non-distributed contract as claude-code-hooks.json
+// above). Injected as the generated `.claude/settings.json`'s `env` key so every
+// session in this repo runs with terminal decoration structurally disabled
+// (`NO_COLOR=1`, `CLICOLOR_FORCE=0`): with `CLICOLOR_FORCE=1` inherited from the
+// environment, `gh`'s raw JSON output gets ANSI-colored even when piped and
+// silently breaks downstream `jq` (observed 3+ times — see
+// rules/bash-and-api-discipline.md). Key order stays deterministic: `env` is
+// always appended after `permissions` and `hooks`.
+function mergeRepoLocalEnv(outRoot) {
+  const envSource = join(ROOT, 'hooks-local', 'claude-code-env.json');
+  const settingsPath = join(outRoot, '.claude', 'settings.json');
+  if (!existsSync(envSource) || !existsSync(settingsPath)) return;
+  const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
+  settings.env = JSON.parse(readFileSync(envSource, 'utf8'));
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
 }
 

@@ -20,3 +20,15 @@ Claude Code の `.claude/settings.json` の `hooks` キーにそのまま代入�
 - 現在の内容: pr-monitor の state ファイル (`.claude/.pr-monitor/*`) への
   Write/Edit/MultiEdit 直書きを PreToolUse hook で拒否し、
   `prm state-init`/`prm state-merge` (read-modify-write) に誘導するガード。
+
+## `claude-code-env.json`
+
+Claude Code の `.claude/settings.json` の `env` キーにそのまま代入できる形式で
+書かれた、この repo 自身の repo-local な環境変数ソース。`claude-code-hooks.json`
+と同じ契約で `node scripts/rulesync-sync.mjs` が生成済み `.claude/settings.json`
+へマージ注入する（配布 feature には含まれない）。
+
+- 現在の内容: `NO_COLOR=1` / `CLICOLOR_FORCE=0` — `CLICOLOR_FORCE=1` を継承する
+  環境では `gh` の生 JSON 出力が pipe 先でも ANSI 色付けされ下流の jq を静かに
+  壊すため（実測 3+ 回）、セッション全体で端末装飾を構造的に無効化する。
+  `rules/bash-and-api-discipline.md` 参照。
