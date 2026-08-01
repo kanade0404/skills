@@ -234,11 +234,13 @@ uv が使えない環境だけ、fallback として jq / Read で同じ観点を
 ## 出力する成果物 / 出力しない成果物
 
 ### 出力する成果物
+
 - **収集サマリ** (transcript 8 観点 + レビューループの class 内訳・再発)
 - **改善提案リスト F1〜Fn** (priority / observation / root-cause / lever / why-not-local / roll-back / proposal)
 - **適用判断の依頼** (人間承認のための選択肢提示)
 
 ### 出力しない成果物
+
 - **settings.json / SKILL.md / rule / hook への編集・コミット**: 本スキルは提案のみ。適用は承認後に別主体。
 - **main セッション自身による解析結果・生ログの main への引き込み**: 解析は fresh subagent。main が受け取るのは構造化サマリだけ。
 - **局所パッチ前提の「rule にこう追記」だけの提案**: lever 表で最小・最適レバーを当て、why-not-local を必ず添える。
@@ -246,6 +248,7 @@ uv が使えない環境だけ、fallback として jq / Read で同じ観点を
 - **レビュースレッドへの返信・resolve**: 収集 B は読み取り専用 (対応は `pr-review-respond` の仕事)。
 
 ## リファレンス
+
 - `references/analysis-methods.md` — 分析観点・設計原則の根拠と出典 (接地・delta 更新・成功/失敗対比・roll-back・介入率 KPI・エラー taxonomy・収集/評価分離とレビューループのデータソース化)。観点の追加/変更を検討するときだけ読む
 - `skills/skill-builder/SKILL.md` Mode B/C — 承認後の trigger / 品質改善の実体
 - `skills/empirical-prompt-tuning/SKILL.md` — skill 不発の反復チューニング handoff 先
