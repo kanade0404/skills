@@ -128,6 +128,17 @@ class TestBoundaries(unittest.TestCase):
             "DUPLICATE",
         )
 
+    def test_known_false_positive_fix_reply_with_cross_reference(self) -> None:
+        # 既知の偽陽性の固定: fix 返信が別スレッドを #discussion_r 参照すると
+        # DUPLICATE 優先規則に吸われて誤分類される — 下読み (機械分類) の
+        # tradeoff として許容し、確定判断は評価 subagent が上書きする
+        self.assertEqual(
+            classify([FINDING,
+                      "Fixed in abc1234。同根の指摘 #discussion_r999 も"
+                      "この修正で解消しています"]),
+            "DUPLICATE",
+        )
+
     def test_valid_beats_defer_pair_in_same_reply(self) -> None:
         # 修正 + 残件 issue 化の返信は fix が終端 — VALID 優先
         self.assertEqual(

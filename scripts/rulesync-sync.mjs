@@ -136,13 +136,35 @@ try {
 // deterministically (JSON.parse always yields the same key order from a static
 // source file, and `settings.hooks = ...` always appends `hooks` after the freshly
 // generated `permissions` key), so repeated runs produce byte-identical output.
+// Fail-closed reader for the repo-local settings fragments below: a missing
+// source file is a valid state (both fragments are optional features — the
+// caller skips the merge), but a file that EXISTS yet doesn't parse to a JSON
+// object means the fragment would be merged as garbage or silently dropped —
+// exit 1 loudly instead (rules/fail-closed.md).
+function readFragmentObject(sourcePath, what) {
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(sourcePath, 'utf8'));
+  } catch (err) {
+    console.error(`rulesync-sync: ${sourcePath} exists but is not valid JSON (${err.message})`);
+    process.exit(1);
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    console.error(
+      `rulesync-sync: ${sourcePath} must hold a JSON object (a settings.json \`${what}\` fragment), `
+      + `got ${Array.isArray(parsed) ? 'an array' : typeof parsed}`,
+    );
+    process.exit(1);
+  }
+  return parsed;
+}
+
 function mergeRepoLocalHooks(outRoot) {
   const hooksSource = join(ROOT, 'hooks-local', 'claude-code-hooks.json');
   const settingsPath = join(outRoot, '.claude', 'settings.json');
   if (!existsSync(hooksSource) || !existsSync(settingsPath)) return;
   const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
-  const hooks = JSON.parse(readFileSync(hooksSource, 'utf8'));
-  settings.hooks = hooks;
+  settings.hooks = readFragmentObject(hooksSource, 'hooks');
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
 }
 
@@ -160,7 +182,7 @@ function mergeRepoLocalEnv(outRoot) {
   const settingsPath = join(outRoot, '.claude', 'settings.json');
   if (!existsSync(envSource) || !existsSync(settingsPath)) return;
   const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
-  settings.env = JSON.parse(readFileSync(envSource, 'utf8'));
+  settings.env = readFragmentObject(envSource, 'env');
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
 }
 

@@ -35,13 +35,15 @@ def read_required(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def shell_positional_default(script_text: str, var_name: str, position: int) -> int:
+def shell_positional_default(script_path: Path, var_name: str, position: int) -> int:
     """`var="${N:-default}"` 形式の数値 default を抽出する。無ければ fail."""
+    script_text = read_required(script_path)
     pattern = rf'^{re.escape(var_name)}="\$\{{{position}:-(\d+)\}}"'
     m = re.search(pattern, script_text, re.M)
     if m is None:
         raise AssertionError(
-            f"wait_gate.sh に `{var_name}=\"${{{position}:-<数値>}}\"` が"
+            f"{script_path.relative_to(REPO_ROOT)} に"
+            f" `{var_name}=\"${{{position}:-<数値>}}\"` が"
             " 見つからない。default の持ち方を変えた場合はこの抽出ヘルパを"
             " 実装に追随させること"
         )
@@ -74,7 +76,7 @@ class TestWaitGateDocImplConsistency(unittest.TestCase):
     def test_default_deadline_matches_doc(self) -> None:
         """(i) スクリプトの default deadline と SKILL.md の数値記述が一致する."""
         script_default = shell_positional_default(
-            read_required(WAIT_GATE), "deadline", position=2
+            WAIT_GATE, "deadline", position=2
         )
         skill_text = read_required(CI_SELF_HEAL_SKILL)
         for mention in doc_deadline_mentions(skill_text):

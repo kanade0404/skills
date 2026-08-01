@@ -178,7 +178,9 @@ Mode B の入力になる。詳細は後段。
   （PR #96/#97 で ANSI 混入・exit code 誤解釈・unbounded 実行・pagination
   切り詰めの同型指摘が 6 件再発）。実例: `skills/ci-self-heal/scripts/wait_gate.sh`
   - 入口で `export NO_COLOR=1` / `export CLICOLOR_FORCE=0` / `unset GH_FORCE_TTY`
-    — 環境の端末装飾に依存しない状態を自分で作る（`tests/` が機械検査する）
+    — 環境の端末装飾に依存しない状態を自分で作る（機械検査があるのは
+    gh+jq を使う shell スクリプトの `CLICOLOR_FORCE=0` / `unset GH_FORCE_TTY`
+    のみ。`NO_COLOR` と Python スクリプトは検査対象外なので各自で守る）
   - 外部コマンド呼び出しは有界化する: 1 呼び出しの cap と全体の deadline を持ち、
     stall しても必ず exit する
   - GraphQL / REST の一覧取得は `pageInfo` で完全走査する — 1 ページ目だけ読んで

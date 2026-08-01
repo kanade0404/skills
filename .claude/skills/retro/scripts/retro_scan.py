@@ -35,7 +35,10 @@
 #                          and report per-PR breakdowns plus a cross-PR
 #                          dir-by-class recurrence table. Repeatable. Standalone
 #                          by default: transcripts are scanned alongside only when
-#                          --transcript / --all-projects / --since is also given
+#                          --transcript / --all-projects / --since is also given;
+#                          an explicit --project-dir/--projects-root without one
+#                          of those is rejected (it would otherwise be silently
+#                          ignored)
 #   --repo OWNER/NAME      repository for --pr (default: gh repo view)
 #
 # Corpus discovery globs <root>/<slug>*/**/*.jsonl so worktree-session dirs
@@ -291,13 +294,19 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[@-_]")
 _CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 
+def strip_controls(v):
+    """ANSI/C0 removal only (no markdown pipe escaping). Applied where
+    untrusted text feeds both the markdown and --json output paths, so JSON
+    consumers never receive raw control sequences either."""
+    s = _ANSI_RE.sub("", str(v))
+    s = re.sub(r"[\r\n]+", " ", s)
+    return _CTRL_RE.sub("", s)
+
+
 def sanitize_cell(v):
     if v is None:
         return ""
-    s = _ANSI_RE.sub("", str(v))
-    s = re.sub(r"[\r\n]+", " ", s)
-    s = _CTRL_RE.sub("", s)
-    return s.replace("|", "\\|")
+    return strip_controls(v).replace("|", "\\|")
 
 
 def render_table(rows):
@@ -322,6 +331,9 @@ _PUSHBACK_RE = re.compile(
     r"maintainer\s*判断|self-resolve\s*しません|pushback", re.I)
 _ISSUE_REF_RE = re.compile(r"/issues/\d+|\bissues?\s+#\d+", re.I)
 _DEFER_RE = re.compile(r"defer|follow[- ]?up|後続|別途|追跡|track", re.I)
+# Tradeoff: a fix reply that merely cross-references another thread
+# (#discussion_r...) is misread as DUPLICATE — accepted for this pre-read;
+# the evaluation subagent overrides (pinned in test_retro_pr_classification).
 _DUPLICATE_RE = re.compile(
     r"duplicate|重複|既存スレッド|#discussion_r\d+", re.I)
 _WITHDRAWN_RE = re.compile(r"withdraw|撤回", re.I)
@@ -483,8 +495,11 @@ def fetch_review_threads(owner, name, number):
 
 
 def _first_line(body, width=80):
+    """First line of an untrusted comment body, control-stripped here (before
+    the markdown/--json fork) so both output paths emit sanitized text."""
     text = (body or "").strip()
     line = text.splitlines()[0] if text else ""
+    line = strip_controls(line)
     return line if len(line) <= width else line[:width - 3] + "..."
 
 
@@ -496,10 +511,13 @@ def scan_prs(pr_numbers, repo_arg):
     for number in sorted(set(pr_numbers)):
         threads = []
         for node in fetch_review_threads(owner, name, number):
+            # path is API-derived but still sanitized before the output fork —
+            # same contract as summary (--json must not pass ANSI/C0 through).
+            path = strip_controls(node["path"])
             threads.append({
                 "id": node["id"],
-                "path": node["path"],
-                "dir": os.path.dirname(node["path"]) or "(root)",
+                "path": path,
+                "dir": os.path.dirname(path) or "(root)",
                 "summary": _first_line(node["bodies"][0] if node["bodies"] else ""),
                 "class": classify_thread(node["bodies"]),
                 "resolved": node["resolved"],
@@ -560,8 +578,12 @@ def render_pr_report(data):
 def main():
     ap = argparse.ArgumentParser(description="retro quantitative transcript scan")
     ap.add_argument("--transcript", action="append")
-    ap.add_argument("--project-dir", default=os.getcwd())
-    ap.add_argument("--projects-root", default="~/.claude/projects")
+    # None sentinels, not eager defaults: the standalone --pr gate below must
+    # distinguish "explicitly passed" from "defaulted" (rules/fail-closed.md).
+    # The real defaults (cwd / ~/.claude/projects) are filled in right before
+    # transcript discovery.
+    ap.add_argument("--project-dir", default=None)
+    ap.add_argument("--projects-root", default=None)
     ap.add_argument("--all-projects", action="store_true")
     ap.add_argument("--since")
     ap.add_argument("--max-rows", type=int, default=15)
@@ -588,10 +610,20 @@ def main():
     if args.pr:
         if args.latest:
             sys.exit("--latest cannot be combined with --pr")
-        pr_data = scan_prs(args.pr, args.repo)
         # --pr alone is a standalone review-loop scan; transcripts are scanned
-        # alongside only when explicitly requested next to it.
-        if not (args.transcript or args.all_projects or args.since):
+        # alongside only when explicitly requested next to it. An explicit
+        # --project-dir/--projects-root next to standalone --pr would be dead
+        # flags — error out instead of silently ignoring them (fail closed).
+        standalone = not (args.transcript or args.all_projects or args.since)
+        if standalone and (args.project_dir is not None
+                           or args.projects_root is not None):
+            sys.exit(
+                "--project-dir/--projects-root have no effect with standalone "
+                "--pr (no transcript scan runs). Add --since / --transcript / "
+                "--all-projects to scan transcripts alongside, or drop them."
+            )
+        pr_data = scan_prs(args.pr, args.repo)
+        if standalone:
             if args.as_json:
                 json.dump({"pr_scan": pr_data}, sys.stdout,
                           ensure_ascii=False, default=str, indent=1)
@@ -599,6 +631,14 @@ def main():
             else:
                 render_pr_report(pr_data)
             return
+
+    # Fill the real defaults only after the standalone --pr gate has seen the
+    # raw None-vs-explicit distinction; downstream code keeps the historical
+    # behavior (cwd-derived slug under ~/.claude/projects).
+    if args.project_dir is None:
+        args.project_dir = os.getcwd()
+    if args.projects_root is None:
+        args.projects_root = "~/.claude/projects"
 
     files = discover(args)
     if not files:
