@@ -24,12 +24,43 @@ pr="${1:?usage: wait_gate.sh <pr-number> [deadline-sec] [interval-sec]}"
 deadline="${2:-480}"
 interval="${3:-30}"
 
+# gh 呼び出し 1 回あたりの上限秒。外部コマンドが stall しても deadline 契約
+# (「deadline で必ず exit」) を破らないための有界化。timeout(1) は GNU coreutils
+# 依存で macOS 標準に無いため、bash のみで watchdog を実装する。
+gh_call_cap=60
+
+# gh pr checks を有界実行する。stdout を $2 のファイルへ書き、
+# exit code: gh の exit code そのまま / 124 = cap 超過で強制終了 (timeout(1) 互換)
+bounded_gh_checks() {
+  local out_file="$1" cap="$2" pid waited=0
+  gh pr checks "$pr" --json name,bucket >"$out_file" 2>/dev/null &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$waited" -ge "$cap" ]; then
+      kill "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      return 124
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  wait "$pid"
+}
+
 start=$(date +%s)
 prev=""
 errs=0
+gh_out=$(mktemp)
+trap 'rm -f "$gh_out"' EXIT
 
 while :; do
-  if s=$(gh pr checks "$pr" --json name,bucket 2>/dev/null); then
+  bounded_gh_checks "$gh_out" "$gh_call_cap"
+  rc=$?
+  s=$(<"$gh_out")
+  # gh pr checks は pending を含むと exit 8 を返すため、exit code ではなく
+  # 「stdout が有効な JSON 配列か」で観測成功を判定する。errs に数えるのは
+  # 観測不能 (cap 超過 / 出力なし / JSON 解析不能) のみ。
+  if [ "$rc" -ne 124 ] && [ -n "$s" ] && jq -e 'type == "array"' <<<"$s" >/dev/null 2>&1; then
     errs=0
     cur=$(jq -r '.[] | select(.bucket!="pending") | "\(.name): \(.bucket)"' <<<"$s" | sort)
     # 新たに終端した check を 1 行ずつ emit する (pass/fail/cancel/skipping すべて —
@@ -49,7 +80,7 @@ while :; do
   else
     errs=$((errs + 1))
     if [ "$errs" -ge 5 ]; then
-      echo "WAIT_GATE_RESULT=gh-unreachable (gh pr checks が ${errs} 回連続失敗)"
+      echo "WAIT_GATE_RESULT=gh-unreachable (gh pr checks が ${errs} 回連続で観測不能 — 失敗または ${gh_call_cap} 秒 cap 超過)"
       exit 3
     fi
   fi

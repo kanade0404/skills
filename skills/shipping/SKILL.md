@@ -181,7 +181,7 @@ push 後、以下を **1 サイクル**として回す。(a)(b) は逐次:
 1. **orchestrator の待ち = (a)(b) の同期 dispatch そのもの**。subagent の return まで blocking で自然に戻る。第 2 の wake 経路・`Monitor`・`TaskStop` 撤収はいずれも不要 — background タスクを一切作らないから。orchestrator 自身が subagent として実行されている場合 (例: セッション main が本スキルを model 指定で background dispatch した場合) も同じで、同期 dispatch の連鎖は全段 blocking で戻る。
 2. **subagent 内の外部イベント待ち (CI 等) = `ci-self-heal` の `scripts/wait_gate.sh` の foreground blocking 呼び出し** (deadline ≤ 8 分で必ず exit し、exit code `0`/`1`/`2`/`3` で機械分類。deadline 超過は呼び直しで継続し、呼び直しごとに意思決定が戻るため無限待ちにならない)。
 
-orchestrator の time-box fallback (allowed-tools 内の直接観測 — `gh pr checks` / `git rev-parse`) は、dispatch 自体が返らない異常への最終保険としてのみ残す。セッション main が本スキルを background dispatch して離れる場合、main 側の deadline は **main 所有の** background タスクで張る — main 所有の「exit → 完了通知 → 再起動」だけが実測で機能した経路であり (PR #96 の merge 27 秒検知と同構成)、subagent 所有の待ちは全て実測で消滅した (Monitor 満了通知の不達で約 8 時間 / subagent 内二重 wake の回収で数十分、の stall 2 件)。
+orchestrator の time-box fallback (allowed-tools 内の直接観測 — `gh pr checks` / `git rev-parse`) は、dispatch 自体が返らない異常への最終保険としてのみ残す。ただし到達性を明確にする: 同期 dispatch 中の orchestrator は blocking しており、fallback を自力では発火できない (harness に同期 dispatch の caller 側 timeout 原語は無い)。同期経路での「dispatch は必ず返る」保証は **callee 側の有界待ち**が担う — subagent 内の外部待ちは `wait_gate.sh` に限定され (deadline ≤ 8 分 / 回で必ず exit、`gh` 呼び出し自体も 60 秒 cap で有界化、累計 32 分で escalate)、無限 blocking は設計上発生しない。fallback を実際に発火できるのは、生きた turn を持つ待ちの所有者がいる構成のみである。セッション main が本スキルを background dispatch して離れる場合、main 側の deadline は **main 所有の** background タスクで張る — main 所有の「exit → 完了通知 → 再起動」だけが実測で機能した経路であり (PR #96 の merge 27 秒検知と同構成)、subagent 所有の待ちは全て実測で消滅した (Monitor 満了通知の不達で約 8 時間 / subagent 内二重 wake の回収で数十分、の stall 2 件)。
 
 サイクル終了時の遷移:
 
