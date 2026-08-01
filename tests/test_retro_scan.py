@@ -17,6 +17,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "skills" / "retro" / "scripts" / "retro_scan.py"
@@ -238,6 +239,31 @@ class TestSlugCollisionGuard(unittest.TestCase):
             # fail-closed: cwd を特定できないファイルは採用しない (実測で
             # cwd 無しは journal.jsonl 等の非セッションファイルのみ)
             self.assertNotIn(no_cwd, found)
+
+
+class TestPrScanOrdering(unittest.TestCase):
+    """--pr 併用 (非 standalone) 時、transcript 探索の失敗は gh API 呼び出し
+    より先に検出する — 引数の誤りで exit する起動が API レート制限を消費
+    しない (r3695744834)。"""
+
+    def test_discover_failure_precedes_pr_fetch(self) -> None:
+        calls = []
+
+        def fake_scan_prs(pr_numbers, repo_arg):
+            calls.append("scan_prs")
+            return {}
+
+        def fake_discover(args):
+            calls.append("discover")
+            return []
+
+        argv = ["retro_scan.py", "--pr", "1", "--all-projects"]
+        with mock.patch.object(retro_scan, "scan_prs", fake_scan_prs), \
+                mock.patch.object(retro_scan, "discover", fake_discover), \
+                mock.patch.object(sys, "argv", argv):
+            with self.assertRaises(SystemExit):
+                retro_scan.main()
+        self.assertEqual(calls, ["discover"])
 
 
 if __name__ == "__main__":

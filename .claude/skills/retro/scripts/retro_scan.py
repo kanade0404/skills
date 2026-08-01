@@ -691,19 +691,17 @@ def main():
     validate_flag_combinations(args)
 
     pr_data = None
-    if args.pr:
+    if args.pr and standalone_pr(args):
         # --pr alone is a standalone review-loop scan; transcripts are scanned
         # alongside only when explicitly requested next to it.
-        standalone = standalone_pr(args)
         pr_data = scan_prs(args.pr, args.repo)
-        if standalone:
-            if args.as_json:
-                json.dump({"pr_scan": pr_data}, sys.stdout,
-                          ensure_ascii=False, default=str, indent=1)
-                print()
-            else:
-                render_pr_report(pr_data)
-            return
+        if args.as_json:
+            json.dump({"pr_scan": pr_data}, sys.stdout,
+                      ensure_ascii=False, default=str, indent=1)
+            print()
+        else:
+            render_pr_report(pr_data)
+        return
 
     # Fill the real defaults only after validate_flag_combinations() has seen
     # the raw None-vs-explicit distinction; downstream code keeps the
@@ -726,6 +724,12 @@ def main():
             sys.exit("no main-session transcripts in corpus")
         print(max(mains, key=os.path.getmtime))
         return
+
+    # Non-standalone --pr: fetch review-loop data only after the transcript
+    # corpus is known to exist, so an argument error exits before any gh
+    # GraphQL calls spend API rate limit (r3695744834).
+    if args.pr:
+        pr_data = scan_prs(args.pr, args.repo)
 
     try:
         import duckdb
