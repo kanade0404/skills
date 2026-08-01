@@ -159,10 +159,24 @@ function readFragmentObject(sourcePath, what) {
   return parsed;
 }
 
+// `existsSync` returns false for ANY failure (EACCES, EIO, ENOTDIR, ...), which
+// would silently skip merging a fragment that actually exists but is unreadable
+// — the generated settings.json would ship without it, symptom-free
+// (rules/fail-closed.md). Treat only ENOENT as "absent"; rethrow everything else.
+function optionalFragmentExists(path) {
+  try {
+    statSync(path);
+    return true;
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return false;
+    throw err;
+  }
+}
+
 function mergeRepoLocalHooks(outRoot) {
   const hooksSource = join(ROOT, 'hooks-local', 'claude-code-hooks.json');
   const settingsPath = join(outRoot, '.claude', 'settings.json');
-  if (!existsSync(hooksSource)) return; // optional fragment — nothing to merge
+  if (!optionalFragmentExists(hooksSource)) return; // optional fragment — nothing to merge
   requireGeneratedSettings(settingsPath, hooksSource, 'hooks');
   const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
   settings.hooks = readFragmentObject(hooksSource, 'hooks');
@@ -195,7 +209,7 @@ function requireGeneratedSettings(settingsPath, sourcePath, what) {
 function mergeRepoLocalEnv(outRoot) {
   const envSource = join(ROOT, 'hooks-local', 'claude-code-env.json');
   const settingsPath = join(outRoot, '.claude', 'settings.json');
-  if (!existsSync(envSource)) return; // optional fragment — nothing to merge
+  if (!optionalFragmentExists(envSource)) return; // optional fragment — nothing to merge
   requireGeneratedSettings(settingsPath, envSource, 'env');
   const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
   settings.env = readFragmentObject(envSource, 'env');
