@@ -54,7 +54,17 @@ gh_out=$(mktemp)
 trap 'rm -f "$gh_out"' EXIT
 
 while :; do
-  bounded_gh_checks "$gh_out" "$gh_call_cap"
+  # deadline 契約の厳守: gh 呼び出しの前に残り時間を確認し、呼び出し 1 回の
+  # cap も残り時間で clamp する。これを怠ると cap (60s) + interval (30s) の
+  # 分だけ exit が deadline を超過しうる (最悪 ~90 秒)。
+  remaining=$(( deadline - ($(date +%s) - start) ))
+  if [ "$remaining" -le 0 ]; then
+    echo "WAIT_GATE_RESULT=deadline"
+    exit 2
+  fi
+  call_cap=$gh_call_cap
+  [ "$remaining" -lt "$call_cap" ] && call_cap=$remaining
+  bounded_gh_checks "$gh_out" "$call_cap"
   rc=$?
   s=$(<"$gh_out")
   # gh pr checks は pending を含むと exit 8 を返すため、exit code ではなく
@@ -88,5 +98,10 @@ while :; do
     echo "WAIT_GATE_RESULT=deadline"
     exit 2
   fi
-  sleep "$interval"
+  # sleep も残り時間で clamp する (interval 分の deadline 超過を防ぐ。
+  # 目覚めた直後にループ先頭の remaining 判定が deadline exit する)
+  sleep_for=$interval
+  remaining=$(( deadline - ($(date +%s) - start) ))
+  [ "$remaining" -lt "$sleep_for" ] && sleep_for=$remaining
+  sleep "$sleep_for"
 done
