@@ -27,6 +27,13 @@ if [ ! -f "$body_file" ]; then
   exit 2
 fi
 
+# Content guard (before any API call): never let the CodeRabbit resolve-ALL
+# directive reach GitHub inside the summary body.
+if grep -qF '@coderabbitai resolve' "$body_file"; then
+  echo "error: body contains '@coderabbitai resolve' — CodeRabbit treats it as resolve-ALL for the entire PR (swept an INVALID_PUSH thread on PR #96). Remove it; resolution is done via GraphQL resolveReviewThread (prr resolve)." >&2
+  exit 1
+fi
+
 resp=$(gh pr comment "$pr" --body-file "$body_file")
 # `gh pr comment` already prints the URL on success; relay it.
 echo "$resp"

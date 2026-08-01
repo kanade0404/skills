@@ -35,6 +35,13 @@ if [ ! -f "$body_file" ]; then
   exit 2
 fi
 
+# Content guard (before any API call): never let the CodeRabbit resolve-ALL
+# directive reach GitHub inside a reply body.
+if grep -qF '@coderabbitai resolve' "$body_file"; then
+  echo "error: body contains '@coderabbitai resolve' — CodeRabbit treats it as resolve-ALL for the entire PR (swept an INVALID_PUSH thread on PR #96). Remove it; resolution is done via GraphQL resolveReviewThread (prr resolve)." >&2
+  exit 1
+fi
+
 owner=$(gh repo view --json owner --jq '.owner.login')
 repo=$(gh repo view --json name --jq '.name')
 

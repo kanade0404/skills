@@ -44,6 +44,8 @@ design / software-design   →   tdd / tidy-first   →   shipping (本スキル
 
   `ci-self-heal` / `pr-review-respond` は内部で既にこのルーティングをするため、本スキルは Phase 1 の差し戻し分だけ自分でルーティングする。
 
+  修正 subagent の dispatch prompt には **`Skill(tdd)` / `Skill(tidy-first)` の起動指示を明示的に含める** — 自由文の「tdd の規律で」だけだと skill 本文がロードされず、無名 subagent の直編集に流れて Skill 発火の traceability が失われる (実測: PR #96 セッションで修正 3 件が全て未発火)。テスト基盤が無い差分 (markdown / 設定等) では RED→GREEN が成立しないため、代わりに**再現→修正→再現ケース消失の確認**など代替検証手段を prompt で明記させる。
+
 ---
 
 ## 構成方式: subagent dispatch
@@ -168,24 +170,26 @@ PR number / URL を確保して Phase 4 へ。
 
 push 後、以下を **1 サイクル**として回す。(a)(b) は逐次:
 
-- **(a) CI**: `ci-self-heal` を使う subagent を dispatch。CI watch → root-cause → 修正 (内部で `tdd`/`tidy-first`) → 再 push → 再 watch を内部で回し、緑なら `PASS`、3-failure / flaky / env / infra なら `HALTED` を返す。
-- **(b) レビュー**: `pr-review-respond` を使う subagent を dispatch。契約の入力で **fetch / triage 対象に CodeRabbit / Devin / Copilot / 人間を含めるよう明示**する。Copilot は `pr-review-respond` のベンダー判定上 `human` に分類され、VALID / VALID_DEFER / DUPLICATE は他 vendor と同じく GraphQL `resolveReviewThread` で直接 resolve される (ディレクティブ併記なし)。reply-only になるのは INVALID_PUSH のみ。**CodeRabbit 起因の指摘への修正適用は、`coderabbit` plugin が入っている環境では `coderabbit:autofix` (per-change approval 付き) に委譲する**ことを契約入力で明示する — plugin が無い環境では従来どおり `pr-review-respond` 内の修正経路 (`tdd` / `tidy-first` ルーティング) を使う。VALID は修正 commit、INVALID_PUSH は根拠付き pushback、VALID_DEFER は issue 化、DUPLICATE は参照。
+- **(a) CI**: `ci-self-heal` を使う subagent を dispatch。CI watch → root-cause → 修正 (内部で `tdd`/`tidy-first`) → 再 push → 再 watch を内部で回し、緑なら `PASS`、3-failure / flaky / env / infra なら `HALTED` を返す。**(a) の完了条件は CI checks の終端のみ** — 自動レビュー (CodeRabbit 等) の完了待ちを含めない。既に checks が全て終端し**緑** (fail / cancel が 0) なら watch を張らずそのまま (b) へ進む — この「終端済みか」の判定は **(a) の `ci-self-heal` subagent が初回観測で行う** (orchestrator は「もう緑だろう」と推測して (a) の dispatch 自体を省略しない)。終端でも `fail` / `cancel` を含むなら緑扱いで素通りせず、watch 不要でも `ci-self-heal` の修復ループ (root-cause → 修正 → 再 push → 再 watch) は踏む (レビュー完了を待ち合わせると、既存レビュースレッドの対応 (b) が starve する。実測: PR #96 でレビュー 7 件が約 8 時間放置)。
+- **(b) レビュー**: `pr-review-respond` を使う subagent を dispatch。契約の入力で **fetch / triage 対象に CodeRabbit / Devin / Copilot / 人間を含めるよう明示**する。Copilot は `pr-review-respond` のベンダー判定上 `human` に分類され、VALID / VALID_DEFER / DUPLICATE は他 vendor と同じく GraphQL `resolveReviewThread` で直接 resolve される (ディレクティブ併記なし)。resolve されず残るのは INVALID_PUSH (根拠付き reply のみ) と Withdrawn (レビュアー撤回 — スレッド未 resolve のまま終端)。**CodeRabbit 起因の指摘への修正適用は、`coderabbit` plugin が入っている環境では `coderabbit:autofix` (per-change approval 付き) に委譲する**ことを契約入力で明示する — plugin が無い環境では従来どおり `pr-review-respond` 内の修正経路 (`tdd` / `tidy-first` ルーティング) を使う。VALID は修正 commit、INVALID_PUSH は根拠付き pushback、VALID_DEFER は issue 化、DUPLICATE は参照。
 - **(c) 状態判定**: このサイクルで (a)(b) の `pushed_commits` が空でないかを `git rev-parse HEAD` の前後比較で確認。
 
 (a) `ci-self-heal` が `HALTED` を返したら、**同サイクルの (b) を dispatch せず即 escalate** する (HALTED は終端。先へ進めない)。
+
+**待機の time-box (watchdog)**: (a)(b) を sync dispatch した subagent が外部イベント待ち (CI / ハーネス実行 / 背景プロセス) を内包する場合、待機は必ず time-box を持つ。subagent からの完了通知が time-box を超えて来ないときは、通知配線の生死を推測せず、**orchestrator (本スキル) 自身は allowed-tools 内の直接観測 — `gh pr checks` / `git rev-parse` — で再判定する**。これが本スキルの time-box fallback であり、追加 permission なしに実行できる唯一の経路。一方、イベント不達時にも自動で制御が戻る**第 2 の wake 経路** (deadline 付き background Bash / `Monitor`) を要する無人待機は、それらを allowed-tools に持つ subagent (`ci-self-heal` 等) 側の責務 — 本スキルの allowed-tools には汎用 Bash も Monitor も無く、orchestrator が自前で第 2 経路を張る場合は追加 permission が必要になる (環境により prompt が出る)。この非対称を前提に、無人での長時間待機は第 2 経路を内蔵する subagent に委譲し、orchestrator は time-box 満了時の直接観測に徹する。第 2 経路を張った側は、正常完了時 (第 2 経路の発火を待たず watch が完了した場合) に background Bash / Monitor を `TaskStop` 等で撤収する (実測: 背景タスクのサイレント死と Monitor 満了通知の不達が同一セッションで 2 回発生し、片方は約 8 時間の stall になった。逆に main 側に time-boxed の直接観測を併設した場合は merge を 27 秒で検知した)。
 
 サイクル終了時の遷移:
 
 | サイクル結果 | 次の手 |
 |---|---|
 | このサイクルで新規 push があった | CI が再走しコメントも付き直すため、次サイクルへ |
-| 新規 push なし **かつ** CI 全 pass **かつ** 未終端コメント = 0 | **収束**。Phase 5 へ |
+| 新規 push なし **かつ** CI 緑 (fail / cancel が 0。skipping / neutral は非失敗) **かつ** 未終端コメント = 0 | **収束**。Phase 5 へ |
 | `ci-self-heal` が HALTED | escalate (後述) |
 | 新規 push なし **だが** CI 赤 or 未終端コメント > 0 | stall。escalate (同じ状態を回し続けない) |
 
 ループの駆動因子は **このサイクルで新規 commit が push されたか** の 1 点。判定に使う 2 値を固定する:
 
-- **未終端コメント数**: `pr-review-respond` が 4 分類のいずれにも終端化していないコメント数。VALID (修正 commit 済) / INVALID_PUSH (根拠付き pushback) / VALID_DEFER (issue 化) / DUPLICATE (参照) は **すべて終端 = 0 算入**。triage 済みの低価値 nitpick は返信のみで終端化し新規 VALID commit を生まないため未終端に数えない。
+- **未終端コメント数**: `pr-review-respond` が終端分類のいずれにも終端化していないコメント数。VALID (修正 commit 済) / INVALID_PUSH (根拠付き pushback) / VALID_DEFER (issue 化) / DUPLICATE (参照) / 撤回 (Withdrawn — レビュアーが指摘を撤回し争点消滅、スレッドは未 resolve のまま) は **すべて終端 = 0 算入**。triage 済みの低価値 nitpick は返信のみで終端化し新規 VALID commit を生まないため未終端に数えない。
 - **新規 push の有無**: 本スキルが `git rev-parse HEAD` をサイクル前後で比較して観測する。
 
 この定義から「CI 緑 **かつ** `pr-review-respond` が新規 commit を生まなかった」サイクルが 1 回取れれば自動的に未終端 0 / 新規 push 無しとなり収束する (nitpick を無限に追う特例ルールは不要)。**INVALID_PUSH を「対応済み」に数える**のは盲従しないための `receiving-code-review` 規律 — 根拠を残せば収束を妨げない。
@@ -301,6 +305,6 @@ escalate 後は **ユーザの明示指示があるまで追加 dispatch / push 
 - **subagent の context 制限**: 大規模 diff / 長い CI ログは 1 subagent で読み切れない場合がある。各フェーズ skill 側の分割運用に従う。本スキルは 1 フェーズ 1 dispatch を前提。
 - **逐次コスト**: 1 サイクル内 ci-self-heal → pr-review-respond を逐次に回すため並列より遅い。shared-branch の正しさを優先した意図的選択。
 - **収束は「新規 commit が出なくなった」で判定**: nitpick 無限ループは「triage 済み nitpick は未終端 0 算入」の定義で吸収する (特例ルールを置かない)。重要リリースで追加往復を望む場合はユーザが明示指示できる。
-- **Copilot vendor 判定**: `pr-review-respond` の fetcher は Copilot を安全側に倒し `human` 扱いにする。本スキルは契約入力で Copilot を triage 対象に必ず含めるよう明示する。VALID / VALID_DEFER / DUPLICATE は他 vendor 同様 GraphQL `resolveReviewThread` で resolve され、resolve されず返信のみで残るのは INVALID_PUSH のみ。
+- **Copilot vendor 判定**: `pr-review-respond` の fetcher は Copilot を安全側に倒し `human` 扱いにする。本スキルは契約入力で Copilot を triage 対象に必ず含めるよう明示する。VALID / VALID_DEFER / DUPLICATE は他 vendor 同様 GraphQL `resolveReviewThread` で resolve され、resolve されず残るのは INVALID_PUSH (返信のみ) と Withdrawn (レビュアー撤回)。
 - **single PR 前提**: 1 セッション 1 PR。複数 PR 並走の出荷は想定しない。
 - **マルチモデル未検証**: trigger eval は本セッションのモデルのみ。Haiku / Sonnet での発火は未確認。

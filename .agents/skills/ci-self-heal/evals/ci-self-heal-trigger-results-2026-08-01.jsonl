@@ -1,0 +1,18 @@
+{"id":"t01","predicted":true,"actual":true,"reason":"carried over (frontmatter allowed-tools change only, description unchanged): 「CI 直して」description 直マッチ"}
+{"id":"t02","predicted":true,"actual":true,"reason":"carried over (frontmatter allowed-tools change only, description unchanged): 「ビルド失敗してる」description 直マッチ"}
+{"id":"t03","predicted":true,"actual":true,"reason":"carried over (frontmatter allowed-tools change only, description unchanged): 「pipeline 緑にして」description 直マッチ"}
+{"id":"t04","predicted":true,"actual":true,"reason":"carried over (frontmatter allowed-tools change only, description unchanged): 「checks 落ちてる」description 直マッチ"}
+{"id":"t05","predicted":true,"actual":true,"reason":"carried over (frontmatter allowed-tools change only, description unchanged): CI が赤 = 起動条件"}
+{"id":"t06","predicted":true,"actual":true,"reason":"carried over (frontmatter allowed-tools change only, description unchanged): PR 通らない = CI fail"}
+{"id":"t07","predicted":true,"actual":true,"reason":"carried over (frontmatter allowed-tools change only, description unchanged): workflow = CI"}
+{"id":"t08","predicted":true,"actual":true,"reason":"carried over (frontmatter allowed-tools change only, description unchanged): GitHub Actions = CI"}
+{"id":"t09","predicted":true,"actual":true,"reason":"carried over (frontmatter allowed-tools change only, description unchanged): root cause first 起動条件"}
+{"id":"t10","predicted":true,"actual":true,"reason":"carried over (frontmatter allowed-tools change only, description unchanged): CI ログ → 修正ループ"}
+{"id":"t11","predicted":false,"actual":false,"reason":"carried over (frontmatter allowed-tools change only, description unchanged): verify-done 前段、CI ではない"}
+{"id":"t12","predicted":false,"actual":false,"reason":"carried over (frontmatter allowed-tools change only, description unchanged): code-review 起動文脈"}
+{"id":"t13","predicted":false,"actual":false,"reason":"carried over (frontmatter allowed-tools change only, description unchanged): pr-review-respond 起動文脈"}
+{"id":"t14","predicted":false,"actual":false,"reason":"carried over (frontmatter allowed-tools change only, description unchanged): design-review 起動文脈"}
+{"id":"t15","predicted":false,"actual":false,"reason":"carried over (frontmatter allowed-tools change only, description unchanged): tdd 起動文脈"}
+{"id":"t16","predicted":false,"actual":false,"reason":"carried over (frontmatter allowed-tools change only, description unchanged): 概念照会"}
+{"id":"t17","predicted":false,"actual":false,"reason":"carried over (frontmatter allowed-tools change only, description unchanged): CI yaml 設計、本スキルは fail 対応"}
+{"id":"t18","predicted":false,"actual":false,"reason":"carried over (frontmatter allowed-tools change only, description unchanged): 別概念の照会"}

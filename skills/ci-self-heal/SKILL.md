@@ -8,6 +8,7 @@ claudecode:
     - Edit
     - Task
     - Monitor
+    - TaskStop
 ---
 
 # CI Self-Heal
@@ -72,6 +73,8 @@ done
 ```
 
 終端 bucket (pass/fail/cancel/skipping) を漏れなく emit するため、緑でも赤でも沈黙しない (Monitor の coverage 規律)。check がまだ 1 件も登録されていない (`[]`) 間は完了とみなさず poll を続ける。Monitor が exit したら run 完了。`gh pr checks <PR> --json name,bucket` で最終状態を読み、**`fail` または `cancel` の bucket が 1 つでもあれば失敗として Step 2 へ** (`cancel` を緑と誤認しない。`skipping`/neutral は終端だが非失敗)。gh が連続失敗で `exit 3` した場合、または timeout で kill された場合は完了判定せずユーザに escalate。
+
+**watchdog — 満了通知の不達を前提にする**: Monitor の timeout 満了イベントが配信されない事象が実測されている (PR #96, 2026-07-30: 30 分 timeout の Monitor が満了通知なしに約 8 時間放置され、ユーザー介入で発覚)。timeout を「通知が来るまでの待機上限」として通知任せにしない — Monitor 設置時に満了想定時刻を控え、**イベントが来ないまま満了想定時刻を過ぎていたら、通知を待たず自力で `gh pr checks <PR>` を 1 回観測して再判定する** (完了していれば最終状態の読み取りへ、未完了なら Monitor を再設置するか escalate)。ただし「満了時刻を過ぎたら観測する」は、イベント不達時にも制御が戻る wake 機構が無ければ実行不能 — **第 2 の wake 経路を必ず併設する**: 満了時刻に exit する background Bash (`run_in_background` の until ループ + deadline) を Monitor と同時に張る。Monitor の満了通知と background Bash の exit 通知のどちらかは届くため、片方が失われても制御が戻り、上記の自力観測を実行できる。正常完了時 (第 2 経路の発火を待たずに watch が完了した場合) は、残った background Bash / Monitor を `TaskStop` 等で撤収し、deadline プロセスの誤発火を残さない。また **自動レビュー (CodeRabbit 等) の完了待ちを CI watch の完了条件に含めない** — 本スキルの終端は checks の終端 bucket のみで判定する (レビュー対応は `pr-review-respond` の領域で、待ち合わせると review 側を starve する)。
 
 ### Step 2 — 失敗 check の特定
 
