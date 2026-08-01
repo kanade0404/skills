@@ -170,6 +170,18 @@ Mode B の入力になる。詳細は後段。
 - [A] magic number は理由コメント付き（"voodoo constants" を作らない）
 - [A] パス区切りは `/` のみ（Windows パス禁止）
 - [A] 必要パッケージを明記、利用可能性を確認
+- [L] **`gh` / 外部 CLI を呼ぶスクリプトは出力契約に対して防御的に scaffold する**
+  （PR #96/#97 で ANSI 混入・exit code 誤解釈・unbounded 実行・pagination
+  切り詰めの同型指摘が 6 件再発）。実例: `skills/ci-self-heal/scripts/wait_gate.sh`
+  - 入口で `export NO_COLOR=1` / `export CLICOLOR_FORCE=0` / `unset GH_FORCE_TTY`
+    — 環境の端末装飾に依存しない状態を自分で作る（`tests/` が機械検査する）
+  - 外部コマンド呼び出しは有界化する: 1 呼び出しの cap と全体の deadline を持ち、
+    stall しても必ず exit する
+  - GraphQL / REST の一覧取得は `pageInfo` で完全走査する — 1 ページ目だけ読んで
+    「全量」と扱わない
+  - exit code 契約をヘッダコメントに明文化する（例: `0`=成功 / `1`=失敗検出 /
+    `2`=deadline / `3`=観測不能、のような相互排他の機械分類）。呼出側の誤解釈は
+    契約の欠落から始まる
 
 **Testing**
 - [A] 評価ケースを **3 つ以上** 用意する
