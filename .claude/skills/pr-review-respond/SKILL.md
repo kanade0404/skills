@@ -84,7 +84,7 @@ scripts/
 
 | Subcommand | 役割 |
 |---|---|
-| `prr fetch <PR>` | 全 review thread + PR 一般コメントを GraphQL + REST で取得し、vendor 判定 (`coderabbit` / `devin` / `human`) と `self_replied` フラグを付けた正規化 JSON を stdout に出力 |
+| `prr fetch <PR>` | 全 review thread + PR 一般コメントを GraphQL + REST で取得し、vendor 判定 (`coderabbit` / `devin` / `human`)・`self_replied` フラグ・`last_self_reply` (自分の最終返信本文、無ければ null) を付けた正規化 JSON を stdout に出力 |
 | `prr reply <PR> <comment-id> <body-file>` | 正しい `/repos/{O}/{R}/pulls/{PR}/comments/{id}/replies` エンドポイントで返信投稿。本文は file 経由で multi-line / 引用符事故を防ぐ |
 | `prr resolve <PR> <comment-id> <classification> <vendor> [body-file]` | vendor (`coderabbit`/`devin`/`human`、**必須・省略不可**) を明示したうえで返信本文を投稿し、GraphQL `resolveReviewThread` mutation で**対象スレッドだけ**を直接 resolve。**`@coderabbitai resolve` はどの vendor にも併記しない** — CodeRabbit 側で PR 全スレッドの一括 resolve として作用し、INVALID_PUSH スレッドまで巻き込む (実測: PR #96)。`classification` は `VALID` / `VALID_DEFER` / `DUPLICATE` のみ許可。**`INVALID_PUSH` を渡すと非ゼロ exit で拒否する** (誤 resolve ガード、後述)。vendor を省略・誤指定すると usage を表示して非ゼロ exit で拒否する |
 | `prr summary <PR> <body-file>` | 集約 Review Response Summary を **新規** issue comment として投稿 (毎回新規投稿、過去サマリは履歴として残す) |
@@ -112,13 +112,13 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prr" fetch <PR>   # → 正規化 JSON を std
 - `pulls/<PR>/comments` 相当の inline thread を root + 履歴付きで返す
 - `issues/<PR>/comments` 相当の PR 一般コメントも同梱 (CodeRabbit のサマリ・walkthrough や Devin のレビュー総評)
 - 各 root comment に `vendor` フィールドを付与 (`coderabbit` / `devin` / `human`、author login と本文から判定、bot suffix のような表面ルールは持たない)
-- `self_replied` フラグで「自分が既に返信済みのスレッド」を識別
+- `self_replied` フラグで「自分が既に返信済みのスレッド」を識別し、`last_self_reply` でその返信の終端形 (どの分類として終端させたか) を復元可能にする
 
 呼出側 (本スキル本体) は得られた JSON から:
 
 - `is_resolved == true` / `is_outdated == true` を除外
 - 自分が投稿した集約サマリ (`Review Response Summary` ヘッダ) を `issue_comments` から除外
-- `self_replied == true` のスレッドはスキップ (多重返信防止)
+- `self_replied == true` のスレッドはスキップ (多重返信防止)。**ただしスキップ前に resolve 取りこぼしを修復する**: `self_replied == true` かつ未 resolve で、`last_self_reply` が resolve 前提の終端形 (「Fixed in」/「Tracked in #」/「Already addressed by」) の場合、それは過去 run で返信投稿後に `resolveReviewThread` mutation だけが失敗した残骸 — `self_replied` 単独では意図的残置 (Pushback / Withdrawn) と区別できないため、この判別は必ず `last_self_reply` の終端形で行う。body-file 無しの `prr resolve <PR> <id> <分類> <vendor>` (返信を重複させず resolve のみ) を再試行して終端させる (分類は終端形から復元: Fixed → `VALID` / Tracked → `VALID_DEFER` / Already addressed → `DUPLICATE`)。意図的残置としてスキップしてよいのは `last_self_reply` が Pushback 終端形 (⏳ 定型行) または Withdrawn 終端形の場合のみ
 
 ### Phase B — 妥当性 verify (triage)
 
@@ -293,10 +293,11 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prr" summary <PR> <body-file>
   - Fixed / Deferred / Duplicate → resolve 済み (`is_resolved == true`) であること
   - Pushback / Withdrawn → 未 resolve (`is_resolved == false`) かつ自返信済み (`self_replied == true`) であること。ただし maintainer / レビュアー側で既に resolve されていた場合は終端として許容し (unresolve はしない)、サマリ冒頭 n から除外して「第三者 resolve 済み」として別掲する
   - 不一致があれば、そのスレッドを **URL で名指しして Phase D に差し戻す** (gate 不通過)
-- **(iii') 分類外の未解決スレッド — gate 時点**: 同じ再 fetch で「本 run の分類に無い、未解決かつ非 outdated のスレッド」が残っていた場合:
-  - `self_replied == true` → 過去 run の Pushback / Withdrawn の意図的残置。許容し、サマリ冒頭の n に**含めて**列挙する
+- **(iii') 分類外の未解決スレッド — gate 時点**: 同じ再 fetch で「本 run の分類に無い、未解決かつ非 outdated のスレッド」が残っていた場合。`self_replied` 単独で意図的残置と判定してはならない (返信成功後に resolve mutation だけが失敗したスレッドも `self_replied == true` になる) — 必ず `last_self_reply` の終端形まで見る:
+  - `self_replied == true` かつ `last_self_reply` が Pushback 終端形 (⏳ 定型行) または Withdrawn 終端形 → 過去 run の意図的残置。許容し、サマリ冒頭の n に**含めて**列挙する
+  - `self_replied == true` だが `last_self_reply` が resolve 前提の終端形 (「Fixed in」/「Tracked in #」/「Already addressed by」) → resolve 取りこぼし。body-file 無しの `prr resolve` (返信なし・resolve のみ) を再試行して終端させる (gate 不通過、再試行後に再 fetch で確認)
   - `self_replied == false` → 新規コメントまたは本 run の取りこぼし。**Phase A に再入して処理する** (gate 不通過)
-- **サマリ冒頭 n の定義**: gate 時点で未解決かつ非 outdated のスレッドのうち、意図的な残置 (自返信済みの Pushback / Withdrawn) の総数。本 run の Pushback / Withdrawn も gate 時点では自返信済みのため、「gate 時点の `self_replied == true` な未解決・非 outdated 数」がそのまま n になる (本 run 分 + 過去 run の残置分。同一スレッドを二重計上しない)。gate の合格条件は「gate 時点で未解決のうち、意図的な残置が n 件、それ以外 (`self_replied == false`) が 0 件であること」。
+- **サマリ冒頭 n の定義**: gate 時点で未解決かつ非 outdated のスレッドのうち、意図的な残置 (自返信済みで、かつ `last_self_reply` が Pushback / Withdrawn の終端形) の総数。本 run の Pushback / Withdrawn も gate 時点では自返信済みのため、「gate 時点の `self_replied == true` かつ終端形が Pushback / Withdrawn である未解決・非 outdated 数」がそのまま n になる (本 run 分 + 過去 run の残置分。同一スレッドを二重計上しない)。gate の合格条件は「gate 時点で未解決のうち、意図的な残置が n 件、それ以外 (`self_replied == false`、および resolve 取りこぼし) が 0 件であること」。
 
 > 補足: 旧 gate の件数一致式「gate 時点の未解決・非 outdated 数 = 本 run の Pushback + Withdrawn」は**廃止**。過去 run の pushback 残置は Phase A で self_replied として除外され本 run の分類に入らないため、run を跨ぐとこの等式は恒久的に不成立になる。
 - ローカル検証は **`verify-done` を呼んで** PASS を取る (`should/probably/seems` 系の語彙はそこで弾かれる)

@@ -25,7 +25,12 @@
 #         "url": str,
 #         "created_at": str
 #       },
-#       "self_replied": bool     # true if any subsequent comment in thread is by the PR author
+#       "self_replied": bool,    # true if any subsequent comment in thread is by the PR author
+#       "last_self_reply": str | null  # body of the PR author's most recent reply in the
+#                                      # thread (null if none) — lets the caller recover the
+#                                      # reply's terminal form (Fixed / Tracked / Pushback / …)
+#                                      # when a past run's resolve mutation failed after the
+#                                      # reply was posted
 #     }
 #   ],
 #   "issue_comments": [           # PR-level (non-inline) comments
@@ -146,7 +151,8 @@ normalized=$(jq -n \
           url: $root.url,
           created_at: $root.createdAt
         },
-        self_replied: ([$t.comments.nodes[1:][] | select(.author.login == $pr_author)] | length > 0)
+        self_replied: ([$t.comments.nodes[1:][] | select(.author.login == $pr_author)] | length > 0),
+        last_self_reply: ([$t.comments.nodes[1:][] | select(.author.login == $pr_author) | .body] | last)
       }
   ],
   issue_comments: [
