@@ -54,7 +54,7 @@ gh pr checks <PR>
   <skill-dir>/scripts/wait_gate.sh <PR> 480 30   # deadline 480 秒 < ツール timeout 10 分
   ```
 
-  これが subagent の**唯一の**待ち方である。subagent が起動した background タスク (Monitor / background Bash) は **subagent の return と同時に harness に回収され** (登録直後の消滅を対照実験で再現)、await 原語 (`TaskOutput`) も subagent には存在しない (「TaskOutput is not available inside subagents」)。exit `2` (deadline) なら wait_gate を呼び直す — 呼び直しごとに意思決定の機会が戻るため無限待ちにならない。**累計 30 分 (4 回) を超えたら escalate**。
+  これが subagent の**唯一の**待ち方である。subagent が起動した background タスク (Monitor / background Bash) は **subagent の return と同時に harness に回収され** (登録直後の消滅を対照実験で再現)、await 原語 (`TaskOutput`) も subagent には存在しない (「TaskOutput is not available inside subagents」)。exit `2` (deadline) なら wait_gate を呼び直す — 呼び直しごとに意思決定の機会が戻るため無限待ちにならない。**累計 32 分 (480 秒 × 4 回) を超えたら escalate**。
 
 - **セッション main として直接実行中**: 同じスクリプトを `run_in_background: true` で起動してよい。main 所有の background タスクは「exit → 完了通知 → 再起動」が機能する (実測済みの唯一の main 側経路)。通知で戻ったら exit code を読んで下記の分岐へ。
 
@@ -213,7 +213,7 @@ push したら Step 1 に戻り、再 watch。
 
 ## 既知の限界
 
-- **CI 完了待ち**: Step 1 の `wait_gate.sh` に委ねる (subagent 実行時は foreground blocking、main 実行時は `run_in_background` — Step 1 の契約参照)。deadline 480 秒 × 累計 30 分 (4 回) を超える CI は escalate する。さらに長い CI はユーザが deadline / 呼び直し回数の引き上げを判断する。
+- **CI 完了待ち**: Step 1 の `wait_gate.sh` に委ねる (subagent 実行時は foreground blocking、main 実行時は `run_in_background` — Step 1 の契約参照)。deadline 480 秒 × 4 回 = 累計 32 分を超える CI は escalate する。さらに長い CI はユーザが deadline / 呼び直し回数の引き上げを判断する。
 - **Infra 問題の判定**: GitHub status / runner outage の判定は外部情報依存。本スキル単体では完璧に分類できない。incident と思われる場合はユーザに確認。
 - **3-failure gate の数値**: Beck の "rule of three" に倣ったが、変更規模やシステム複雑度で適切な閾値は変わる。本スキルは 3 を default とし、ユーザ指示で上書き可能。
 - **ログ末尾だけでは root cause 不明な場合**: stacktrace の中ほどに情報があるケースは、`gh run view --log` で全ログを取得して読む必要がある。本スキルは末尾優先だが、`grep -B 50 -A 5 'Error\|FAIL\|panic'` 等で広く取る判断もある。
