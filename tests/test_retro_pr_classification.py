@@ -45,8 +45,8 @@ class TestRepresentatives(unittest.TestCase):
     def test_invalid_push_maintainer_judgment(self) -> None:
         self.assertEqual(
             classify([FINDING,
-                      "根拠: 仕様どおりの挙動です。maintainer 判断待ちとし、"
-                      "self-resolve しません"]),
+                      ("根拠: 仕様どおりの挙動です。maintainer 判断待ちとし、"
+                       "self-resolve しません")]),
             "INVALID_PUSH",
         )
 
@@ -66,8 +66,8 @@ class TestRepresentatives(unittest.TestCase):
     def test_duplicate_existing_thread_reference(self) -> None:
         self.assertEqual(
             classify([FINDING,
-                      "既存スレッド https://github.com/o/r/pull/96"
-                      "#discussion_r3683948151 と同一の指摘です"]),
+                      ("既存スレッド https://github.com/o/r/pull/96"
+                       "#discussion_r3683948151 と同一の指摘です")]),
             "DUPLICATE",
         )
 
@@ -134,8 +134,8 @@ class TestBoundaries(unittest.TestCase):
         # tradeoff として許容し、確定判断は評価 subagent が上書きする
         self.assertEqual(
             classify([FINDING,
-                      "Fixed in abc1234。同根の指摘 #discussion_r999 も"
-                      "この修正で解消しています"]),
+                      ("Fixed in abc1234。同根の指摘 #discussion_r999 も"
+                       "この修正で解消しています")]),
             "DUPLICATE",
         )
 
@@ -143,8 +143,8 @@ class TestBoundaries(unittest.TestCase):
         # 修正 + 残件 issue 化の返信は fix が終端 — VALID 優先
         self.assertEqual(
             classify([FINDING,
-                      "Fixed in abc1234。残件は follow-up として "
-                      "https://github.com/o/r/issues/5 へ"]),
+                      ("Fixed in abc1234。残件は follow-up として "
+                       "https://github.com/o/r/issues/5 へ")]),
             "VALID",
         )
 
