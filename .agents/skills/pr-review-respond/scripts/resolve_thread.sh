@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Resolve a PR review thread. The thread is resolved directly via the
-# GraphQL `resolveReviewThread` mutation — resolution no longer depends on
-# CodeRabbit noticing an `@coderabbitai resolve` mention. For CodeRabbit
-# threads the mention is still posted alongside (belt-and-suspenders, since
-# some CodeRabbit UI affordances key off it), but the thread's `isResolved`
-# state is set by this script's mutation call, not by waiting on the bot.
+# GraphQL `resolveReviewThread` mutation. The `@coderabbitai resolve`
+# mention is NEVER posted (for any vendor): CodeRabbit treats it as a
+# resolve-ALL directive for the entire PR, which swept an INVALID_PUSH
+# thread on PR #96. The mutation resolves exactly the one target thread,
+# so the mention is redundant as well as dangerous.
 #
 # Usage:
 #   resolve_thread.sh <pr-number> <root-comment-id> <classification> <vendor> [body-file]
@@ -12,9 +12,9 @@
 # classification must be one of: VALID VALID_DEFER DUPLICATE.
 # vendor is REQUIRED (4th positional arg) and must be one of: coderabbit
 # devin human. There is no implicit default — an omitted or invalid vendor
-# is a hard failure (usage + exit 2). This is deliberate: silently defaulting
-# to coderabbit would let a misclassified human/Devin thread receive an
-# `@coderabbitai resolve` mention (skills/pr-review-respond/SKILL.md Phase D).
+# is a hard failure (usage + exit 2). Vendor no longer changes the reply
+# body, but the explicit argument keeps misclassification loud and leaves
+# room for future vendor-specific wording (SKILL.md Phase D).
 #
 # Guard: INVALID_PUSH is REJECTED (non-zero exit, no API call made). Resolving
 # an INVALID_PUSH thread would tell the reviewer "fixed" when we actually
@@ -22,13 +22,18 @@
 # on the caller to remember the rule (skills/pr-review-respond/SKILL.md
 # Phase D).
 #
-# Reply body construction:
-#   - vendor=coderabbit: body-file content (if given) followed by a blank
-#     line and the `@coderabbitai resolve` directive. If body-file is
-#     omitted, the reply is just the directive line.
-#   - vendor=devin|human: body-file content only — no directive posted (a
-#     bot mention in a human/Devin thread would be confusing). If body-file
-#     is omitted, no reply is posted at all; the thread is resolved silently.
+# Reply body construction (all vendors): body-file content only — no
+# directive is ever posted. If body-file is omitted (exactly 4 arguments —
+# an explicit empty-string 5th argument is rejected with exit 2, not
+# treated as omission), no reply is posted; the thread is resolved
+# silently via the mutation. If body-file IS given
+# but its content is empty / whitespace-only, that is a caller bug and is
+# rejected up front with exit 2, before any API call — posting it would 422
+# after the resolve mutation had already succeeded (run left half-finished),
+# and silently skipping the reply would drop an explanation the caller
+# clearly intended to post. A body containing the literal
+# `@coderabbitai resolve` directive is rejected before any API call
+# (resolve-ALL hazard — see above).
 #
 # Ordering (deliberate): the thread is looked up by its root comment's
 # databaseId — paginating `reviewThreads` the same way
@@ -66,6 +71,13 @@ if [ "$#" -lt 4 ] || [ "$#" -gt 5 ]; then
   exit 2
 fi
 
+# Silent resolve is only the true omission case ($# = 4). An explicitly
+# passed empty-string 5th argument is a caller bug, not an omission.
+if [ "$#" -eq 5 ] && [ -z "$5" ]; then
+  echo "error: body-file argument is an empty string (omit the 5th argument entirely to resolve silently)" >&2
+  exit 2
+fi
+
 pr="$1"
 comment_id="$2"
 classification="$3"
@@ -96,35 +108,42 @@ case "$vendor" in
     ;;
 esac
 
-owner=$(gh repo view --json owner --jq '.owner.login')
-repo=$(gh repo view --json name --jq '.name')
-
 body_content=""
 if [ -n "$body_file" ]; then
   if [ ! -f "$body_file" ]; then
     echo "error: body file not found: $body_file" >&2
     exit 2
   fi
+  # Content guard (before any API call): never let the CodeRabbit resolve-ALL
+  # directive reach GitHub inside a reply body.
+  if grep -qF '@coderabbitai resolve' "$body_file"; then
+    echo "error: body contains '@coderabbitai resolve' — CodeRabbit treats it as resolve-ALL for the entire PR (swept an INVALID_PUSH thread on PR #96). Remove it; resolution is done via GraphQL resolveReviewThread (prr resolve)." >&2
+    exit 1
+  fi
   body_content=$(cat "$body_file")
+  # An explicitly given body file must have real content: empty / whitespace-
+  # only means the caller meant to post a reply but built the body wrong.
+  # Fail loudly instead of silently resolving without the reply.
+  if [ -z "${body_content//[[:space:]]/}" ]; then
+    echo "error: body file is empty: $body_file (omit the argument to resolve silently)" >&2
+    exit 2
+  fi
 fi
 
+owner=$(gh repo view --json owner --jq '.owner.login')
+repo=$(gh repo view --json name --jq '.name')
+
+# All vendors post the body-file content as-is; `@coderabbitai resolve` is
+# never emitted (resolve-ALL hazard — see the header comment).
+# By this point an explicitly given body file is guaranteed non-empty (the
+# empty case was rejected with exit 2 above); only an omitted body-file
+# argument means "resolve silently, no reply".
 skip_reply=false
-case "$vendor" in
-  coderabbit)
-    if [ -n "$body_file" ]; then
-      body="${body_content}"$'\n\n''@coderabbitai resolve'
-    else
-      body="@coderabbitai resolve"
-    fi
-    ;;
-  devin|human)
-    if [ -n "$body_file" ]; then
-      body="$body_content"
-    else
-      skip_reply=true
-    fi
-    ;;
-esac
+if [ -n "$body_file" ]; then
+  body="$body_content"
+else
+  skip_reply=true
+fi
 
 # Look up the GraphQL thread id for this root comment's databaseId by
 # paginating reviewThreads (same cursor-loop shape as

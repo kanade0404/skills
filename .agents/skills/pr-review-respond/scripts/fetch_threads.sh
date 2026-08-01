@@ -25,7 +25,12 @@
 #         "url": str,
 #         "created_at": str
 #       },
-#       "self_replied": bool     # true if any subsequent comment in thread is by the PR author
+#       "self_replied": bool,    # true if any subsequent comment in thread is by the PR author
+#       "last_self_reply": str | null  # body of the PR author's most recent reply in the
+#                                      # thread (null if none) — lets the caller recover the
+#                                      # reply's terminal form (Fixed / Tracked / Pushback / …)
+#                                      # when a past run's resolve mutation failed after the
+#                                      # reply was posted
 #     }
 #   ],
 #   "issue_comments": [           # PR-level (non-inline) comments
@@ -80,7 +85,8 @@ while :; do
             id
             isResolved
             isOutdated
-            comments(first:50) {
+            comments(first:100) {
+              pageInfo { hasNextPage endCursor }
               nodes {
                 databaseId
                 body
@@ -103,6 +109,44 @@ while :; do
   cursor=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // empty' <<<"$resp")
   pr_author=$(jq -r '.data.repository.pullRequest.author.login // ""' <<<"$resp")
   [ "$hasNext" = "true" ] || break
+done
+
+# Comments connection follow-up pagination: threads with >100 comments only
+# carry their first page above. last_self_reply must reflect the LATEST
+# self reply in the whole thread (a stale one misreads the terminal form →
+# missed resolve retries or duplicate replies), so fetch the remaining pages
+# per thread via node(id:) before normalizing.
+for tid in $(jq -r '.[] | select(.comments.pageInfo.hasNextPage == true) | .id' <<<"$threads_json"); do
+  ccursor=$(jq -r --arg id "$tid" '.[] | select(.id == $id) | .comments.pageInfo.endCursor' <<<"$threads_json")
+  while [ -n "$ccursor" ]; do
+    cresp=$(gh api graphql -F id="$tid" -F cursor="$ccursor" -f query='query($id:ID!, $cursor:String) {
+      node(id:$id) {
+        ... on PullRequestReviewThread {
+          comments(first:100, after:$cursor) {
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              databaseId
+              body
+              path
+              line
+              startLine
+              originalLine
+              url
+              createdAt
+              author { login }
+            }
+          }
+        }
+      }
+    }')
+    threads_json=$(jq -c --arg id "$tid" --argjson r "$cresp" \
+      'map(if .id == $id then .comments.nodes += $r.data.node.comments.nodes else . end)' <<<"$threads_json")
+    if [ "$(jq -r '.data.node.comments.pageInfo.hasNextPage' <<<"$cresp")" = "true" ]; then
+      ccursor=$(jq -r '.data.node.comments.pageInfo.endCursor' <<<"$cresp")
+    else
+      ccursor=""
+    fi
+  done
 done
 
 # General (issue-level) comments — coderabbit summary, devin overview, etc.
@@ -130,6 +174,10 @@ normalized=$(jq -n \
     $threads[]
     | . as $t
     | ($t.comments.nodes[0]) as $root
+    # Replies = every comment except the root, keyed by databaseId (not by
+    # array position) and ordered by createdAt so "last" is truly the most
+    # recent even across paginated pages.
+    | ([$t.comments.nodes[] | select(.databaseId != $root.databaseId)] | sort_by(.createdAt)) as $replies
     | {
         thread_id: $t.id,
         is_resolved: $t.isResolved,
@@ -146,7 +194,8 @@ normalized=$(jq -n \
           url: $root.url,
           created_at: $root.createdAt
         },
-        self_replied: ([$t.comments.nodes[1:][] | select(.author.login == $pr_author)] | length > 0)
+        self_replied: ([$replies[] | select(.author.login == $pr_author)] | length > 0),
+        last_self_reply: ([$replies[] | select(.author.login == $pr_author) | .body] | last)
       }
   ],
   issue_comments: [

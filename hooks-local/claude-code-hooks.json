@@ -8,6 +8,15 @@
           "command": "file_path=$(jq -r '.tool_input.file_path // empty'); case \"$file_path\" in *.claude/.pr-monitor/*) echo 'pr-monitor state files must be updated via `bash <skill>/scripts/prm state-init|state-merge|state-apply` (read-modify-write; use state-apply for array fields). Raw Write/Edit is blocked to prevent blind overwrites.' >&2; exit 2 ;; *) exit 0 ;; esac"
         }
       ]
+    },
+    {
+      "matcher": "Bash",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "cmd=$(jq -r '.tool_input.command // empty'); case \"$cmd\" in *'@coderabbitai resolve'*) echo 'Posting `@coderabbitai resolve` is blocked: CodeRabbit treats it as resolve-ALL for the entire PR (it swept an INVALID_PUSH thread on PR #96). Resolve the specific thread via `bash <skill>/scripts/prr resolve` (GraphQL resolveReviewThread) instead.' >&2; exit 2 ;; *) exit 0 ;; esac"
+        }
+      ]
     }
   ]
 }

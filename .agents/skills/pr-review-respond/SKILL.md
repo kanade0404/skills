@@ -70,9 +70,9 @@ scripts/
 
 | Subcommand | 役割 |
 |---|---|
-| `prr fetch <PR>` | 全 review thread + PR 一般コメントを GraphQL + REST で取得し、vendor 判定 (`coderabbit` / `devin` / `human`) と `self_replied` フラグを付けた正規化 JSON を stdout に出力 |
+| `prr fetch <PR>` | 全 review thread + PR 一般コメントを GraphQL + REST で取得し、vendor 判定 (`coderabbit` / `devin` / `human`)・`self_replied` フラグ・`last_self_reply` (自分の最終返信本文、無ければ null) を付けた正規化 JSON を stdout に出力 |
 | `prr reply <PR> <comment-id> <body-file>` | 正しい `/repos/{O}/{R}/pulls/{PR}/comments/{id}/replies` エンドポイントで返信投稿。本文は file 経由で multi-line / 引用符事故を防ぐ |
-| `prr resolve <PR> <comment-id> <classification> <vendor> [body-file]` | vendor (`coderabbit`/`devin`/`human`、**必須・省略不可**) 別に返信本文を組み立てたうえで (coderabbit のみ `@coderabbitai resolve` を併記)、GraphQL `resolveReviewThread` mutation で全 vendor のスレッドを直接 resolve。`classification` は `VALID` / `VALID_DEFER` / `DUPLICATE` のみ許可。**`INVALID_PUSH` を渡すと非ゼロ exit で拒否する** (誤 resolve ガード、後述)。vendor を省略・誤指定すると usage を表示して非ゼロ exit で拒否する (暗黙デフォルト廃止 — 誤 vendor 判定で人間スレッドに `@coderabbitai resolve` を投稿する事故を防ぐ) |
+| `prr resolve <PR> <comment-id> <classification> <vendor> [body-file]` | vendor (`coderabbit`/`devin`/`human`、**必須・省略不可**) を明示したうえで、GraphQL `resolveReviewThread` mutation で**対象スレッドだけ**を直接 resolve し、**resolve 成功 (`isResolved == true`) を確認してから** body-file の返信本文を投稿する (mutation 失敗時に「Fixed in …」等の成功を示す返信だけが残る事故を防ぐための順序)。**`@coderabbitai resolve` はどの vendor にも併記しない** — CodeRabbit 側で PR 全スレッドの一括 resolve として作用し、INVALID_PUSH スレッドまで巻き込む (実測: PR #96)。`classification` は `VALID` / `VALID_DEFER` / `DUPLICATE` のみ許可。**`INVALID_PUSH` を渡すと非ゼロ exit で拒否する** (誤 resolve ガード、後述)。vendor を省略・誤指定すると usage を表示して非ゼロ exit で拒否する |
 | `prr summary <PR> <body-file>` | 集約 Review Response Summary を **新規** issue comment として投稿 (毎回新規投稿、過去サマリは履歴として残す) |
 | `prr wait-ci <PR> [interval]` | `gh pr checks --watch` をラップし全 check 完了まで block。失敗時は exit 非ゼロで呼出側に通知 (本スキルは retry しない) |
 | `prr defer <PR> <thread-url> <title> <body-file>` | `VALID_DEFER` 判定のフォロー issue を作成し、`<issue-number> <issue-url>` を stdout に出力。本文に元スレッド URL と PR URL を自動付記する |
@@ -98,17 +98,17 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prr" fetch <PR>   # → 正規化 JSON を std
 - `pulls/<PR>/comments` 相当の inline thread を root + 履歴付きで返す
 - `issues/<PR>/comments` 相当の PR 一般コメントも同梱 (CodeRabbit のサマリ・walkthrough や Devin のレビュー総評)
 - 各 root comment に `vendor` フィールドを付与 (`coderabbit` / `devin` / `human`、author login と本文から判定、bot suffix のような表面ルールは持たない)
-- `self_replied` フラグで「自分が既に返信済みのスレッド」を識別
+- `self_replied` フラグで「自分が既に返信済みのスレッド」を識別し、`last_self_reply` でその返信の終端形 (どの分類として終端させたか) を復元可能にする
 
 呼出側 (本スキル本体) は得られた JSON から:
 
 - `is_resolved == true` / `is_outdated == true` を除外
 - 自分が投稿した集約サマリ (`Review Response Summary` ヘッダ) を `issue_comments` から除外
-- `self_replied == true` のスレッドはスキップ (多重返信防止)
+- `self_replied == true` のスレッドはスキップ (多重返信防止)。**ただしスキップ前に resolve 取りこぼしを修復する**: `self_replied == true` かつ未 resolve で、`last_self_reply` が resolve 前提の終端形 (「Fixed in」/「Tracked in #」/「Already addressed by」) の場合、それは過去 run で返信投稿後に `resolveReviewThread` mutation だけが失敗した残骸 — `self_replied` 単独では意図的残置 (Pushback / Withdrawn) と区別できないため、この判別は必ず `last_self_reply` の終端形で行う。body-file 無しの `prr resolve <PR> <id> <分類> <vendor>` (返信を重複させず resolve のみ) を再試行して終端させる (分類は終端形から復元: Fixed → `VALID` / Tracked → `VALID_DEFER` / Already addressed → `DUPLICATE`)。意図的残置としてスキップしてよいのは `last_self_reply` が Pushback 終端形 (⏳ 定型行) または Withdrawn 終端形の場合のみ
 
 ### Phase B — 妥当性 verify (triage)
 
-各 thread / コメントを **4 値分類** する。判定は description ではなく **指摘本文 + 該当コード** を読んで行う。レビュアー名で重み付けしない。
+各 thread / コメントを **4 値分類** する。判定は description ではなく **指摘本文 + 該当コード** を読んで行う。レビュアー名で重み付けしない。なお**撤回検出** (CodeRabbit の `<review_comment_withdrawn>` 等、レビュアー自身による指摘の撤回) は 4 値 triage の対象外で、第 5 の終端 **Withdrawn** に直行する (扱いは Phase D「レビュアーが指摘を撤回した場合」を参照。分類表は 4 値のまま)。
 
 | 分類 | 定義 |
 |---|---|
@@ -193,31 +193,44 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prr" reply <PR> <root-comment-id> <body-file>
 bash "${CLAUDE_SKILL_DIR}/scripts/prr" resolve <PR> <root-comment-id> <classification> <vendor> [body-file]
 # classification は VALID / VALID_DEFER / DUPLICATE のいずれか。
 # INVALID_PUSH を渡すとスクリプトが非ゼロ exit で拒否する (誤 resolve ガード)。
-# vendor=coderabbit: body-file 内容 + 改行 + "@coderabbitai resolve" を返信投稿してから resolve。
-# vendor=devin/human: body-file 内容のみを返信投稿してから resolve (ディレクティブは付けない)。
-#   body-file を省略すると返信は送らず resolve のみ行う。
-# resolve 自体はいずれの vendor でも GraphQL resolveReviewThread mutation でスレッドを直接
-# resolve する (CodeRabbit のメンション頼みではない — メンションは coderabbit 向けの併記のみ)
+# 全 vendor: GraphQL mutation で resolve し、成功 (isResolved == true) を
+#   確認してから body-file 内容を返信投稿する (順序は resolve が先 —
+#   mutation 失敗時に成功を示す返信を残さないため)。
+#   body-file を省略した場合は返信を送らず resolve のみ行う。
+#   body-file を明示指定したのに内容が空 (空白のみ) の場合は
+#   呼び出し側のミスとして exit 2 で拒否する (黙って返信を落とさない)。
+# resolve は GraphQL resolveReviewThread mutation で対象スレッドだけを直接 resolve する。
+# `@coderabbitai resolve` は出さない (PR 全スレッド一括 resolve として作用するため)。
 ```
 
 vendor 別の使い分け:
 
 | 分類 | CodeRabbit | Devin | 人間 |
 |---|---|---|---|
-| `VALID` | `prr resolve` vendor=coderabbit (body: 「Fixed in `<SHA>`」、`@coderabbitai resolve` 併記) | `prr resolve` vendor=devin (body: 「Fixed in `<SHA>`」、ディレクティブ無し) | `prr resolve` vendor=human (body: 「Fixed in `<SHA>`. Ready for re-review.」、ディレクティブ無し) |
-| `INVALID_PUSH` | `prr reply` (根拠のみ、resolve しない) | `prr reply` (根拠のみ) | `prr reply` (根拠 + 質問形式) |
+| `VALID` | `prr resolve` vendor=coderabbit (body: 「Fixed in `<SHA>`」) | `prr resolve` vendor=devin (body: 「Fixed in `<SHA>`」) | `prr resolve` vendor=human (body: 「Fixed in `<SHA>`. Ready for re-review.」) |
+| `INVALID_PUSH` | `prr reply` (根拠 + 末尾に定型行 ⏳、resolve しない) | `prr reply` (根拠 + 末尾に定型行 ⏳) | `prr reply` (根拠 + 質問形式 + 末尾に定型行 ⏳) |
 | `VALID_DEFER` | `prr resolve` vendor=coderabbit (body: 「Tracked in #`<issue>`」) | `prr resolve` vendor=devin (body: 「Tracked in #`<issue>`」) | `prr resolve` vendor=human (body: 「Tracked in #`<issue>`」) |
 | `DUPLICATE` | `prr resolve` vendor=coderabbit (body: 「Already addressed by `<other-thread-url>`」) | `prr resolve` vendor=devin (body: Already addressed by ...) | `prr resolve` vendor=human (同左) |
+| Withdrawn (triage 対象外の終端) | `prr reply` (body: 撤回確認の終端返信。resolve しない) | `prr reply` (同左) | `prr reply` (同左) |
 
 対応済み (修正 commit 済み / issue 化済み / 重複参照済み) のスレッドは vendor を問わず resolve し、PR の未解決スレッド数を実態に一致させる。これは `pr-monitor` の `prm` が持つ `unresolved_count` (`isResolved == false` の全スレッド数) が収束判定の前提にしている値そのものであり、CodeRabbit 以外のスレッドを resolve せず放置すると、対応済みでも `unresolved_count` が減らず収束ループが成立しない。
 
 **重要**: `INVALID_PUSH` は **どのレビュアーに対しても resolve コマンドを発行しない** (`prr reply` のみ使用)。reviewer 側に「無視された」と取られる余地を消すため。この規律は運用 (書き手の注意) だけに頼らず、`resolve_thread.sh` 自身が `classification` 引数に `INVALID_PUSH` を渡された時点で非ゼロ exit するガードとして実装されている。
+
+未 resolve のまま残す以上、**意図が UI から読めること**が必須 — GitHub の unresolved カウンタは「未対応」と「意図的な残し」を区別せず、maintainer が放置と誤認して問い合わせ・強制 resolve に至る (実測: PR #96)。そのため:
+
+- pushback 返信の**末尾に定型行を必ず含める**: `⏳ maintainer 判断待ち — 規律により self-resolve しません`
+- Phase E の集約サマリ**冒頭**に「未 resolve n 件 (意図的な残し: 自返信済み Pushback / Withdrawn — 過去 run の残置を含む。outdated 未解決は含まず別掲)」を明記する (n の定義は Phase E 最終 gate を参照)
+
+**レビュアーが指摘を撤回した場合** (CodeRabbit の `<review_comment_withdrawn>` 等): スレッドの resolve 操作は**しない** (勝手に閉じない — 撤回の事実確認は maintainer に残す)。ただし終端分類上は **resolve 相当 (争点消滅) として扱い**、未終端カウントに数えず、集約サマリに「撤回により終端 (スレッドは未 resolve のまま)」と記載する。加えて、`prr reply` で撤回確認の終端返信を**必ず投稿する** (例: 「本指摘はレビュアーにより撤回されたため終端とします (スレッドは規律により未 resolve のまま)」)。この自返信が Phase E gate (ii') の `self_replied == true` 要件を満たし、次 run の Phase A で自動的に除外される (返信を省くと gate が恒久不通過になり、毎 run 同スレッドを再処理し続ける)。監視側 (`pr-monitor`) は、そのコメントを一度 `known_comment_ids` に claim した後は再 dispatch しない (新設監視の初回 poll では claim 前のため 1 回 dispatch されうる — その場合も本スキルが撤回済みと判定して終端するだけで、実害は冗長 dispatch 1 回に留まり軽微)。
 
 返信本文の最低構成 (INVALID_PUSH の例):
 
 ```text
 本指摘は採用しません。理由: <YAGNI / 既存方針 / 前提誤り / トレードオフ のいずれか> — <1-2 文で具体>。
 再考の余地があればコメントで詳細を教えてください。
+
+⏳ maintainer 判断待ち — 規律により self-resolve しません
 ```
 
 ### Phase E — 集約サマリ投稿 + 最終 gate
@@ -234,15 +247,17 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prr" summary <PR> <body-file>
 ```markdown
 ## Review Response Summary (<YYYY-MM-DD HH:MM JST>)
 
-| Reviewer | Total | Fixed | Pushback | Deferred | Duplicate |
-|---|---|---|---|---|---|
-| CodeRabbit | 8 | 5 | 2 | 1 | 0 |
-| Devin | 3 | 2 | 1 | 0 | 0 |
-| @<login> | 1 | 0 | 0 | 0 | 1 |
+未 resolve <n> 件 (意図的な残し: 自返信済み Pushback / Withdrawn — 過去 run の残置を含む。outdated 未解決は含まず別掲。リンクは下記各セクション)
 
-### Pushback (要 reviewer 判断)
+| Reviewer | Total | Fixed | Pushback | Deferred | Duplicate | Withdrawn |
+|---|---|---|---|---|---|---|
+| CodeRabbit | 8 | 5 | 2 | 1 | 0 | 0 |
+| Devin | 3 | 2 | 1 | 0 | 0 | 0 |
+| @<login> | 1 | 0 | 0 | 0 | 1 | 0 |
+
+### Pushback (要 reviewer 判断 — 過去 run の意図的残置もここに列挙し、その旨を付記)
 - [<thread-url>] <1 行サマリ>: <根拠 1 行>
-- [<thread-url>] <1 行サマリ>: <根拠 1 行>
+- [<thread-url>] <1 行サマリ>: <根拠 1 行> (過去 run の残置)
 
 ### Deferred
 - [<thread-url>] → #<issue>
@@ -250,12 +265,29 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prr" summary <PR> <body-file>
 ### Fixed (commit)
 - [<thread-url>] → `<SHA>`
 
+### Withdrawn (該当時のみ)
+- [<thread-url>] 撤回により終端 (スレッドは未 resolve のまま)
+
+### Outdated (該当時のみ・別掲 — 冒頭 n には含めない)
+- [<thread-url>] outdated のため処理対象外 (未 resolve のまま残置)
+
 各スレッドへの返信は thread 内に投稿済み。
 ```
 
-最終 gate：
+最終 gate — **(i) の件数一致 + gate 時点の集合検査** で確認する：
 
-- 未解決スレッド総数 - サマリの (Fixed + Pushback + Deferred + Duplicate) = 0 を確認
+- **(i) 分類の完全性 — Phase A fetch 時点**: Phase A で fetch した処理対象スレッド数 (resolved / outdated / self_replied 除外後) = サマリの Fixed + Pushback + Deferred + Duplicate + Withdrawn の和。処理漏れをここで検出する。
+- **(ii') 各分類スレッドの終端状態 — gate 時点**: gate 時点で `prr fetch` を再実行し、本 run で分類した各スレッドの終端状態を **1 件ずつ個別に** 確認する:
+  - Fixed / Deferred / Duplicate → resolve 済み (`is_resolved == true`) であること
+  - Pushback / Withdrawn → 未 resolve (`is_resolved == false`) かつ自返信済み (`self_replied == true`) であること。ただし maintainer / レビュアー側で既に resolve されていた場合は終端として許容し (unresolve はしない)、サマリ冒頭 n から除外して「第三者 resolve 済み」として別掲する
+  - 不一致があれば、そのスレッドを **URL で名指しして Phase D に差し戻す** (gate 不通過)
+- **(iii') 分類外の未解決スレッド — gate 時点**: 同じ再 fetch で「本 run の分類に無い、未解決かつ非 outdated のスレッド」が残っていた場合。`self_replied` 単独で意図的残置と判定してはならない (返信成功後に resolve mutation だけが失敗したスレッドも `self_replied == true` になる) — 必ず `last_self_reply` の終端形まで見る:
+  - `self_replied == true` かつ `last_self_reply` が Pushback 終端形 (⏳ 定型行) または Withdrawn 終端形 → 過去 run の意図的残置。許容し、サマリ冒頭の n に**含めて**列挙する
+  - `self_replied == true` だが `last_self_reply` が resolve 前提の終端形 (「Fixed in」/「Tracked in #」/「Already addressed by」) → resolve 取りこぼし。body-file 無しの `prr resolve` (返信なし・resolve のみ) を再試行して終端させる (gate 不通過、再試行後に再 fetch で確認)
+  - `self_replied == false` → 新規コメントまたは本 run の取りこぼし。**Phase A に再入して処理する** (gate 不通過)
+- **サマリ冒頭 n の定義**: gate 時点で未解決かつ非 outdated のスレッドのうち、意図的な残置 (自返信済みで、かつ `last_self_reply` が Pushback / Withdrawn の終端形) の総数。本 run の Pushback / Withdrawn も gate 時点では自返信済みのため、「gate 時点の `self_replied == true` かつ終端形が Pushback / Withdrawn である未解決・非 outdated 数」がそのまま n になる (本 run 分 + 過去 run の残置分。同一スレッドを二重計上しない)。gate の合格条件は「gate 時点で未解決のうち、意図的な残置が n 件、それ以外 (`self_replied == false`、および resolve 取りこぼし) が 0 件であること」。
+
+> 補足: 旧 gate の件数一致式「gate 時点の未解決・非 outdated 数 = 本 run の Pushback + Withdrawn」は**廃止**。過去 run の pushback 残置は Phase A で self_replied として除外され本 run の分類に入らないため、run を跨ぐとこの等式は恒久的に不成立になる。
 - ローカル検証は **`verify-done` を呼んで** PASS を取る (`should/probably/seems` 系の語彙はそこで弾かれる)
 - CI 完了待ちも `prr` 経由:
 
@@ -269,7 +301,7 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prr" wait-ci <PR>   # 全 check 完了まで b
 
 - 同一ターン内で `wait-ci` (または委譲した監視) の完了 (pass/fail) まで確認できるなら、そのまま最終報告に進む。
 - 同一ターン内で完結できない場合、最終報告の代わりに **`WAITING` verdict を明示的に返す**:
-  - 現在までの進捗 (Fixed / Pushback / Deferred / Duplicate の内訳)
+  - 現在までの進捗 (Fixed / Pushback / Deferred / Duplicate / Withdrawn の内訳)
   - 何を待っているか (CI の残り check / 追加レビュー等)
   - 再開条件 (checks 完了、新規コメント等) と再開方法 (呼び出し元がポーリングするか、`pr-monitor` 等に引き継ぐか)
   - `WAITING` を返したターンで end_turn してよいのは、「実行環境前提」表の対話ローカル / ヘッドレス subagent のように **`WAITING` を受け取る相手が存在する場合のみ**
@@ -295,7 +327,7 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prr" escalate <PR> <reason> <body-file>
 
 ## Stats
 - Threads processed: <total>
-- Fixed: <n>  / Pushback: <n>  / Deferred: <n>  / Duplicate: <n>
+- Fixed: <n>  / Pushback: <n>  / Deferred: <n>  / Duplicate: <n>  / Withdrawn: <n>
 
 ## Commits
 - `<SHA>` <message>
@@ -321,7 +353,7 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prr" escalate <PR> <reason> <body-file>
 
 - 本文構造が CodeRabbit walkthrough / nitpick markup を含む → `coderabbit` で固定
 - 本文に Devin 特有のシグネチャ / Confidence 表記 → `devin` で固定
-- それ以外で script の判定が曖昧な場合 → **人間として扱う** (`@coderabbitai resolve` メンションを誤って付与しないための安全側デフォルト。resolve 自体は vendor によらず GraphQL mutation で行うため、この判定が影響するのは「resolve するか否か」ではなく「CodeRabbit 宛のメンションを併記するか否か」だけ)
+- それ以外で script の判定が曖昧な場合 → **人間として扱う** (安全側デフォルト。resolve 自体は vendor によらず GraphQL mutation で行い、ディレクティブはどの vendor にも出さないため、この判定が影響するのは返信の文言だけ)
 
 PR 作者本人 (= 自分) のコメントは fetcher 側ではフィルタしない。本スキルが「自分のコメント」「自分の集約サマリ」を識別して捌く。
 
@@ -344,7 +376,7 @@ PR 作者本人 (= 自分) のコメントは fetcher 側ではフィルタし�
 - **ローカルログファイル**: `pr-review-response.md` 等のリポ内ファイルは作らない (トレースは PR 集約コメント 1 本のみ)。
 - **構造変更を含む commit / テストコード**: それらは `tidy-first` / `tdd` 経由の出力で、本スキル内では呼び出しのみ。
 - **`@devin` 再レビュー mention 文字列**: commit push を契機にした自動再評価に任せる。
-- **`@coderabbitai resolve` コマンド (INVALID_PUSH 時)**: pushback 時は本文のみ、resolve 文字列は出さない。
+- **`@coderabbitai resolve` ディレクティブ**: どの分類・どの vendor でも出さない (PR 全スレッド一括 resolve として作用するため。対象スレッドの resolve は GraphQL mutation が担う)。第 1 防御は**スクリプト自身の body ガード** — `prr reply` / `prr resolve` / `prr summary` は body にこのディレクティブが含まれていたら API 呼び出し前に非ゼロ exit で拒否する (配布に同梱され、consumer 環境でも機能する)。ディレクティブ文字列を本文で言及したい場合は言い換える (例: 「CodeRabbit の一括 resolve ディレクティブ」と書く)。第 2 防御が本 repo の hooks-local の deny hook (consumer には配布されない)。
 - **既処理 thread への 2 度目の返信**: 自分が返信済みの thread には何も投稿しない。
 - **既存集約サマリの編集差分**: サマリ更新は edit ではなく新規 issue comment として出す。
 
