@@ -73,6 +73,8 @@ Task tool で `feature-dev:code-reviewer` または `pr-review-toolkit:code-revi
 8. Dead Code / Unused — 未使用 import / 到達不能分岐 / コメントアウトされたコード / 過去の feature flag 残骸
 9. Performative Comments — コードを音読しただけのコメント / TODO/FIXME 新規追加
 10. Convention — CLAUDE.md / 既存 ADR / 既存コードの慣例と矛盾していないか
+11. Fail-open / Silent-failure — 矛盾するフラグ・検証不能な入力・失敗しうる外部操作 (push / resolve / API) の結果を黙って通す / 黙って捨てる / 黙って続行していないか (既定は fail-closed: 明示 exit・escalate・エラー行の emit)
+12. Doc-Impl 整合 — SKILL.md / README の数値 (デフォルト値・上限)・実行順序・診断文言が実装と一致しているか
 
 ## Severity
 
