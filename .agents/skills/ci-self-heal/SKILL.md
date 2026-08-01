@@ -37,9 +37,9 @@ Superpowers `systematic-debugging` の Iron Law を CI 失敗対応に適用し�
 
 ## ワークフロー
 
-### Step 1 — CI watch 開始 (Monitor で非ブロック)
+### Step 1 — CI watch 開始 (wait_gate.sh — 待ちの form は実行文脈で決まる)
 
-`gh pr checks --watch` をフォアグラウンドで回さない — 長時間 main を専有し、harness のスリープ制約にも当たる。**`Monitor` ツール**に poll ループを渡して background で待機し、status 変化だけをイベントとして受け取る (main は解放)。
+`gh pr checks --watch` を裸のフォアグラウンドで回さない (終端条件と deadline を持たないため制御が戻らない)。待ちは同梱スクリプト **`scripts/wait_gate.sh`** に一本化する — CI 終端をポーリングし、**終端 or deadline で必ず exit** して結果を exit code で機械分類する: `0` = 全 check 終端かつ緑 (fail / cancel が 0。skipping / neutral は非失敗) / `1` = 終端したが fail または cancel を含む / `2` = deadline 到達 (未終端) / `3` = gh の連続失敗。`length > 0` ガード (push 直後の空配列を「緑」と誤認しない)・終端 check の逐次 emit (緑でも沈黙しない coverage 規律) はスクリプト内に実装済み。
 
 まず現状把握:
 
@@ -47,33 +47,21 @@ Superpowers `systematic-debugging` の Iron Law を CI 失敗対応に適用し�
 gh pr checks <PR>
 ```
 
-次に `Monitor` を呼ぶ。`description`=`"CI for PR #<PR>"`, `timeout_ms`=`1800000` (30 分上限、超過は escalate), `persistent`=`false`, `command`=以下:
+次に wait_gate を呼ぶ。**呼び方は自分の実行文脈で決まる** (2026-08-01 の対照実験で確定した harness 制約):
 
-```bash
-prev=""; errs=0
-while true; do
-  s=$(gh pr checks <PR> --json name,bucket 2>/dev/null) || {
-    errs=$((errs+1))
-    # gh が連続失敗するなら沈黙して timeout を待たず escalate (silent spin 防止)
-    [ "$errs" -ge 5 ] && { echo "ERROR: gh pr checks が $errs 回連続失敗"; exit 3; }
-    sleep 30; continue
-  }
-  errs=0
-  cur=$(jq -r '.[] | select(.bucket!="pending") | "\(.name): \(.bucket)"' <<<"$s" | sort)
-  # 新たに終端した check を 1 行ずつ emit (pass/fail/cancel/skipping すべて)
-  comm -13 <(printf '%s\n' "$prev") <(printf '%s\n' "$cur")
-  prev="$cur"
-  # 全 check が非 pending になったら run 完了として exit。
-  # `length > 0` ガード必須: push 直後は GitHub が check を登録する前に `[]` が返り、
-  # 空配列に対する `all(...)` は vacuous-true で即 break → CI 未起動を「緑」と誤認する。
-  jq -e 'length > 0 and all(.bucket!="pending")' <<<"$s" >/dev/null 2>&1 && break
-  sleep 30
-done
-```
+- **subagent として実行中** (shipping からの dispatch が主経路): **foreground で blocking 呼び出しする**。
 
-終端 bucket (pass/fail/cancel/skipping) を漏れなく emit するため、緑でも赤でも沈黙しない (Monitor の coverage 規律)。check がまだ 1 件も登録されていない (`[]`) 間は完了とみなさず poll を続ける。Monitor が exit したら run 完了。`gh pr checks <PR> --json name,bucket` で最終状態を読み、**`fail` または `cancel` の bucket が 1 つでもあれば失敗として Step 2 へ** (`cancel` を緑と誤認しない。`skipping`/neutral は終端だが非失敗)。gh が連続失敗で `exit 3` した場合、または timeout で kill された場合は完了判定せずユーザに escalate。
+  ```bash
+  <skill-dir>/scripts/wait_gate.sh <PR> 480 30   # deadline 480 秒 < ツール timeout 10 分
+  ```
 
-**watchdog — 満了通知の不達を前提にする**: Monitor の timeout 満了イベントが配信されない事象が実測されている (PR #96, 2026-07-30: 30 分 timeout の Monitor が満了通知なしに約 8 時間放置され、ユーザー介入で発覚)。timeout を「通知が来るまでの待機上限」として通知任せにしない — Monitor 設置時に満了想定時刻を控え、**イベントが来ないまま満了想定時刻を過ぎていたら、通知を待たず自力で `gh pr checks <PR>` を 1 回観測して再判定する** (完了していれば最終状態の読み取りへ、未完了なら Monitor を再設置するか escalate)。ただし「満了時刻を過ぎたら観測する」は、イベント不達時にも制御が戻る wake 機構が無ければ実行不能 — **第 2 の wake 経路を必ず併設する**: 満了時刻に exit する background Bash (`run_in_background` の until ループ + deadline) を Monitor と同時に張る。Monitor の満了通知と background Bash の exit 通知のどちらかは届くため、片方が失われても制御が戻り、上記の自力観測を実行できる。正常完了時 (第 2 経路の発火を待たずに watch が完了した場合) は、残った background Bash / Monitor を `TaskStop` 等で撤収し、deadline プロセスの誤発火を残さない。また **自動レビュー (CodeRabbit 等) の完了待ちを CI watch の完了条件に含めない** — 本スキルの終端は checks の終端 bucket のみで判定する (レビュー対応は `pr-review-respond` の領域で、待ち合わせると review 側を starve する)。
+  これが subagent の**唯一の**待ち方である。subagent が起動した background タスク (Monitor / background Bash) は **subagent の return と同時に harness に回収され** (登録直後の消滅を対照実験で再現)、await 原語 (`TaskOutput`) も subagent には存在しない (「TaskOutput is not available inside subagents」)。exit `2` (deadline) なら wait_gate を呼び直す — 呼び直しごとに意思決定の機会が戻るため無限待ちにならない。**累計 30 分 (4 回) を超えたら escalate**。
+
+- **セッション main として直接実行中**: 同じスクリプトを `run_in_background: true` で起動してよい。main 所有の background タスクは「exit → 完了通知 → 再起動」が機能する (実測済みの唯一の main 側経路)。通知で戻ったら exit code を読んで下記の分岐へ。
+
+**`Monitor` ツールは使わない**: 満了通知の不達が実測されており (PR #96, 2026-07-30: 30 分 timeout の Monitor が満了通知なしに約 8 時間放置)、subagent 内では上記のとおり return 時に回収されて最初から存在しない。wait_gate は deadline で必ず exit するため、通知配送に依存する待ちがそもそも発生しない。
+
+exit code の分岐: `0` → 緑 (修復ループ中なら完了判定へ)。`1` → 失敗として Step 2 へ (`cancel` を緑と誤認しない)。`3` → 完了判定せずユーザに escalate (silent spin 防止)。`2` の累計超過 → escalate。また **自動レビュー (CodeRabbit 等) の完了待ちを CI watch の完了条件に含めない** — 本スキルの終端は checks の終端 bucket のみで判定する (レビュー対応は `pr-review-respond` の領域で、待ち合わせると review 側を starve する)。
 
 ### Step 2 — 失敗 check の特定
 
@@ -226,7 +214,7 @@ push したら Step 1 に戻り、再 watch。
 
 ## 既知の限界
 
-- **CI 完了待ち**: Step 1 で `Monitor` (background + 通知) に委ね main をブロックしない。30 分 (`timeout_ms`) を超える CI は timeout で kill され、その場合は完了判定せず escalate する。さらに長い CI はユーザが `timeout_ms` を上げるか、`persistent` 運用を検討。
+- **CI 完了待ち**: Step 1 の `wait_gate.sh` に委ねる (subagent 実行時は foreground blocking、main 実行時は `run_in_background` — Step 1 の契約参照)。deadline 480 秒 × 累計 30 分 (4 回) を超える CI は escalate する。さらに長い CI はユーザが deadline / 呼び直し回数の引き上げを判断する。
 - **Infra 問題の判定**: GitHub status / runner outage の判定は外部情報依存。本スキル単体では完璧に分類できない。incident と思われる場合はユーザに確認。
 - **3-failure gate の数値**: Beck の "rule of three" に倣ったが、変更規模やシステム複雑度で適切な閾値は変わる。本スキルは 3 を default とし、ユーザ指示で上書き可能。
 - **ログ末尾だけでは root cause 不明な場合**: stacktrace の中ほどに情報があるケースは、`gh run view --log` で全ログを取得して読む必要がある。本スキルは末尾優先だが、`grep -B 50 -A 5 'Error\|FAIL\|panic'` 等で広く取る判断もある。

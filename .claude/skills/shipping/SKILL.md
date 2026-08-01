@@ -188,7 +188,12 @@ push 後、以下を **1 サイクル**として回す。(a)(b) は逐次:
 
 (a) `ci-self-heal` が `HALTED` を返したら、**同サイクルの (b) を dispatch せず即 escalate** する (HALTED は終端。先へ進めない)。
 
-**待機の time-box (watchdog)**: (a)(b) を sync dispatch した subagent が外部イベント待ち (CI / ハーネス実行 / 背景プロセス) を内包する場合、待機は必ず time-box を持つ。subagent からの完了通知が time-box を超えて来ないときは、通知配線の生死を推測せず、**orchestrator (本スキル) 自身は allowed-tools 内の直接観測 — `gh pr checks` / `git rev-parse` — で再判定する**。これが本スキルの time-box fallback であり、追加 permission なしに実行できる唯一の経路。一方、イベント不達時にも自動で制御が戻る**第 2 の wake 経路** (deadline 付き background Bash / `Monitor`) を要する無人待機は、それらを allowed-tools に持つ subagent (`ci-self-heal` 等) 側の責務 — 本スキルの allowed-tools には汎用 Bash も Monitor も無く、orchestrator が自前で第 2 経路を張る場合は追加 permission が必要になる (環境により prompt が出る)。この非対称を前提に、無人での長時間待機は第 2 経路を内蔵する subagent に委譲し、orchestrator は time-box 満了時の直接観測に徹する。第 2 経路を張った側は、正常完了時 (第 2 経路の発火を待たず watch が完了した場合) に background Bash / Monitor を `TaskStop` 等で撤収する (実測: 背景タスクのサイレント死と Monitor 満了通知の不達が同一セッションで 2 回発生し、片方は約 8 時間の stall になった。逆に main 側に time-boxed の直接観測を併設した場合は merge を 27 秒で検知した)。
+**待機の所有 (「待ち = 起こし」)**: 待ちは呼び出し元が所有し、**subagent に「background の待ち」を持たせない**。前提となる harness 制約 (2026-08-01 の対照実験で確定): 同期 dispatch した subagent が起動した background タスク (Monitor / background Bash) は **subagent の return と同時に harness に回収される** (登録直後の消滅を再現)。subagent には await 原語 (`TaskOutput`) も存在しないため、subagent 内で意味を持つ待ちは **foreground blocking のみ**。この制約の下で本スキルの待機設計は 2 層で完結する:
+
+1. **orchestrator の待ち = (a)(b) の同期 dispatch そのもの**。subagent の return まで blocking で自然に戻る。第 2 の wake 経路・`Monitor`・`TaskStop` 撤収はいずれも不要 — background タスクを一切作らないから。orchestrator 自身が subagent として実行されている場合 (例: セッション main が本スキルを model 指定で background dispatch した場合) も同じで、同期 dispatch の連鎖は全段 blocking で戻る。
+2. **subagent 内の外部イベント待ち (CI 等) = `ci-self-heal` の `scripts/wait_gate.sh` の foreground blocking 呼び出し** (deadline ≤ 8 分で必ず exit し、exit code `0`/`1`/`2`/`3` で機械分類。deadline 超過は呼び直しで継続し、呼び直しごとに意思決定が戻るため無限待ちにならない)。
+
+orchestrator の time-box fallback (allowed-tools 内の直接観測 — `gh pr checks` / `git rev-parse`) は、dispatch 自体が返らない異常への最終保険としてのみ残す。セッション main が本スキルを background dispatch して離れる場合、main 側の deadline は **main 所有の** background タスクで張る — main 所有の「exit → 完了通知 → 再起動」だけが実測で機能した経路であり (PR #96 の merge 27 秒検知と同構成)、subagent 所有の待ちは全て実測で消滅した (Monitor 満了通知の不達で約 8 時間 / subagent 内二重 wake の回収で数十分、の stall 2 件)。
 
 サイクル終了時の遷移:
 
