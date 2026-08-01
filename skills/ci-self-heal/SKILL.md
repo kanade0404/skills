@@ -38,7 +38,7 @@ Superpowers `systematic-debugging` の Iron Law を CI 失敗対応に適用し�
 
 ### Step 1 — CI watch 開始 (wait_gate.sh — 待ちの form は実行文脈で決まる)
 
-`gh pr checks --watch` を裸のフォアグラウンドで回さない (終端条件と deadline を持たないため制御が戻らない)。待ちは同梱スクリプト **`scripts/wait_gate.sh`** に一本化する — CI 終端をポーリングし、**終端 or deadline で必ず exit** して結果を exit code で機械分類する: `0` = 全 check 終端かつ緑 (fail / cancel が 0。skipping / neutral は非失敗) / `1` = 終端したが fail または cancel を含む / `2` = deadline 到達 (未終端) / `3` = gh の連続失敗。`length > 0` ガード (push 直後の空配列を「緑」と誤認しない)・終端 check の逐次 emit (緑でも沈黙しない coverage 規律) はスクリプト内に実装済み。
+`gh pr checks --watch` を裸のフォアグラウンドで回さない (終端条件と deadline を持たないため制御が戻らない)。待ちは同梱スクリプト **`scripts/wait_gate.sh`** に一本化する — CI 終端をポーリングし、**終端 or deadline で必ず exit** して結果を `WAIT_GATE_RESULT=` 行 + exit code で通知する。判定はまず `WAIT_GATE_RESULT=` 行を読む (source of truth — 読み方の契約は Step 1 末尾)。exit code は補助情報で、対応は: `0` = 全 check 終端かつ緑 (fail / cancel が 0。skipping / neutral は非失敗) / `1` = 終端したが fail または cancel を含む / `2` = deadline 到達 (未終端) / `3` = gh の連続失敗。`length > 0` ガード (push 直後の空配列を「緑」と誤認しない)・終端 check の逐次 emit (緑でも沈黙しない coverage 規律) はスクリプト内に実装済み。
 
 まず現状把握:
 
@@ -60,7 +60,7 @@ gh pr checks <PR>
 
 **`Monitor` ツールは使わない**: 満了通知の不達が実測されており (PR #96, 2026-07-30: 30 分 timeout の Monitor が満了通知なしに約 8 時間放置)、subagent 内では上記のとおり return 時に回収されて最初から存在しない。wait_gate は deadline で必ず exit するため、通知配送に依存する待ちがそもそも発生しない。
 
-**判定はまず出力の `WAIT_GATE_RESULT=` 行を読む — これが source of truth** (green / red / deadline / gh-unreachable...)。foreground なら tool result を、background なら output ファイルを Read して読む。exit code はその後に突き合わせる補助情報 — ラッパーや連結コマンドが exit code を `0` に上書きしても、先に `WAIT_GATE_RESULT=` を読んでいれば red を緑と誤認しない。行が欠落・重複している、値が未知、または exit code と矛盾する場合は fail-closed: 完了判定せずユーザに escalate する。
+**判定はまず出力の `WAIT_GATE_RESULT=` 行を読む — これが source of truth**。受理する行形式: `green` / `red` / `deadline` は値の完全一致、`gh-unreachable` は診断テキストのサフィックスが続く形式 (`WAIT_GATE_RESULT=gh-unreachable (...)`) を許容する — サフィックス付きを「未知値」と誤判定しない。foreground なら tool result を、background なら output ファイルを Read して読む。exit code はその後に突き合わせる補助情報 — ラッパーや連結コマンドが exit code を `0` に上書きしても、先に `WAIT_GATE_RESULT=` を読んでいれば red を緑と誤認しない。行が欠落・重複している、値が未知、または exit code と矛盾する場合は fail-closed: 完了判定せずユーザに escalate する。
 
 `WAIT_GATE_RESULT=` と exit code の対応: `green`/`0` → 緑 (修復ループ中なら完了判定へ)。`red`/`1` → 失敗として Step 2 へ (`cancel` を緑と誤認しない)。`gh-unreachable`/`3` → 完了判定せずユーザに escalate (silent spin 防止)。`deadline`/`2` の累計超過 → escalate。bg 呼び出し時にコマンド末尾へ `; echo "exit=$?"` 等を連結しない — 連結した echo が最後のコマンドになり、task 通知の exit code が 0 に上書きされる (実測: main が red を「緑」と誤読しかけた)。また **自動レビュー (CodeRabbit 等) の完了待ちを CI watch の完了条件に含めない** — 本スキルの終端は checks の終端 bucket のみで判定する (レビュー対応は `pr-review-respond` の領域で、待ち合わせると review 側を starve する)。
 
