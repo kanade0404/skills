@@ -73,7 +73,7 @@ scripts/
 |---|---|
 | `prr fetch <PR>` | 全 review thread + PR 一般コメントを GraphQL + REST で取得し、vendor 判定 (`coderabbit` / `devin` / `human`)・`self_replied` フラグ・`last_self_reply` (自分の最終返信本文、無ければ null) を付けた正規化 JSON を stdout に出力 |
 | `prr reply <PR> <comment-id> <body-file>` | 正しい `/repos/{O}/{R}/pulls/{PR}/comments/{id}/replies` エンドポイントで返信投稿。本文は file 経由で multi-line / 引用符事故を防ぐ |
-| `prr resolve <PR> <comment-id> <classification> <vendor> [body-file]` | vendor (`coderabbit`/`devin`/`human`、**必須・省略不可**) を明示したうえで返信本文を投稿し、GraphQL `resolveReviewThread` mutation で**対象スレッドだけ**を直接 resolve。**`@coderabbitai resolve` はどの vendor にも併記しない** — CodeRabbit 側で PR 全スレッドの一括 resolve として作用し、INVALID_PUSH スレッドまで巻き込む (実測: PR #96)。`classification` は `VALID` / `VALID_DEFER` / `DUPLICATE` のみ許可。**`INVALID_PUSH` を渡すと非ゼロ exit で拒否する** (誤 resolve ガード、後述)。vendor を省略・誤指定すると usage を表示して非ゼロ exit で拒否する |
+| `prr resolve <PR> <comment-id> <classification> <vendor> [body-file]` | vendor (`coderabbit`/`devin`/`human`、**必須・省略不可**) を明示したうえで、GraphQL `resolveReviewThread` mutation で**対象スレッドだけ**を直接 resolve し、**resolve 成功 (`isResolved == true`) を確認してから** body-file の返信本文を投稿する (mutation 失敗時に「Fixed in …」等の成功を示す返信だけが残る事故を防ぐための順序)。**`@coderabbitai resolve` はどの vendor にも併記しない** — CodeRabbit 側で PR 全スレッドの一括 resolve として作用し、INVALID_PUSH スレッドまで巻き込む (実測: PR #96)。`classification` は `VALID` / `VALID_DEFER` / `DUPLICATE` のみ許可。**`INVALID_PUSH` を渡すと非ゼロ exit で拒否する** (誤 resolve ガード、後述)。vendor を省略・誤指定すると usage を表示して非ゼロ exit で拒否する |
 | `prr summary <PR> <body-file>` | 集約 Review Response Summary を **新規** issue comment として投稿 (毎回新規投稿、過去サマリは履歴として残す) |
 | `prr wait-ci <PR> [interval]` | `gh pr checks --watch` をラップし全 check 完了まで block。失敗時は exit 非ゼロで呼出側に通知 (本スキルは retry しない) |
 | `prr defer <PR> <thread-url> <title> <body-file>` | `VALID_DEFER` 判定のフォロー issue を作成し、`<issue-number> <issue-url>` を stdout に出力。本文に元スレッド URL と PR URL を自動付記する |
@@ -194,7 +194,9 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prr" reply <PR> <root-comment-id> <body-file>
 bash "${CLAUDE_SKILL_DIR}/scripts/prr" resolve <PR> <root-comment-id> <classification> <vendor> [body-file]
 # classification は VALID / VALID_DEFER / DUPLICATE のいずれか。
 # INVALID_PUSH を渡すとスクリプトが非ゼロ exit で拒否する (誤 resolve ガード)。
-# 全 vendor: body-file 内容のみを返信投稿してから resolve。
+# 全 vendor: GraphQL mutation で resolve し、成功 (isResolved == true) を
+#   確認してから body-file 内容を返信投稿する (順序は resolve が先 —
+#   mutation 失敗時に成功を示す返信を残さないため)。
 #   body-file を省略した場合は返信を送らず resolve のみ行う。
 #   body-file を明示指定したのに内容が空 (空白のみ) の場合は
 #   呼び出し側のミスとして exit 2 で拒否する (黙って返信を落とさない)。
