@@ -173,7 +173,7 @@ push 後、以下を **1 サイクル**として回す。(a)(b) は逐次:
 
 - **(a) CI**: `ci-self-heal` を使う subagent を dispatch。CI watch → root-cause → 修正 (内部で `tdd`/`tidy-first`) → 再 push → 再 watch を内部で回し、緑なら `PASS`、3-failure / flaky / env / infra なら `HALTED` を返す。**(a) の完了条件は CI checks の終端のみ** — 自動レビュー (CodeRabbit 等) の完了待ちを含めない。既に checks が全て終端し**緑** (fail / cancel が 0) なら watch を張らずそのまま (b) へ進む — この「終端済みか」の判定は **(a) の `ci-self-heal` subagent が初回観測で行う** (orchestrator は「もう緑だろう」と推測して (a) の dispatch 自体を省略しない)。終端でも `fail` / `cancel` を含むなら緑扱いで素通りせず、watch 不要でも `ci-self-heal` の修復ループ (root-cause → 修正 → 再 push → 再 watch) は踏む (レビュー完了を待ち合わせると、既存レビュースレッドの対応 (b) が starve する。実測: PR #96 でレビュー 7 件が約 8 時間放置)。
 - **(b) レビュー**: `pr-review-respond` を使う subagent を dispatch。契約の入力で **fetch / triage 対象に CodeRabbit / Devin / Copilot / 人間を含めるよう明示**する。Copilot は `pr-review-respond` のベンダー判定上 `human` に分類され、VALID / VALID_DEFER / DUPLICATE は他 vendor と同じく GraphQL `resolveReviewThread` で直接 resolve される (ディレクティブ併記なし)。resolve されず残るのは INVALID_PUSH (根拠付き reply のみ) と Withdrawn (レビュアー撤回 — スレッド未 resolve のまま終端)。**CodeRabbit 起因の指摘への修正適用は、`coderabbit` plugin が入っている環境では `coderabbit:autofix` (per-change approval 付き) に委譲する**ことを契約入力で明示する — plugin が無い環境では従来どおり `pr-review-respond` 内の修正経路 (`tdd` / `tidy-first` ルーティング) を使う。VALID は修正 commit、INVALID_PUSH は根拠付き pushback、VALID_DEFER は issue 化、DUPLICATE は参照。
-- **(c) 状態判定**: このサイクルで (a)(b) の `pushed_commits` が空でないかを `git rev-parse HEAD` の前後比較で確認。
+- **(c) 状態判定**: このサイクルで PR に新規 push があったかを、サイクル開始前後の PR リモート head (`gh pr view <PR> --json headRefOid`) の比較で確認する。ローカル `git rev-parse HEAD` の前後比較は判定基準にしない — commit 作成後に push が失敗していても変化してしまい (GitHub に無い SHA を「新規 push」と誤認して CI watch を始める)、別プロセスによる push は見逃す。(a)(b) が報告した `pushed_commits` は `headRefOid` の変化と突き合わせ、`headRefOid` が変わっていないのに `pushed_commits` が非空なら push 失敗として stall 扱いで escalate する。
 
 (a) `ci-self-heal` が `HALTED` を返したら、**同サイクルの (b) を dispatch せず即 escalate** する (HALTED は終端。先へ進めない)。
 
@@ -196,7 +196,7 @@ orchestrator の time-box fallback (allowed-tools 内の直接観測 — `gh pr 
 ループの駆動因子は **このサイクルで新規 commit が push されたか** の 1 点。判定に使う 2 値を固定する:
 
 - **未終端コメント数**: `pr-review-respond` が終端分類のいずれにも終端化していないコメント数。VALID (修正 commit 済) / INVALID_PUSH (根拠付き pushback) / VALID_DEFER (issue 化) / DUPLICATE (参照) / 撤回 (Withdrawn — レビュアーが指摘を撤回し争点消滅、スレッドは未 resolve のまま) は **すべて終端 = 0 算入**。triage 済みの低価値 nitpick は返信のみで終端化し新規 VALID commit を生まないため未終端に数えない。
-- **新規 push の有無**: 本スキルが `git rev-parse HEAD` をサイクル前後で比較して観測する。
+- **新規 push の有無**: 本スキルがサイクル前後の PR `headRefOid` (`gh pr view <PR> --json headRefOid`) を比較して観測する (リモート head が真実。ローカル HEAD は push 失敗を区別できない)。
 
 この定義から「CI 緑 **かつ** `pr-review-respond` が新規 commit を生まなかった」サイクルが 1 回取れれば自動的に未終端 0 / 新規 push 無しとなり収束する (nitpick を無限に追う特例ルールは不要)。**INVALID_PUSH を「対応済み」に数える**のは盲従しないための `receiving-code-review` 規律 — 根拠を残せば収束を妨げない。
 
