@@ -23,7 +23,9 @@
 # {
 #   "pr": {
 #     "state": "OPEN|MERGED|CLOSED", "merged_at": str|null,
-#     "url": str, "branch": str, "head_sha": str
+#     "url": str, "branch": str, "head_sha": str,
+#     "mergeable": "MERGEABLE|CONFLICTING|UNKNOWN",
+#     "merge_state_status": str   # gh mergeStateStatus: CLEAN|DIRTY|BLOCKED|BEHIND|UNSTABLE|...
 #   },
 #   "checks": {
 #     "failing": [ {"name": str, "bucket": "fail"|"cancel", "link": str, "workflow": str} ],
@@ -65,8 +67,8 @@
 #                                  with
 #                                  `$base + $patch`, and write the merged
 #                                  result back. Safe ONLY for patches whose
-#                                  fields are all scalars (e.g. a single
-#                                  `state` transition) — the shallow merge
+#                                  fields are all scalars (e.g. a lone
+#                                  `last_checked_at` update) — the shallow merge
 #                                  replaces array fields wholesale rather
 #                                  than appending, so a patch built from a
 #                                  `state-get` read taken before this call
@@ -78,7 +80,17 @@
 #                                  environments where invocations can overlap
 #                                  (pr-monitor's own cron/wakeup re-entry),
 #                                  use state-apply below for any update that
-#                                  touches an array field.
+#                                  touches an array field. CAS-managed fields
+#                                  (known_conflict_head / last_head_sha / the
+#                                  settling `state` transition) are off-limits
+#                                  to state-merge even though they are scalars
+#                                  — update them only through the CAS filters
+#                                  run via state-apply (SKILL.md Step 4).
+#                                  This is enforced, not just documented: a
+#                                  patch containing any of those keys is
+#                                  rejected with a non-zero exit before the
+#                                  lock is taken, and the state file is left
+#                                  untouched (PR #99 review).
 #   state-apply <n> <jq-filter-file> [--arg <name> <value> | --argjson <name> <value>]...
 #                                  Acquire the same per-PR lock as
 #                                  state-init/state-merge, then (while still
@@ -109,7 +121,12 @@
 #                                  first. Use this (not state-get + patch +
 #                                  state-merge) for any update that includes
 #                                  known_comment_ids / known_failing_checks /
-#                                  escalations / cycle_ledger.
+#                                  known_conflict_head / last_head_sha /
+#                                  escalations / cycle_ledger, or the settling
+#                                  `state` transition (known_conflict_head,
+#                                  last_head_sha, and `state` are CAS-managed
+#                                  scalars and must go through the Step 4 CAS
+#                                  filters — see SKILL.md).
 #                                  Zero or more `--arg <name> <value>` pairs
 #                                  may follow the filter file; each is passed
 #                                  straight through to `jq --arg`, which
@@ -337,6 +354,15 @@ case "$cmd" in
       echo "error: invalid or non-object JSON patch: $json_file (must be exactly one JSON object)" >&2
       exit 1
     fi
+    # CAS-managed fields must only change through the Step 4 CAS filters
+    # (state-apply): an unconditional shallow merge would bypass their
+    # preconditions and clobber a concurrent invocation's claim / settling
+    # transition. Reject the whole patch — no partial application — and
+    # leave the state file untouched (PR #99 review).
+    if jq -e 'has("known_conflict_head") or has("last_head_sha") or has("state")' "$json_file" >/dev/null 2>&1; then
+      echo "error: patch touches CAS-managed field(s) (known_conflict_head / last_head_sha / state): $json_file — update these only through a Step 4 CAS filter via state-apply" >&2
+      exit 1
+    fi
     acquire_state_lock
     if [ ! -f "$state_file" ]; then
       echo "error: state file not found: $state_file (run state-init first)" >&2
@@ -476,9 +502,12 @@ fetch_unresolved_threads() {
       } ]' <<<"$all"
 }
 
+# `mergeable` は GitHub 側の mergeability 計算が終わるまで UNKNOWN を返すことが
+# ある (push 直後など)。ここでは観測値をそのまま透過する — UNKNOWN を CONFLICTING
+# と同一視しない判断は消費側 (SKILL.md Step 4 の conflict 分岐) が持つ。
 fetch_state() {
-  gh pr view "$pr" --repo "$owner/$repo" --json state,mergedAt,url,headRefName,headRefOid \
-    --jq '{state, merged_at: .mergedAt, url, branch: .headRefName, head_sha: .headRefOid}'
+  gh pr view "$pr" --repo "$owner/$repo" --json state,mergedAt,url,headRefName,headRefOid,mergeable,mergeStateStatus \
+    --jq '{state, merged_at: .mergedAt, url, branch: .headRefName, head_sha: .headRefOid, mergeable, merge_state_status: .mergeStateStatus}'
 }
 
 # `gh pr checks` exits 1 when a check failed, 8 when checks are still
