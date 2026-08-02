@@ -67,8 +67,8 @@
 #                                  with
 #                                  `$base + $patch`, and write the merged
 #                                  result back. Safe ONLY for patches whose
-#                                  fields are all scalars (e.g. a single
-#                                  `state` transition) — the shallow merge
+#                                  fields are all scalars (e.g. a lone
+#                                  `last_checked_at` update) — the shallow merge
 #                                  replaces array fields wholesale rather
 #                                  than appending, so a patch built from a
 #                                  `state-get` read taken before this call
@@ -80,7 +80,12 @@
 #                                  environments where invocations can overlap
 #                                  (pr-monitor's own cron/wakeup re-entry),
 #                                  use state-apply below for any update that
-#                                  touches an array field.
+#                                  touches an array field. CAS-managed fields
+#                                  (known_conflict_head / last_head_sha / the
+#                                  settling `state` transition) are off-limits
+#                                  to state-merge even though they are scalars
+#                                  — update them only through the CAS filters
+#                                  run via state-apply (SKILL.md Step 4).
 #   state-apply <n> <jq-filter-file> [--arg <name> <value> | --argjson <name> <value>]...
 #                                  Acquire the same per-PR lock as
 #                                  state-init/state-merge, then (while still
@@ -111,8 +116,12 @@
 #                                  first. Use this (not state-get + patch +
 #                                  state-merge) for any update that includes
 #                                  known_comment_ids / known_failing_checks /
-#                                  known_conflict_head / escalations /
-#                                  cycle_ledger.
+#                                  known_conflict_head / last_head_sha /
+#                                  escalations / cycle_ledger, or the settling
+#                                  `state` transition (known_conflict_head,
+#                                  last_head_sha, and `state` are CAS-managed
+#                                  scalars and must go through the Step 4 CAS
+#                                  filters — see SKILL.md).
 #                                  Zero or more `--arg <name> <value>` pairs
 #                                  may follow the filter file; each is passed
 #                                  straight through to `jq --arg`, which
