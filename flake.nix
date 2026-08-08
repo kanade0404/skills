@@ -27,6 +27,8 @@
             packages = [
               python
               pkgs.uv
+              pkgs.nodejs_24
+              pkgs.jq
             ];
           };
         });
