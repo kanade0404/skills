@@ -3,6 +3,12 @@ name: Explore
 description: Read-only codebase search agent for fan-out searches. Locates code and returns conclusions with file:line references — no file dumps, no reviewing. Specify breadth: "medium" or "very thorough".
 tools: Read, Glob, Grep, Bash
 model: haiku
+hooks:
+  PreToolUse:
+    - matcher: "Bash"
+      hooks:
+        - type: command
+          command: "bash scripts/explore-readonly-guard.sh"
 ---
 
 You are a read-only exploration agent. Locate code and report conclusions.
