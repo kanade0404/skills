@@ -65,7 +65,14 @@ mkdirSync(join(stage, 'rules'), { recursive: true });
 const isRuleFile = (src) =>
   statSync(src).isDirectory() || (src.endsWith('.md') && basename(src) !== 'README.md');
 for (const dir of ['rules', 'rules-local']) {
-  cpSync(join(ROOT, dir), join(stage, 'rules'), {
+  const dirPath = join(ROOT, dir);
+  // git doesn't track empty directories, so a fresh clone with no rules left
+  // in `rules/` may not have the directory on disk at all — skip rather than
+  // let cpSync throw ENOENT. Use optionalFragmentExists (not existsSync)
+  // so an unreadable-but-present dir (EACCES etc.) fails loudly instead of
+  // silently dropping its rules from the generated output.
+  if (!optionalFragmentExists(dirPath)) continue;
+  cpSync(dirPath, join(stage, 'rules'), {
     recursive: true,
     force: true,
     filter: isRuleFile,
@@ -140,7 +147,7 @@ try {
 // source file is a valid state (both fragments are optional features — the
 // caller skips the merge), but a file that EXISTS yet doesn't parse to a JSON
 // object means the fragment would be merged as garbage or silently dropped —
-// exit 1 loudly instead (rules/fail-closed.md).
+// exit 1 loudly instead.
 function readFragmentObject(sourcePath, what) {
   let parsed;
   try {
@@ -161,8 +168,8 @@ function readFragmentObject(sourcePath, what) {
 
 // `existsSync` returns false for ANY failure (EACCES, EIO, ENOTDIR, ...), which
 // would silently skip merging a fragment that actually exists but is unreadable
-// — the generated settings.json would ship without it, symptom-free
-// (rules/fail-closed.md). Treat only ENOENT as "absent"; rethrow everything else.
+// — the generated settings.json would ship without it, symptom-free.
+// Treat only ENOENT as "absent"; rethrow everything else.
 function optionalFragmentExists(path) {
   try {
     statSync(path);
@@ -187,7 +194,7 @@ function mergeRepoLocalHooks(outRoot) {
 // merged into does NOT is a broken generation (e.g. the permissions feature
 // stopped emitting `.claude/settings.json`): returning silently would ship a
 // settings.json without the fragment this repo declares, with no symptom until
-// the missing hooks/env bite downstream. Exit 1 loudly (rules/fail-closed.md).
+// the missing hooks/env bite downstream. Exit 1 loudly.
 function requireGeneratedSettings(settingsPath, sourcePath, what) {
   if (existsSync(settingsPath)) return;
   console.error(
@@ -203,9 +210,8 @@ function requireGeneratedSettings(settingsPath, sourcePath, what) {
 // session in this repo runs with terminal decoration structurally disabled
 // (`NO_COLOR=1`, `CLICOLOR_FORCE=0`): with `CLICOLOR_FORCE=1` inherited from the
 // environment, `gh`'s raw JSON output gets ANSI-colored even when piped and
-// silently breaks downstream `jq` (observed 3+ times — see
-// rules/bash-and-api-discipline.md). Key order stays deterministic: `env` is
-// always appended after `permissions` and `hooks`.
+// silently breaks downstream `jq` (observed 3+ times). Key order stays
+// deterministic: `env` is always appended after `permissions` and `hooks`.
 function mergeRepoLocalEnv(outRoot) {
   const envSource = join(ROOT, 'hooks-local', 'claude-code-env.json');
   const settingsPath = join(outRoot, '.claude', 'settings.json');

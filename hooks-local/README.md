@@ -31,4 +31,3 @@ Claude Code の `.claude/settings.json` の `env` キーにそのまま代入で
 - 現在の内容: `NO_COLOR=1` / `CLICOLOR_FORCE=0` — `CLICOLOR_FORCE=1` を継承する
   環境では `gh` の生 JSON 出力が pipe 先でも ANSI 色付けされ下流の jq を静かに
   壊すため（実測 3+ 回）、セッション全体で端末装飾を構造的に無効化する。
-  `rules/bash-and-api-discipline.md` 参照。
