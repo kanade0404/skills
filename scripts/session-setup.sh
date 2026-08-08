@@ -27,6 +27,15 @@
 # the log path it prints if the devshell later seems broken/missing.
 set -u
 
+# This script machine-parses `direnv status --json` output with grep/sed
+# below (see root_is_direnv_allowed). Inherited terminal color/decoration
+# settings (e.g. CLICOLOR_FORCE=1) can inject ANSI escapes into that output
+# even when piped, silently breaking the grep/sed parsing — disable them at
+# the entry point rather than relying on the environment being clean.
+export NO_COLOR=1
+export CLICOLOR_FORCE=0
+unset GH_FORCE_TTY
+
 root=$(cd "$(dirname "$0")/.." && pwd)
 
 warn() { printf 'session-setup: %s\n' "$*" >&2; }

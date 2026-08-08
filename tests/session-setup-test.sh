@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# This suite machine-parses stub logs and command output (grep) throughout.
+# Disable inherited terminal color/decoration settings at the entry point so
+# a colorized environment can't corrupt what's being asserted on, matching
+# the same discipline applied inside scripts/session-setup.sh itself.
+export NO_COLOR=1
+export CLICOLOR_FORCE=0
+unset GH_FORCE_TTY
+
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 SCRIPT="$ROOT_DIR/scripts/session-setup.sh"
 
