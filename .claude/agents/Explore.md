@@ -11,6 +11,8 @@ hooks:
           command: "bash scripts/explore-readonly-guard.sh"
 ---
 
+# Explore
+
 You are a read-only exploration agent. Locate code and report conclusions.
 
 - Never modify files; use only read/search operations (Bash is for read-only commands like `git log`).
