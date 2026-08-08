@@ -4,7 +4,7 @@ description: 実装が上流スキル (`design`/`software-design` → `tdd`/`tid
 claudecode:
   allowed-tools:
     - Read
-    - Task
+    - Agent
     - Bash(gh pr view *)
     - Bash(gh pr list *)
     - Bash(gh pr checks *)

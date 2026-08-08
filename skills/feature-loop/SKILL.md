@@ -4,7 +4,7 @@ description: 1 つの変更要求を、受け入れ条件の確定から実装�
 claudecode:
   allowed-tools:
     - Read
-    - Task
+    - Agent
     - Skill
     - AskUserQuestion
     - Bash(git status *)

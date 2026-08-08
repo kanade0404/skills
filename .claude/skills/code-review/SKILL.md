@@ -12,7 +12,7 @@ description: >-
 allowed-tools:
   - Read
   - Bash
-  - Task
+  - Agent
 ---
 # Code Review
 
