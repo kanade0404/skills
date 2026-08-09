@@ -47,7 +47,7 @@ git log --oneline <base>..HEAD           # commit ヒストリ
 
 ### Step 2 — Subagent への入力
 
-Task tool で `feature-dev:code-reviewer` または `pr-review-toolkit:code-reviewer` を起動 (利用可能な方)。なければ `general-purpose`。
+Agent tool で `feature-dev:code-reviewer` または `pr-review-toolkit:code-reviewer` を起動 (利用可能な方)。なければ `general-purpose`。
 
 プロンプトに必ず含める:
 
