@@ -125,10 +125,22 @@ if (typeof resolvedArgs === 'string') {
   }
 }
 
+function assertNonEmptyStringArray(value, name) {
+  const ok =
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((item) => typeof item === 'string' && item.trim().length > 0)
+  if (!ok) {
+    throw new Error(
+      `Workflow(args: { ${name}: [...] }) must be a non-empty array of non-empty strings when provided.`
+    )
+  }
+}
+
 const problem = resolvedArgs && resolvedArgs.problem
-if (!problem) {
+if (typeof problem !== 'string' || problem.trim().length === 0) {
   throw new Error(
-    'Workflow(args: { problem: "..." }) is required — pass the fully-specified problem statement (as a JSON object, or a JSON-encoded string if your caller cannot pass objects directly). This pipeline does not ask follow-up questions.'
+    'Workflow(args: { problem: "..." }) is required and must be a non-empty string — pass the fully-specified problem statement (as a JSON object, or a JSON-encoded string if your caller cannot pass objects directly). This pipeline does not ask follow-up questions.'
   )
 }
 
@@ -137,12 +149,14 @@ const planAngles = (resolvedArgs && resolvedArgs.planAngles) || [
   'decomposition: split the problem into easier or more specific sub-problems and solve those.',
   'analogy: find a structurally similar problem and adapt its method.',
 ]
+assertNonEmptyStringArray(planAngles, 'planAngles')
 
 const verifyMethods = (resolvedArgs && resolvedArgs.verifyMethods) || [
   're-derive the result via a genuinely different method and compare',
   'stress-test the result against an edge case or boundary condition',
   'check the result actually satisfies the original condition from Step 1',
 ]
+assertNonEmptyStringArray(verifyMethods, 'verifyMethods')
 
 phase('Understand')
 log('Step 1 — understanding the problem')
@@ -201,6 +215,18 @@ const lookback = await agent(
   `Problem: ${problem}\nResult: ${execution.result}\nIndependent verifications: ${JSON.stringify(verifications)}\n\n${passCount}/${verifications.length} independent verifications passed. Synthesize the Look Back: is the result verified overall? Summarize the strongest confirming and disconfirming evidence, and note what other problems this result or method could generalize to.`,
   { schema: LOOKBACK_SCHEMA, phase: 'Look Back' }
 )
+
+// Don't trust the synthesis agent's self-reported `verified` claim — derive it
+// from the actual verification results. Otherwise a single overconfident
+// agent could mark a result "verified" even when every independent check
+// failed, defeating the point of running independent verifications at all.
+const verifiedByEvidence = verifications.length > 0 && verifications.every((v) => v.passes === true)
+if (lookback.verified !== verifiedByEvidence) {
+  log(
+    `Step 4 — overriding lookback.verified (agent said ${lookback.verified}, but ${passCount}/${verifications.length} verifications actually passed)`
+  )
+}
+lookback.verified = verifiedByEvidence
 
 return {
   understanding,

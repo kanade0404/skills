@@ -86,7 +86,7 @@ Look Back を省略すると、たまたま通っただけの解法・偶然動�
 
 呼び出し方:
 
-```
+```javascript
 Workflow({
   scriptPath: "skills/problem-solving/scripts/four-step-pipeline.workflow.js",
   args: { problem: "<完全に条件が確定した問題文>" }  // planAngles / verifyMethods は省略可（既定値あり）
