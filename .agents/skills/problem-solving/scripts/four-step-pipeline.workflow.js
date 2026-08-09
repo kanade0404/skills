@@ -144,18 +144,24 @@ if (typeof problem !== 'string' || problem.trim().length === 0) {
   )
 }
 
-const planAngles = (resolvedArgs && resolvedArgs.planAngles) || [
+const DEFAULT_PLAN_ANGLES = [
   'pattern-match: has a same or closely similar problem been solved before? Reuse that result/method directly.',
   'decomposition: split the problem into easier or more specific sub-problems and solve those.',
   'analogy: find a structurally similar problem and adapt its method.',
 ]
-assertNonEmptyStringArray(planAngles, 'planAngles')
-
-const verifyMethods = (resolvedArgs && resolvedArgs.verifyMethods) || [
+const DEFAULT_VERIFY_METHODS = [
   're-derive the result via a genuinely different method and compare',
   'stress-test the result against an edge case or boundary condition',
   'check the result actually satisfies the original condition from Step 1',
 ]
+
+// Only fall back to the default when the key is genuinely absent. An
+// explicitly-passed invalid value (null, false, "") must fail validation
+// below rather than being silently swapped for the default (fail-closed).
+const planAngles = resolvedArgs.planAngles === undefined ? DEFAULT_PLAN_ANGLES : resolvedArgs.planAngles
+assertNonEmptyStringArray(planAngles, 'planAngles')
+
+const verifyMethods = resolvedArgs.verifyMethods === undefined ? DEFAULT_VERIFY_METHODS : resolvedArgs.verifyMethods
 assertNonEmptyStringArray(verifyMethods, 'verifyMethods')
 
 phase('Understand')
