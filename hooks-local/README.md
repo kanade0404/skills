@@ -17,9 +17,18 @@ Claude Code の `.claude/settings.json` の `hooks` キーにそのまま代入�
 
 - `.claude/settings.json` を直接編集しても `scripts/rulesync-sync.mjs` の再実行で
   上書きされて消えるため、変更はこのファイル側で行う。
-- 現在の内容: pr-monitor の state ファイル (`.claude/.pr-monitor/*`) への
-  Write/Edit/MultiEdit 直書きを PreToolUse hook で拒否し、
-  `prm state-init`/`prm state-merge` (read-modify-write) に誘導するガード。
+- 現在の内容:
+  - pr-monitor の state ファイル (`.claude/.pr-monitor/*`) への
+    Write/Edit/MultiEdit 直書きを PreToolUse hook で拒否し、
+    `prm state-init`/`prm state-merge` (read-modify-write) に誘導するガード。
+  - SessionStart hook: `scripts/session-setup.sh` を起動し、この checkout の
+    nix devshell (`flake.nix`) をバックグラウンドで build する
+    (direnv/nix が無い環境では警告を出すだけで exit 0、セッション開始をブロックしない)。
+    `direnv allow` は既定では実行しない — このリポジトリは任意の PR ブランチを
+    worktree に checkout する自動フローがあり、無条件 allow は direnv の
+    trust-on-first-use を無効化するため。環境変数 `SKILLS_DIRENV_AUTO_ALLOW=1` を
+    設定したセッションでのみ自動 allow する (未設定なら手動で
+    `direnv allow <root>` を促す警告を出す)。
 
 ## `claude-code-env.json`
 

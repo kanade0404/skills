@@ -54,10 +54,25 @@ const MIRRORED_DIRS = ['.claude/skills', '.claude/rules', '.agents/skills'];
 // placeholder-only (README without frontmatter) and would fail rulesync parsing.
 // rules/ は配布用 (consumer が fetch で丸ごと受け取る)、rules-local/ はこの repo
 // 専用 (root rule 等。配布 feature には含まれない) — 自前生成では両方を staging する。
+// Python bytecode caches (skills/*/scripts/__pycache__/*.pyc) are gitignored
+// but reappear on disk whenever `uv run python3 -m unittest discover -s tests`
+// imports a skill's Python script (e.g. skills/retro/scripts/retro_scan.py).
+// They must never enter the generate pipeline: staged into `.rulesync/skills`
+// here, `rulesync generate` would mirror them into `.claude/skills/` and
+// `.agents/skills/`, and a fresh checkout without that local cache would then
+// have `--check` report the mirrored path as missing/stale. Filtering them
+// out at this single staging entry point — the only place top-level `skills/`
+// content enters the pipeline — keeps them out of `genOut` entirely, so both
+// `diffTree` (walks `genOut`) and the write-mode `cpSync` overlay never see
+// them either.
+const isPycacheEntry = (name) => name === '__pycache__' || name.endsWith('.pyc');
 const stage = join(ROOT, '.rulesync');
 rmSync(stage, { recursive: true, force: true });
 mkdirSync(stage, { recursive: true });
-cpSync(join(ROOT, 'skills'), join(stage, 'skills'), { recursive: true });
+cpSync(join(ROOT, 'skills'), join(stage, 'skills'), {
+  recursive: true,
+  filter: (src) => !isPycacheEntry(basename(src)),
+});
 copyFileSync(join(ROOT, 'permissions.json'), join(stage, 'permissions.json'));
 mkdirSync(join(stage, 'rules'), { recursive: true });
 // rulesync は nested rule (rules/**/*.md) を扱えるため再帰的に staging する
@@ -320,6 +335,14 @@ function findStaleFiles(generatedRoot, targetRoot) {
   const stale = [];
   const walk = (absDir, relDir) => {
     for (const entry of readdirSync(absDir, { withFileTypes: true })) {
+      // Pre-existing `__pycache__`/`*.pyc` copies from before the staging
+      // filter above existed (or from a stray local run) never appear in
+      // `generatedRoot` now, which would otherwise make every one of them
+      // "stale" forever with no way to clear them (they're gitignored, not
+      // committed, and this script has no delete-on-check mode). They're
+      // harmless build byproducts, not generated content this script owns —
+      // skip them entirely rather than flag or recurse into them.
+      if (isPycacheEntry(entry.name)) continue;
       const relPath = join(relDir, entry.name);
       const absPath = join(absDir, entry.name);
       const genPath = join(generatedRoot, relPath);
