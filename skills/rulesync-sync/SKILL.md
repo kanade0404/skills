@@ -27,7 +27,8 @@ claudecode:
     - Edit
     - Write
     - Bash(node scripts/rulesync-sync.mjs*)
-    - Bash(uv run*)
+    - Bash(uv run python3 -m unittest discover -s tests)
+    - Bash(uv run python .github/scripts/check_trigger_evals.py)
     - Bash(git status *)
     - Bash(git diff *)
 ---
@@ -93,7 +94,7 @@ source と license 情報を記録する。
 
 ## Skill ディレクトリの標準レイアウト
 
-```
+```text
 skills/<name>/
   SKILL.md         # 必須。frontmatter + 本体指示
   references/*.md  # 詳細情報 (progressive disclosure)
@@ -111,13 +112,17 @@ skill 本文の作成・改訂・trigger 調整自体は `skill-builder` が sou
    生成物 (`.claude/`, `.agents/`, `.codex/`, root `AGENTS.md` / `CLAUDE.md`) は
    触らない — 触っても次の再生成で上書きされ、drift CI にも捕まる。
 2. **再生成する**:
+
    ```bash
    node scripts/rulesync-sync.mjs
    ```
+
 3. **drift が無いことを確認する**:
+
    ```bash
    node scripts/rulesync-sync.mjs --check
    ```
+
    `--check` は再生成結果と現状の生成物に差分が無いことを確認するモード。差分が
    あれば non-zero exit する — その場合は手順 2 に戻って再生成し、生成物側を
    手で直さない。
