@@ -13,7 +13,7 @@ description: >-
   を名指しで使い、本スキルは起動しない。PR の merge 操作はせず、決着 (merge/close) を監視で待つ。
 allowed-tools:
   - Read
-  - Task
+  - Agent
   - Skill
   - AskUserQuestion
   - Bash(git status *)

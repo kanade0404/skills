@@ -24,3 +24,6 @@ __pycache__/
 # This repo intentionally commits its generated Codex skills under .agents/
 # (dogfooding). Override a personal global ~/.gitignore that ignores .agents/.
 !.agents/
+
+# direnv's local evaluation cache for .envrc (machine-local, not distributed)
+.direnv/

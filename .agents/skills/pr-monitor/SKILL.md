@@ -54,7 +54,7 @@ dispatch された subagent 内部でも常駐しない。1 回の起動で行�
 
 ## 同梱スクリプト `scripts/prm`
 
-`gh api` / `gh pr checks` を都度 inline で叩くと permission prompt が重なる上、未解決スレッド全量取得の cursor pagination や色付き `gh` 出力による `jq` 破壊 (`rules/bash-and-api-discipline.md` 参照) など落とし穴が多い。本スキルはこれらを `scripts/prm` に閉じ込め、**単一エントリポイントからのみ呼び出す** (`pr-review-respond` の `prr` と同じ設計)。呼び出しは常に:
+`gh api` / `gh pr checks` を都度 inline で叩くと permission prompt が重なる上、未解決スレッド全量取得の cursor pagination や色付き `gh` 出力による `jq` 破壊など落とし穴が多い。`jq` 破壊は、`CLICOLOR_FORCE` を継承する環境で `gh api` の生 JSON 出力がパイプ先でも ANSI 色付けされ下流の `jq` を静かに壊す事故で、機械処理スクリプトは入口で `NO_COLOR=1` を export し端末装飾に依存しない状態を自分で作る (bash/API 運用の原則)。本スキルはこれらを `scripts/prm` に閉じ込め、**単一エントリポイントからのみ呼び出す** (`pr-review-respond` の `prr` と同じ設計)。呼び出しは常に:
 
 ```bash
 bash "${CLAUDE_SKILL_DIR}/scripts/prm" <subcommand> <pr>

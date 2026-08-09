@@ -81,7 +81,7 @@ class TestMarkdownSanitization(unittest.TestCase):
 
 class TestDeadFlagValidation(unittest.TestCase):
     """明示フラグが選択された scan 経路で消費されない組合せを、実行前に
-    一括で拒否する (2 巡目 code-review Important-1; rules/fail-closed.md)。
+    一括で拒否する (2 巡目 code-review Important-1)。
 
     validate_flag_combinations は「明示フラグ集合 − 経路が消費するフラグ集合」
     の差集合が非空なら exit 1 する — 組合せの個別列挙ではなく class ごと

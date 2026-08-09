@@ -69,8 +69,8 @@ class TestGhColorNeutralization(unittest.TestCase):
                         neutralize is not None and neutralize.start() < gh_call.start(),
                         f"{rel}: gh の出力を jq で機械処理しているのに、最初の gh"
                         " 呼び出しより前に `export CLICOLOR_FORCE=0` (非コメント行)"
-                        " が無い。CLICOLOR_FORCE=1 環境で jq が静かに壊れる —"
-                        " rules/bash-and-api-discipline.md 参照。NO_COLOR 単独は"
+                        " が無い。CLICOLOR_FORCE=1 環境で jq が静かに壊れる。"
+                        "NO_COLOR 単独は"
                         " gh の JSON colorizer を止めないため不合格",
                     )
                     unset_tty = UNSET_TTY_RE.search(text)

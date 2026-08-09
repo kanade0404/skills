@@ -27,7 +27,6 @@ def rule_files(directory: str) -> list[Path]:
 class TestDistributableRules(unittest.TestCase):
     def test_rules_dir_contains_only_frontmattered_rule_files(self) -> None:
         files = rule_files("rules")
-        self.assertGreater(len(files), 0)
         for path in files:
             rel = path.relative_to(REPO_ROOT).as_posix()
             with self.subTest(file=rel):

@@ -54,10 +54,25 @@ const MIRRORED_DIRS = ['.claude/skills', '.claude/rules', '.agents/skills'];
 // placeholder-only (README without frontmatter) and would fail rulesync parsing.
 // rules/ は配布用 (consumer が fetch で丸ごと受け取る)、rules-local/ はこの repo
 // 専用 (root rule 等。配布 feature には含まれない) — 自前生成では両方を staging する。
+// Python bytecode caches (skills/*/scripts/__pycache__/*.pyc) are gitignored
+// but reappear on disk whenever `uv run python3 -m unittest discover -s tests`
+// imports a skill's Python script (e.g. skills/retro/scripts/retro_scan.py).
+// They must never enter the generate pipeline: staged into `.rulesync/skills`
+// here, `rulesync generate` would mirror them into `.claude/skills/` and
+// `.agents/skills/`, and a fresh checkout without that local cache would then
+// have `--check` report the mirrored path as missing/stale. Filtering them
+// out at this single staging entry point — the only place top-level `skills/`
+// content enters the pipeline — keeps them out of `genOut` entirely, so both
+// `diffTree` (walks `genOut`) and the write-mode `cpSync` overlay never see
+// them either.
+const isPycacheEntry = (name) => name === '__pycache__' || name.endsWith('.pyc');
 const stage = join(ROOT, '.rulesync');
 rmSync(stage, { recursive: true, force: true });
 mkdirSync(stage, { recursive: true });
-cpSync(join(ROOT, 'skills'), join(stage, 'skills'), { recursive: true });
+cpSync(join(ROOT, 'skills'), join(stage, 'skills'), {
+  recursive: true,
+  filter: (src) => !isPycacheEntry(basename(src)),
+});
 copyFileSync(join(ROOT, 'permissions.json'), join(stage, 'permissions.json'));
 mkdirSync(join(stage, 'rules'), { recursive: true });
 // rulesync は nested rule (rules/**/*.md) を扱えるため再帰的に staging する
@@ -65,7 +80,14 @@ mkdirSync(join(stage, 'rules'), { recursive: true });
 const isRuleFile = (src) =>
   statSync(src).isDirectory() || (src.endsWith('.md') && basename(src) !== 'README.md');
 for (const dir of ['rules', 'rules-local']) {
-  cpSync(join(ROOT, dir), join(stage, 'rules'), {
+  const dirPath = join(ROOT, dir);
+  // git doesn't track empty directories, so a fresh clone with no rules left
+  // in `rules/` may not have the directory on disk at all — skip rather than
+  // let cpSync throw ENOENT. Use optionalFragmentExists (not existsSync)
+  // so an unreadable-but-present dir (EACCES etc.) fails loudly instead of
+  // silently dropping its rules from the generated output.
+  if (!optionalFragmentExists(dirPath)) continue;
+  cpSync(dirPath, join(stage, 'rules'), {
     recursive: true,
     force: true,
     filter: isRuleFile,
@@ -140,7 +162,7 @@ try {
 // source file is a valid state (both fragments are optional features — the
 // caller skips the merge), but a file that EXISTS yet doesn't parse to a JSON
 // object means the fragment would be merged as garbage or silently dropped —
-// exit 1 loudly instead (rules/fail-closed.md).
+// exit 1 loudly instead.
 function readFragmentObject(sourcePath, what) {
   let parsed;
   try {
@@ -161,8 +183,8 @@ function readFragmentObject(sourcePath, what) {
 
 // `existsSync` returns false for ANY failure (EACCES, EIO, ENOTDIR, ...), which
 // would silently skip merging a fragment that actually exists but is unreadable
-// — the generated settings.json would ship without it, symptom-free
-// (rules/fail-closed.md). Treat only ENOENT as "absent"; rethrow everything else.
+// — the generated settings.json would ship without it, symptom-free.
+// Treat only ENOENT as "absent"; rethrow everything else.
 function optionalFragmentExists(path) {
   try {
     statSync(path);
@@ -187,7 +209,7 @@ function mergeRepoLocalHooks(outRoot) {
 // merged into does NOT is a broken generation (e.g. the permissions feature
 // stopped emitting `.claude/settings.json`): returning silently would ship a
 // settings.json without the fragment this repo declares, with no symptom until
-// the missing hooks/env bite downstream. Exit 1 loudly (rules/fail-closed.md).
+// the missing hooks/env bite downstream. Exit 1 loudly.
 function requireGeneratedSettings(settingsPath, sourcePath, what) {
   if (existsSync(settingsPath)) return;
   console.error(
@@ -203,9 +225,8 @@ function requireGeneratedSettings(settingsPath, sourcePath, what) {
 // session in this repo runs with terminal decoration structurally disabled
 // (`NO_COLOR=1`, `CLICOLOR_FORCE=0`): with `CLICOLOR_FORCE=1` inherited from the
 // environment, `gh`'s raw JSON output gets ANSI-colored even when piped and
-// silently breaks downstream `jq` (observed 3+ times — see
-// rules/bash-and-api-discipline.md). Key order stays deterministic: `env` is
-// always appended after `permissions` and `hooks`.
+// silently breaks downstream `jq` (observed 3+ times). Key order stays
+// deterministic: `env` is always appended after `permissions` and `hooks`.
 function mergeRepoLocalEnv(outRoot) {
   const envSource = join(ROOT, 'hooks-local', 'claude-code-env.json');
   const settingsPath = join(outRoot, '.claude', 'settings.json');
@@ -320,6 +341,14 @@ function findStaleFiles(generatedRoot, targetRoot) {
   const stale = [];
   const walk = (absDir, relDir) => {
     for (const entry of readdirSync(absDir, { withFileTypes: true })) {
+      // Pre-existing `__pycache__`/`*.pyc` copies from before the staging
+      // filter above existed (or from a stray local run) never appear in
+      // `generatedRoot` now, which would otherwise make every one of them
+      // "stale" forever with no way to clear them (they're gitignored, not
+      // committed, and this script has no delete-on-check mode). They're
+      // harmless build byproducts, not generated content this script owns —
+      // skip them entirely rather than flag or recurse into them.
+      if (isPycacheEntry(entry.name)) continue;
       const relPath = join(relDir, entry.name);
       const absPath = join(absDir, entry.name);
       const genPath = join(generatedRoot, relPath);

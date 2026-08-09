@@ -51,11 +51,11 @@ design / software-design   →   tdd / tidy-first   →   shipping (本スキル
 
 ## 構成方式: subagent dispatch
 
-各フェーズは Task で **新規 subagent** を 1 つ起動して回す。理由: フェーズごとに context を隔離でき (長い CI 待ちで main を汚さない)、各 subagent が現在状態を読み直すので CI / コメントの再評価が常に新鮮になる。
+各フェーズは Agent で **新規 subagent** を 1 つ起動して回す。理由: フェーズごとに context を隔離でき (長い CI 待ちで main を汚さない)、各 subagent が現在状態を読み直すので CI / コメントの再評価が常に新鮮になる。
 
 - **使い回さない**: サイクルごとに fresh subagent を立てる。読了済み subagent の再利用は状態の陳腐化とバイアスを生む (`skill-builder` Mode C と同じ規律)。
 - **逐次 (並列にしない)**: 1 サイクル内の `ci-self-heal` と `pr-review-respond` は **同一 PR ブランチを共有**し、双方が修正 commit を push しうる。並列 dispatch は commit の競合・交錯を生むので順次に回す (`dispatching-parallel-agents` の shared-state 規律)。順序は ci-self-heal → pr-review-respond (reviewer が緑の PR を見る形にする)。
-- **subagents/ には書かない**: 配布リポの `subagents/` は placeholder。本スキルは Task dispatch で構成し、`subagents/` にファイルを作らない。
+- **subagents/ には書かない**: 配布リポの `subagents/` は placeholder。本スキルは Agent dispatch で構成し、`subagents/` にファイルを作らない。
 
 ### Subagent 起動契約 (テンプレ)
 
@@ -78,7 +78,7 @@ design / software-design   →   tdd / tidy-first   →   shipping (本スキル
 
 | フェーズ | dispatch 先 | 読む verdict |
 |---|---|---|
-| 整形 (Phase 1a) | **Task 契約 dispatch** (named skill ではない。`tidy-first` 規律の品質専用クリーンアップ契約。`Skill(simplify)` は存在しないので呼ばない) | SIMPLIFIED / NO_CHANGE |
+| 整形 (Phase 1a) | **Agent 契約 dispatch** (named skill ではない。`tidy-first` 規律の品質専用クリーンアップ契約。`Skill(simplify)` は存在しないので呼ばない) | SIMPLIFIED / NO_CHANGE |
 | 品質ゲート (Phase 1b) | `code-review` | PASS / PASS_WITH_FIXES / FAIL |
 | 完了ゲート | `verify-done` | PASS / FAIL (+ Verification ブロック literal) |
 | PR 作成 | `commit-commands:commit-push-pr` | PR URL / number |
@@ -206,9 +206,9 @@ orchestrator の time-box fallback (allowed-tools 内の直接観測 — `gh pr 
 
 ### Phase 6 — 監視設置
 
-**なぜ**: `rules/pr-push-discipline.md` の帰結 3 (「離れる前の監視」) は常駐 rule で「いつ必ずやるか」を定めるが、rule 単体では「SHIPPED に飛びつく」完了報告直前の慣性を止められない。本スキルの終端フェーズとして構造的ゲートにすることで、rule (規範) と skill (手続き) の二重化で初めて帰結 3 が実効化する。**SHIPPED は監視設置を確認してから報告する** — Phase 5 の PASS だけでは報告しない。`pr-monitor` が cron も `ScheduleWakeup` も使えず手動フォールバック (`monitor_mode: manual`) に倒れた場合、後続の CI 失敗・新規レビューコメント・merge/close を検知する常駐プロセスは何も残らない — 帰結 3 が求める「手段を残す」を満たさないため、`manual` は監視設置の成功に数えない。
+**なぜ**: push 後は CI 帰結・レビュー終端・監視設置を担保してから PR を離れる、という規律のうち監視設置を構造的に担保する手段は、この規律を定めていた常駐 rule が廃止された現在、本フェーズ (Phase 6) のゲートのみである。だからこそ監視設置は「あれば良い」補助ではなく、SHIPPED 報告の前提条件として必須とする。**SHIPPED は監視設置を確認してから報告する** — Phase 5 の PASS だけでは報告しない。`pr-monitor` が cron も `ScheduleWakeup` も使えず手動フォールバック (`monitor_mode: manual`) に倒れた場合、後続の CI 失敗・新規レビューコメント・merge/close を検知する常駐プロセスは何も残らない — 帰結 3 が求める「手段を残す」を満たさないため、`manual` は監視設置の成功に数えない。
 
-`pr-monitor` を使う subagent を Task で dispatch する (fresh subagent。「Subagent 起動契約 (テンプレ)」に従う。main は監視を待たない):
+`pr-monitor` を使う subagent を Agent で dispatch する (fresh subagent。「Subagent 起動契約 (テンプレ)」に従う。main は監視を待たない):
 
 - **契約入力**: 対象 PR 番号 / `origin_transcript` パス (「PR を生んだ本セッション」の transcript。retro が解析すべき対象であり、後の `--check-only` 監視セッションではない)
 - **subagent 内の振る舞い**: `pr-monitor` は cron 登録 (`/schedule`) または `ScheduleWakeup` self-pace poll、どちらも不可なら手動再実行案内のいずれかを選び、**subagent 自体は常駐しない** (main を塞がない)。拡張後の `pr-monitor` は merge / close の検知に加え、新規未解決レビュースレッド・checks 失敗も `prm status` で検知し、`ci-self-heal` / `pr-review-respond` / (CodeRabbit 起因なら) `coderabbit:autofix` の subagent dispatch まで担う (`pr-monitor` 側の責務。本スキルは dispatch するだけ)。
@@ -297,7 +297,7 @@ escalate 後は **ユーザの明示指示があるまで追加 dispatch / push 
 
 - **修正コード差分**: 本スキルは書かない。修正は `tdd` / `tidy-first` (Phase 1) / `ci-self-heal` / `pr-review-respond` (Phase 4) の subagent 出力。
 - **code-review findings / CI attempt log / triage 表 / Verification ブロックの再掲表**: 各 subagent の handback が持つ。本スキルは参照のみ (Phase 5 Verification literal を除く)。
-- **`subagents/` 配下のファイル**: 配布リポの placeholder 方針を破らない。構成は Task dispatch のみ。
+- **`subagents/` 配下のファイル**: 配布リポの placeholder 方針を破らない。構成は Agent dispatch のみ。
 - **実装そのもの (設計 / コーディング)**: 上流 `design` / `software-design` / `tdd` / `tidy-first` の領域。本スキルは未 GREEN を受けない。
 - **PR の merge / squash / branch 削除**: 最終状態は merge-ready で停止、merge は人間に残す。
 - **ローカル trace ファイル**: トレースは PR コメント側 (pr-review-respond 集約) に集約。リポ内ログは作らない。

@@ -171,7 +171,9 @@ def standalone_pr(args):
 
 def validate_flag_combinations(args):
     """Reject every explicitly passed discovery flag that the selected scan
-    path would not consume (fail closed, rules/fail-closed.md).
+    path would not consume (fail closed: silently ignoring an explicit flag
+    would let the wrong data source pass unnoticed, so this rejects loudly
+    instead).
 
     Written as one set comparison — the set of explicitly passed discovery
     flags vs the set the selected path actually consumes — so the whole
@@ -656,7 +658,9 @@ def main():
     ap = argparse.ArgumentParser(description="retro quantitative transcript scan")
     ap.add_argument("--transcript", action="append")
     # None sentinels, not eager defaults: validate_flag_combinations() must
-    # distinguish "explicitly passed" from "defaulted" (rules/fail-closed.md).
+    # distinguish "explicitly passed" from "defaulted" (fail closed: a
+    # defaulted flag silently overridden downstream must not be mistaken
+    # for an explicit user choice).
     # The real defaults (cwd / ~/.claude/projects) are filled in right before
     # transcript discovery.
     ap.add_argument("--project-dir", default=None)
