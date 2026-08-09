@@ -1,0 +1,13 @@
+{"id":"t01","predicted":true,"actual":true,"reason":"Directly requests execution of rulesync-sync.mjs, which is the core operation."}
+{"id":"t02","predicted":true,"actual":true,"reason":"Asks to regenerate generated outputs, the main responsibility of the skill."}
+{"id":"t03","predicted":true,"actual":true,"reason":"Requests regeneration and drift verification, explicit match for --check workflow."}
+{"id":"t04","predicted":true,"actual":true,"reason":"After editing source files, requests reflection of changes via regeneration."}
+{"id":"t05","predicted":true,"actual":true,"reason":"Concerns outdated CLAUDE.md, a generated output covered by the trigger examples."}
+{"id":"t06","predicted":true,"actual":true,"reason":"Asks where to place rules, a feature-directory-structure question this skill covers."}
+{"id":"t07","predicted":true,"actual":true,"reason":"Asks about repo distribution structure, explicitly in the skill's explanatory scope."}
+{"id":"t08","predicted":true,"actual":true,"reason":"Requests verification that source edits propagate to generated settings.json."}
+{"id":"f01","predicted":false,"actual":false,"reason":"Distribution to other repos is a harness-distribution decision."}
+{"id":"f02","predicted":false,"actual":false,"reason":"Creating a skill and tuning triggers is skill-builder scope."}
+{"id":"f03","predicted":false,"actual":false,"reason":"Release tagging is explicitly out of scope (RELEASING.md)."}
+{"id":"f04","predicted":false,"actual":false,"reason":"General git commit request should trigger the commit skill."}
+{"id":"f05","predicted":false,"actual":false,"reason":"Unrelated utility function request."}

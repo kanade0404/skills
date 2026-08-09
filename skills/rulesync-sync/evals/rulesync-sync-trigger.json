@@ -1,0 +1,97 @@
+{
+  "target_skill": "rulesync-sync",
+  "version": "1",
+  "cases": [
+    {
+      "id": "t01",
+      "prompt": "rulesync-sync.mjs 実行して",
+      "should_trigger": true,
+      "rationale": "再生成コマンドの直接要請",
+      "tags": ["explicit"]
+    },
+    {
+      "id": "t02",
+      "prompt": "生成物を再生成して",
+      "should_trigger": true,
+      "rationale": "生成物再生成の直接要請",
+      "tags": ["explicit"]
+    },
+    {
+      "id": "t03",
+      "prompt": ".claude/ の中身が古いので再生成して drift が無いか確認して",
+      "should_trigger": true,
+      "rationale": "再生成 + --check 検証の直接要請",
+      "tags": ["explicit"]
+    },
+    {
+      "id": "t04",
+      "prompt": "skill 直したから反映しといて",
+      "should_trigger": true,
+      "rationale": "ソース編集後の反映を口語で依頼",
+      "tags": ["ambiguous"]
+    },
+    {
+      "id": "t05",
+      "prompt": "CLAUDE.md が古い気がする",
+      "should_trigger": true,
+      "rationale": "生成物側の drift 疑いを口語で表現",
+      "tags": ["ambiguous"]
+    },
+    {
+      "id": "t06",
+      "prompt": "rules はどこに置けばいい?",
+      "should_trigger": true,
+      "rationale": "feature ディレクトリの意味論を問う隣接表現",
+      "tags": ["adjacent"]
+    },
+    {
+      "id": "t07",
+      "prompt": "この repo の配布構造ってどうなってるんだっけ?",
+      "should_trigger": true,
+      "rationale": "feature ディレクトリ全体の意味論を問う要請",
+      "tags": ["adjacent"]
+    },
+    {
+      "id": "t08",
+      "prompt": "hooks-local に書いた hook、生成される settings.json にちゃんと入るか確認して",
+      "should_trigger": true,
+      "rationale": "hooks-local マージ経路の確認 = 再生成ワークフローの一部",
+      "tags": ["explicit", "edge"]
+    },
+    {
+      "id": "f01",
+      "prompt": "このルール、他の repo でも使いたいので rulesync で配布して",
+      "should_trigger": false,
+      "rationale": "consumer 側への配布判断は harness-distribution の担当",
+      "tags": ["adjacent"]
+    },
+    {
+      "id": "f02",
+      "prompt": "新しい skill を作って、trigger も調整して",
+      "should_trigger": false,
+      "rationale": "skill 本文の作成・trigger 調整は skill-builder の担当",
+      "tags": ["adjacent"]
+    },
+    {
+      "id": "f03",
+      "prompt": "v1.3.0 のタグ切ってリリースして",
+      "should_trigger": false,
+      "rationale": "リリースタグ作成は RELEASING.md の手順",
+      "tags": ["adjacent"]
+    },
+    {
+      "id": "f04",
+      "prompt": "この変更をcommitして",
+      "should_trigger": false,
+      "rationale": "汎用の git commit 要請で本スキルの対象外",
+      "tags": ["distractor"]
+    },
+    {
+      "id": "f05",
+      "prompt": "配列の重複を除去する関数を書いて",
+      "should_trigger": false,
+      "rationale": "本リポジトリの配布運用と無関係な一般コーディングタスク",
+      "tags": ["distractor"]
+    }
+  ]
+}

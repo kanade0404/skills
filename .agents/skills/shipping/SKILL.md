@@ -206,7 +206,7 @@ orchestrator の time-box fallback (allowed-tools 内の直接観測 — `gh pr 
 
 ### Phase 6 — 監視設置
 
-**なぜ**: `rules/pr-push-discipline.md` の帰結 3 (「離れる前の監視」) は常駐 rule で「いつ必ずやるか」を定めるが、rule 単体では「SHIPPED に飛びつく」完了報告直前の慣性を止められない。本スキルの終端フェーズとして構造的ゲートにすることで、rule (規範) と skill (手続き) の二重化で初めて帰結 3 が実効化する。**SHIPPED は監視設置を確認してから報告する** — Phase 5 の PASS だけでは報告しない。`pr-monitor` が cron も `ScheduleWakeup` も使えず手動フォールバック (`monitor_mode: manual`) に倒れた場合、後続の CI 失敗・新規レビューコメント・merge/close を検知する常駐プロセスは何も残らない — 帰結 3 が求める「手段を残す」を満たさないため、`manual` は監視設置の成功に数えない。
+**なぜ**: push 後は CI 帰結・レビュー終端・監視設置を担保してから PR を離れる、という規律のうち監視設置を構造的に担保する手段は、この規律を定めていた常駐 rule が廃止された現在、本フェーズ (Phase 6) のゲートのみである。だからこそ監視設置は「あれば良い」補助ではなく、SHIPPED 報告の前提条件として必須とする。**SHIPPED は監視設置を確認してから報告する** — Phase 5 の PASS だけでは報告しない。`pr-monitor` が cron も `ScheduleWakeup` も使えず手動フォールバック (`monitor_mode: manual`) に倒れた場合、後続の CI 失敗・新規レビューコメント・merge/close を検知する常駐プロセスは何も残らない — 帰結 3 が求める「手段を残す」を満たさないため、`manual` は監視設置の成功に数えない。
 
 `pr-monitor` を使う subagent を Agent で dispatch する (fresh subagent。「Subagent 起動契約 (テンプレ)」に従う。main は監視を待たない):
 

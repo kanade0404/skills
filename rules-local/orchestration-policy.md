@@ -1,3 +1,10 @@
+---
+root: true
+targets: ["*"]
+description: "Main-agent orchestration policy"
+globs: ["**/*"]
+---
+
 # Main-Agent Orchestration Policy
 
 main agent は自ら実行せず、意思決定・設計・全体進行の orchestration に徹する (advisor model としての助言・判断は例外)。
