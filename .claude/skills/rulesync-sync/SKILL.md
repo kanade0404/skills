@@ -26,7 +26,8 @@ allowed-tools:
   - Edit
   - Write
   - Bash(node scripts/rulesync-sync.mjs*)
-  - Bash(uv run*)
+  - Bash(uv run python3 -m unittest discover -s tests)
+  - Bash(uv run python .github/scripts/check_trigger_evals.py)
   - Bash(git status *)
   - Bash(git diff *)
 ---
@@ -76,7 +77,8 @@ RELEASING.md を参照し、本スキルではタグ運用そのものは扱わ�
 | `skills/<name>/` | Agent Skills。ディレクトリと `SKILL.md` frontmatter が inventory の source of truth | 配布 (`skills` feature) |
 | `rules/` | 横断的な rule。**配布用** — consumer は中の全ファイルを fetch するため、frontmatter 付き rule ファイルのみを置く。README 禁止、repo-local な内容も禁止 (`tests/` で機械チェック) | 配布 (`rules` feature) |
 | `rules-local/` | repo-local な rule (root rule `orchestration-policy.md` を含む)。`scripts/rulesync-sync.mjs` がこのリポジトリ自身の生成物に staging する | 配布対象外 |
-| `subagents/` / `commands/` / `hooks/` | 配布用の feature 枠。現状 placeholder (README のみ)。**repo-local な内容を置かない** — consumer の `rulesync fetch --features hooks` 等は配下を丸ごと fetch する | 配布 (該当 feature) |
+| `subagents/` | 配布用の feature 枠。rulesync canonical 形式の subagent 定義を 1 ファイル 1 エージェントで置く（例: `problem-solver.md`）。**repo-local な内容を置かない** — consumer の `rulesync fetch --features subagents` は配下を丸ごと fetch する | 配布 (`subagents` feature) |
+| `commands/` / `hooks/` | 配布用の feature 枠。現状 placeholder (README のみ)。**repo-local な内容を置かない** — consumer の `rulesync fetch --features hooks` 等は配下を丸ごと fetch する | 配布 (該当 feature) |
 | `hooks-local/` | repo-local な hook。`claude-code-hooks.json` を `scripts/rulesync-sync.mjs` が読み、このリポジトリの生成 `.claude/settings.json` に merge する | 配布対象外 |
 
 新しい rule / hook をどこに置くか迷ったら: 「他の consumer リポジトリにも配りたいか」
@@ -90,7 +92,7 @@ source と license 情報を記録する。
 
 ## Skill ディレクトリの標準レイアウト
 
-```
+```text
 skills/<name>/
   SKILL.md         # 必須。frontmatter + 本体指示
   references/*.md  # 詳細情報 (progressive disclosure)
@@ -108,13 +110,17 @@ skill 本文の作成・改訂・trigger 調整自体は `skill-builder` が sou
    生成物 (`.claude/`, `.agents/`, `.codex/`, root `AGENTS.md` / `CLAUDE.md`) は
    触らない — 触っても次の再生成で上書きされ、drift CI にも捕まる。
 2. **再生成する**:
+
    ```bash
    node scripts/rulesync-sync.mjs
    ```
+
 3. **drift が無いことを確認する**:
+
    ```bash
    node scripts/rulesync-sync.mjs --check
    ```
+
    `--check` は再生成結果と現状の生成物に差分が無いことを確認するモード。差分が
    あれば non-zero exit する — その場合は手順 2 に戻って再生成し、生成物側を
    手で直さない。

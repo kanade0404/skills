@@ -1,0 +1,146 @@
+{
+  "target_skill": "problem-solving",
+  "version": "1",
+  "cases": [
+    {
+      "id": "t01",
+      "prompt": "この問題どう解けばいいか全くわからない。整理してほしい。",
+      "should_trigger": true,
+      "rationale": "直接的な要請",
+      "tags": ["explicit"]
+    },
+    {
+      "id": "t02",
+      "prompt": "実装が行き詰まってて、さっきから堂々巡りしてる。",
+      "should_trigger": true,
+      "rationale": "行き詰まりの口語表現",
+      "tags": ["ambiguous"]
+    },
+    {
+      "id": "t03",
+      "prompt": "何から手をつけていいかわからないので、一旦一緒に考えて。",
+      "should_trigger": true,
+      "rationale": "着手点が定まらない状態",
+      "tags": ["ambiguous"]
+    },
+    {
+      "id": "t04",
+      "prompt": "このバグ、再現はするけど原因の仮説が全然立たない。",
+      "should_trigger": true,
+      "rationale": "原因不明のバグ調査",
+      "tags": ["explicit", "debugging"]
+    },
+    {
+      "id": "t05",
+      "prompt": "このアルゴリズム、力任せで実装する前に一度考え方を整理したい。",
+      "should_trigger": true,
+      "rationale": "実装前の思考整理",
+      "tags": ["explicit", "algorithm"]
+    },
+    {
+      "id": "t06",
+      "prompt": "一旦立ち止まって、この問題の未知のものと条件を整理するところからやり直したい。",
+      "should_trigger": true,
+      "rationale": "Step1 理解フェーズへの明示的要求",
+      "tags": ["explicit"]
+    },
+    {
+      "id": "t07",
+      "prompt": "この解答、本当に合ってるか検算してほしい。",
+      "should_trigger": true,
+      "rationale": "Look back (検算)",
+      "tags": ["explicit", "verify"]
+    },
+    {
+      "id": "t08",
+      "prompt": "この修正、他のやり方でも同じ結果になるか確認して。",
+      "should_trigger": true,
+      "rationale": "Look back (別ルートでの再確認)",
+      "tags": ["explicit", "verify"]
+    },
+    {
+      "id": "t09",
+      "prompt": "詰まってるので Polya の4段階でやってみて。",
+      "should_trigger": true,
+      "rationale": "スキル名指しに近い直接要請",
+      "tags": ["explicit"]
+    },
+    {
+      "id": "t10",
+      "prompt": "このパズル、どこから手をつけるべきか一緒に考えて。",
+      "should_trigger": true,
+      "rationale": "着手点の整理要求",
+      "tags": ["ambiguous"]
+    },
+    {
+      "id": "t11",
+      "prompt": "新しいAPIのI/O境界、どう切ればいい?",
+      "should_trigger": false,
+      "rationale": "design の担当（構造選択・I/O境界）",
+      "tags": ["adjacent", "design"]
+    },
+    {
+      "id": "t12",
+      "prompt": "このテスト、TDDで実装して。",
+      "should_trigger": false,
+      "rationale": "tdd の担当",
+      "tags": ["adjacent", "tdd"]
+    },
+    {
+      "id": "t13",
+      "prompt": "このリファクタ、構造を壊さずに小さく刻んで進めて。",
+      "should_trigger": false,
+      "rationale": "tidy-first の担当",
+      "tags": ["adjacent", "tidy-first"]
+    },
+    {
+      "id": "t14",
+      "prompt": "この実装計画、既存の ADR や用語と矛盾してないか確認して。",
+      "should_trigger": false,
+      "rationale": "grill-with-docs の担当",
+      "tags": ["adjacent", "grill-with-docs"]
+    },
+    {
+      "id": "t15",
+      "prompt": "state管理ライブラリを比較調査して。",
+      "should_trigger": false,
+      "rationale": "research-practices の担当",
+      "tags": ["adjacent", "research"]
+    },
+    {
+      "id": "t16",
+      "prompt": "この集約境界、これでOK?",
+      "should_trigger": false,
+      "rationale": "design / design-review の担当（設計判断そのもの）",
+      "tags": ["adjacent", "design-review"]
+    },
+    {
+      "id": "t17",
+      "prompt": "typo 直して。",
+      "should_trigger": false,
+      "rationale": "自明な1行修正。4段階のコストが見合わない",
+      "tags": ["distractor"]
+    },
+    {
+      "id": "t18",
+      "prompt": "この関数、命名だけリネームして。",
+      "should_trigger": false,
+      "rationale": "自明な機械的変更",
+      "tags": ["distractor"]
+    },
+    {
+      "id": "t19",
+      "prompt": "この問題（変数名のtypo）を解決して。",
+      "should_trigger": false,
+      "rationale": "「問題」という語を含むが実質は自明な1行修正",
+      "tags": ["distractor"]
+    },
+    {
+      "id": "t20",
+      "prompt": "CI が落ちてる、直して。",
+      "should_trigger": false,
+      "rationale": "ci-self-heal の担当。原因箇所は明確でログ読解の話",
+      "tags": ["distractor", "ci-self-heal"]
+    }
+  ]
+}

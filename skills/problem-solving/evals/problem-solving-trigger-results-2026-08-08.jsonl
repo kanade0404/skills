@@ -1,0 +1,20 @@
+{"id":"t01","predicted":true,"reason":"description の「この問題どう解けばいい」に直接一致"}
+{"id":"t02","predicted":true,"reason":"description の「行き詰まった」に一致"}
+{"id":"t03","predicted":true,"reason":"description の「何から手をつけていいかわからない」に一致"}
+{"id":"t04","predicted":true,"reason":"description の「原因不明のバグ調査」「バグの原因が特定できない」に一致"}
+{"id":"t05","predicted":true,"reason":"description の「力任せにやる前に考えたい」に一致"}
+{"id":"t06","predicted":true,"reason":"description の「一旦立ち止まって整理したい」に一致"}
+{"id":"t07","predicted":true,"reason":"description の「検算したい」に一致"}
+{"id":"t08","predicted":true,"reason":"description の「他のやり方もあるか」の確認要求に一致"}
+{"id":"t09","predicted":true,"reason":"スキルの由来 (Pólya の4段階) を名指し"}
+{"id":"t10","predicted":true,"reason":"description の「何から手をつけていいかわからない」と同型"}
+{"id":"t11","predicted":false,"reason":"description の negative space で design の担当と明記"}
+{"id":"t12","predicted":false,"reason":"description の negative space で tdd の担当と明記"}
+{"id":"t13","predicted":false,"reason":"description の negative space で tidy-first の担当と明記"}
+{"id":"t14","predicted":false,"reason":"description の negative space で grill-with-docs の担当と明記"}
+{"id":"t15","predicted":false,"reason":"description の negative space で research-practices の担当と明記"}
+{"id":"t16","predicted":false,"reason":"設計判断そのものは design / design-review の担当"}
+{"id":"t17","predicted":false,"reason":"description の negative space で自明な typo 修正を除外"}
+{"id":"t18","predicted":false,"reason":"自明な機械的変更で4段階のコストが見合わない"}
+{"id":"t19","predicted":false,"reason":"「問題」という語を含むが中身は自明な1行修正で trivial 判定"}
+{"id":"t20","predicted":false,"reason":"CI失敗はログ読解の話で ci-self-heal の担当"}
