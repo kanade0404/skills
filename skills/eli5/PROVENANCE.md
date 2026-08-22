@@ -24,7 +24,7 @@ byte-for-byte copy of the upstream at that commit:
 `LICENSE` and this `PROVENANCE.md` are added by the vendoring; everything else
 is untouched. To audit, diff `SKILL.md` against the pinned upstream URL:
 
-```
+```text
 https://raw.githubusercontent.com/anthropics/claude-plugins-community/f4c9452f5ca091f1be7064d9faab1b001ea21645/eli5/skills/eli5/SKILL.md
 ```
 
