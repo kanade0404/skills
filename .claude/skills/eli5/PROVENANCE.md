@@ -46,11 +46,16 @@ not by diffing against upstream.
 `SKILL.md`'s body ends with `Topic: $ARGUMENTS` — a slash-command style
 template variable from the upstream plugin's original packaging (it ships as
 a plugin whose `eli5` skill doubles as the `/eli5 <topic>` command target).
-Kept verbatim for fidelity; `$ARGUMENTS` is substituted by the invoking
-harness where supported, and otherwise reads as the literal topic prompt text
-typed after `/eli5`.
+Kept verbatim for fidelity. Claude Code substitutes `$ARGUMENTS` with the
+text typed after `/eli5 <topic>`; a harness without that substitution has no
+topic fallback and leaves the literal `$ARGUMENTS` token in place.
 
 ## Updating
 
-Re-run the copy against a newer upstream commit and update the pinned commit /
-retrieval date above.
+Re-run the copy against a newer upstream commit, then:
+
+1. Update the pinned commit, retrieval date, and the audit URL above (the
+   commit hash is embedded in it too).
+2. Run `node scripts/rulesync-sync.mjs` to regenerate the `.claude/skills/`
+   and `.agents/skills/` mirrors.
+3. Run `node scripts/rulesync-sync.mjs --check` to verify they're in sync.
