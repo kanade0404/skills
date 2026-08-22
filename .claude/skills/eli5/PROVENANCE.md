@@ -12,7 +12,11 @@ avoid executing upstream tooling (supply-chain hardening).
 - **Upstream path**: `eli5/skills/eli5`
 - **Author**: Thariq Shihipar
 - **License**: MIT (see [LICENSE](./LICENSE); declared in the upstream plugin's
-  `.claude-plugin/plugin.json`, which is not itself vendored here)
+  `.claude-plugin/plugin.json`, which is not itself vendored here). The upstream
+  repo ships no standalone LICENSE file for this plugin (only the `"license":
+  "MIT"` SPDX identifier), so there is no upstream copyright year to match —
+  `LICENSE` here uses the retrieval year below and the author name from
+  `plugin.json`.
 - **Commit pinned**: `f4c9452f5ca091f1be7064d9faab1b001ea21645` (`main`)
 - **Retrieved**: 2026-08-22
 
