@@ -55,7 +55,7 @@ design / software-design   →   tdd / tidy-first   →   shipping (本スキル
 
 - **使い回さない**: サイクルごとに fresh subagent を立てる。読了済み subagent の再利用は状態の陳腐化とバイアスを生む (`skill-builder` Mode C と同じ規律)。
 - **逐次 (並列にしない)**: 1 サイクル内の `ci-self-heal` と `pr-review-respond` は **同一 PR ブランチを共有**し、双方が修正 commit を push しうる。並列 dispatch は commit の競合・交錯を生むので順次に回す (`dispatching-parallel-agents` の shared-state 規律)。順序は ci-self-heal → pr-review-respond (reviewer が緑の PR を見る形にする)。
-- **subagents/ には書かない**: 配布リポの `subagents/` は placeholder。本スキルは Agent dispatch で構成し、`subagents/` にファイルを作らない。
+- **subagents/ には書かない**: 配布リポの `subagents/` は consumer が `rulesync fetch --features subagents` で取り込む**配布カタログ**であり、その追加・改訂は `harness-distribution` の領域。本スキルは Agent dispatch で構成し、`subagents/` にファイルを作らない。
 
 ### Subagent 起動契約 (テンプレ)
 
@@ -297,7 +297,7 @@ escalate 後は **ユーザの明示指示があるまで追加 dispatch / push 
 
 - **修正コード差分**: 本スキルは書かない。修正は `tdd` / `tidy-first` (Phase 1) / `ci-self-heal` / `pr-review-respond` (Phase 4) の subagent 出力。
 - **code-review findings / CI attempt log / triage 表 / Verification ブロックの再掲表**: 各 subagent の handback が持つ。本スキルは参照のみ (Phase 5 Verification literal を除く)。
-- **`subagents/` 配下のファイル**: 配布リポの placeholder 方針を破らない。構成は Agent dispatch のみ。
+- **`subagents/` 配下のファイル**: 配布カタログの改訂は `harness-distribution` の領域。構成は Agent dispatch のみ。
 - **実装そのもの (設計 / コーディング)**: 上流 `design` / `software-design` / `tdd` / `tidy-first` の領域。本スキルは未 GREEN を受けない。
 - **PR の merge / squash / branch 削除**: 最終状態は merge-ready で停止、merge は人間に残す。
 - **ローカル trace ファイル**: トレースは PR コメント側 (pr-review-respond 集約) に集約。リポ内ログは作らない。
