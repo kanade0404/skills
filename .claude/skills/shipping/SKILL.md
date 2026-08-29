@@ -1,20 +1,20 @@
 ---
 name: shipping
 description: >-
-  実装が上流スキル (`design`/`software-design` → `tdd`/`tidy-first`) で GREEN になった後の
-  **出荷専用ターミナルステージ**を、各フェーズを fresh subagent に dispatch するオーケストレータスキル。品質ゲート
-  (`code-review`) → 完了ゲート (`verify-done`) → PR materialize (open PR が無ければ
-  `commit-commands:commit-push-pr`、あれば push) → CI 緑化 (`ci-self-heal`) と自動レビュー対応
-  (`pr-review-respond`、CodeRabbit/Devin/Copilot/人間、CodeRabbit 修正は
-  `coderabbit:autofix` へ委譲) を、CI 全 pass かつ全コメント終端まで回し、行き詰まったら escalate する。収束後は
-  SHIPPED 前に `pr-monitor` を subagent dispatch し監視設置を確認する。コード修正は behavioral→`tdd`
-  / structural→`tidy-first` の subagent にルーティングし、本スキルはコードを書かずループ制御と収束/escalation
-  判定だけを main で持つ。「ship して」「実装できたから後は全部やって PR 出して CI
-  もレビュー対応も全部通してマージできる状態にして」「commit-push-pr の検証付き版で」「赤と指摘を全部潰して merge-ready
-  に」のような実装後に出荷まで丸ごと任せる要請で必ず起動すること。commit だけは `commit-commands:commit`、検証ループ不要の
-  commit→push→PR だけは `commit-push-pr`、コードレビューだけは `code-review`、既存 PR のコメント対応だけは
-  `pr-review-respond`、CI 修復だけは `ci-self-heal`、完了確認だけは `verify-done`、実装そのもの
-  (設計/コーディング/未 GREEN/WIP) は上流が担い範囲外。PR は merge せず merge-ready で停止する。
+  Terminal shipping stage for an implementation already GREEN upstream
+  (`tdd`/`tidy-first`). Orchestrates fresh subagents through `code-review` →
+  `verify-done` → PR materialize (`commit-push-pr`, or push if a PR is open) →
+  `ci-self-heal` + `pr-review-respond`, looping until CI fully passes and every
+  review comment is terminal, escalating when stuck, then handing off to
+  `pr-monitor`. Writes no code — fixes route to `tdd` (behavioral) or
+  `tidy-first` (structural). Use when a request hands a finished implementation
+  off all the way to merge-ready: 「ship して」「実装できたから後は全部やって PR 出して CI
+  もレビュー対応も全部通してマージできる状態にして」「commit-push-pr の検証付き版で」「赤と指摘を全部潰して merge-ready に」.
+  Not for the pieces alone: commit (`commit-commands:commit`), commit→push→PR
+  without the loop (`commit-push-pr`), review (`code-review`), existing PR
+  comments (`pr-review-respond`), CI (`ci-self-heal`), completion check
+  (`verify-done`), or the implementation itself (design / coding / WIP). Stops
+  at merge-ready; never merges.
 allowed-tools:
   - Read
   - Agent
@@ -56,7 +56,7 @@ design / software-design   →   tdd / tidy-first   →   shipping (本スキル
 
   `ci-self-heal` / `pr-review-respond` は内部で既にこのルーティングをするため、本スキルは Phase 1 の差し戻し分だけ自分でルーティングする。
 
-  修正 subagent の dispatch prompt には **`Skill(tdd)` / `Skill(tidy-first)` の起動指示を明示的に含める** — 自由文の「tdd の規律で」だけだと skill 本文がロードされず、無名 subagent の直編集に流れて Skill 発火の traceability が失われる (実測: PR #96 セッションで修正 3 件が全て未発火)。テスト基盤が無い差分 (markdown / 設定等) では RED→GREEN が成立しないため、代わりに**再現→修正→再現ケース消失の確認**など代替検証手段を prompt で明記させる。
+  修正 subagent の dispatch prompt には **`Skill(tdd)` / `Skill(tidy-first)` の起動指示を明示的に含める** — 自由文の「tdd の規律で」だけだと skill 本文がロードされず、無名 subagent の直編集に流れて Skill 発火の traceability が失われる。テスト基盤が無い差分 (markdown / 設定等) では RED→GREEN が成立しないため、代わりに**再現→修正→再現ケース消失の確認**など代替検証手段を prompt で明記させる。
 
 ---
 
@@ -182,7 +182,7 @@ PR number / URL を確保して Phase 4 へ。
 
 push 後、以下を **1 サイクル**として回す。(a)(b) は逐次:
 
-- **(a) CI**: `ci-self-heal` を使う subagent を dispatch。CI watch → root-cause → 修正 (内部で `tdd`/`tidy-first`) → 再 push → 再 watch を内部で回し、緑なら `PASS`、3-failure / flaky / env / infra なら `HALTED` を返す。**(a) の完了条件は CI checks の終端のみ** — 自動レビュー (CodeRabbit 等) の完了待ちを含めない。既に checks が全て終端し**緑** (fail / cancel が 0) なら watch を張らずそのまま (b) へ進む — この「終端済みか」の判定は **(a) の `ci-self-heal` subagent が初回観測で行う** (orchestrator は「もう緑だろう」と推測して (a) の dispatch 自体を省略しない)。終端でも `fail` / `cancel` を含むなら緑扱いで素通りせず、watch 不要でも `ci-self-heal` の修復ループ (root-cause → 修正 → 再 push → 再 watch) は踏む (レビュー完了を待ち合わせると、既存レビュースレッドの対応 (b) が starve する。実測: PR #96 でレビュー 7 件が約 8 時間放置)。
+- **(a) CI**: `ci-self-heal` を使う subagent を dispatch。CI watch → root-cause → 修正 (内部で `tdd`/`tidy-first`) → 再 push → 再 watch を内部で回し、緑なら `PASS`、3-failure / flaky / env / infra なら `HALTED` を返す。**(a) の完了条件は CI checks の終端のみ** — 自動レビュー (CodeRabbit 等) の完了待ちを含めない。既に checks が全て終端し**緑** (fail / cancel が 0) なら watch を張らずそのまま (b) へ進む — この「終端済みか」の判定は **(a) の `ci-self-heal` subagent が初回観測で行う** (orchestrator は「もう緑だろう」と推測して (a) の dispatch 自体を省略しない)。終端でも `fail` / `cancel` を含むなら緑扱いで素通りせず、watch 不要でも `ci-self-heal` の修復ループ (root-cause → 修正 → 再 push → 再 watch) は踏む (レビュー完了を待ち合わせると、既存レビュースレッドの対応 (b) が starve し、未対応のレビューが長時間放置される)。
 - **(b) レビュー**: `pr-review-respond` を使う subagent を dispatch。契約の入力で **fetch / triage 対象に CodeRabbit / Devin / Copilot / 人間を含めるよう明示**する。Copilot は `pr-review-respond` のベンダー判定上 `human` に分類され、VALID / VALID_DEFER / DUPLICATE は他 vendor と同じく GraphQL `resolveReviewThread` で直接 resolve される (ディレクティブ併記なし)。resolve されず残るのは INVALID_PUSH (根拠付き reply のみ) と Withdrawn (レビュアー撤回 — スレッド未 resolve のまま終端)。**CodeRabbit 起因の指摘への修正適用は、`coderabbit` plugin が入っている環境では `coderabbit:autofix` (per-change approval 付き) に委譲する**ことを契約入力で明示する — plugin が無い環境では従来どおり `pr-review-respond` 内の修正経路 (`tdd` / `tidy-first` ルーティング) を使う。VALID は修正 commit、INVALID_PUSH は根拠付き pushback、VALID_DEFER は issue 化、DUPLICATE は参照。
 - **(c) 状態判定**: このサイクルで PR に新規 push があったかを、サイクル開始前後の PR リモート head (`gh pr view <PR> --json headRefOid`) の比較で確認する。ローカル `git rev-parse HEAD` の前後比較は判定基準にしない — commit 作成後に push が失敗していても変化してしまい (GitHub に無い SHA を「新規 push」と誤認して CI watch を始める)、別プロセスによる push は見逃す。(a)(b) が報告した `pushed_commits` は `headRefOid` の変化と突き合わせ、`headRefOid` が変わっていないのに `pushed_commits` が非空なら push 失敗として stall 扱いで escalate する。
 
@@ -193,7 +193,7 @@ push 後、以下を **1 サイクル**として回す。(a)(b) は逐次:
 1. **orchestrator の待ち = (a)(b) の同期 dispatch そのもの**。subagent の return まで blocking で自然に戻る。第 2 の wake 経路・`Monitor`・`TaskStop` 撤収はいずれも不要 — background タスクを一切作らないから。orchestrator 自身が subagent として実行されている場合 (例: セッション main が本スキルを model 指定で background dispatch した場合) も同じで、同期 dispatch の連鎖は全段 blocking で戻る。
 2. **subagent 内の外部イベント待ち (CI 等) = `ci-self-heal` の `scripts/wait_gate.sh` の foreground blocking 呼び出し** (deadline ≤ 8 分で必ず exit し、exit code `0`/`1`/`2`/`3` で機械分類。deadline 超過は呼び直しで継続し、呼び直しごとに意思決定が戻るため無限待ちにならない)。
 
-orchestrator の time-box fallback (allowed-tools 内の直接観測 — `gh pr checks` / `git rev-parse`) は、dispatch 自体が返らない異常への最終保険としてのみ残す。ただし到達性を明確にする: 同期 dispatch 中の orchestrator は blocking しており、fallback を自力では発火できない (harness に同期 dispatch の caller 側 timeout 原語は無い)。同期経路での「dispatch は必ず返る」保証は **callee 側の有界待ち**が担う — subagent 内の外部待ちは `wait_gate.sh` に限定され (deadline ≤ 8 分 / 回で必ず exit、`gh` 呼び出し自体も 60 秒 cap で有界化、累計 32 分で escalate)、無限 blocking は設計上発生しない。fallback を実際に発火できるのは、生きた turn を持つ待ちの所有者がいる構成のみである。セッション main が本スキルを background dispatch して離れる場合、main 側の deadline は **main 所有の** background タスクで張る — main 所有の「exit → 完了通知 → 再起動」だけが実測で機能した経路であり (PR #96 の merge 27 秒検知と同構成)、subagent 所有の待ちは全て実測で消滅した (Monitor 満了通知の不達で約 8 時間 / subagent 内二重 wake の回収で数十分、の stall 2 件)。
+orchestrator の time-box fallback (allowed-tools 内の直接観測 — `gh pr checks` / `git rev-parse`) は、dispatch 自体が返らない異常への最終保険としてのみ残す。ただし到達性を明確にする: 同期 dispatch 中の orchestrator は blocking しており、fallback を自力では発火できない (harness に同期 dispatch の caller 側 timeout 原語は無い)。同期経路での「dispatch は必ず返る」保証は **callee 側の有界待ち**が担う — subagent 内の外部待ちは `wait_gate.sh` に限定され (deadline ≤ 8 分 / 回で必ず exit、`gh` 呼び出し自体も 60 秒 cap で有界化、累計 32 分で escalate)、無限 blocking は設計上発生しない。fallback を実際に発火できるのは、生きた turn を持つ待ちの所有者がいる構成のみである。セッション main が本スキルを background dispatch して離れる場合、main 側の deadline は **main 所有の** background タスクで張る — main 所有の「exit → 完了通知 → 再起動」だけが実測で機能した経路であり (merge を数十秒で検知できた構成と同じ)、subagent 所有の待ちは全て実測で消滅した (Monitor 満了通知の不達で約 8 時間 / subagent 内二重 wake の回収で数十分、の stall 2 件)。
 
 サイクル終了時の遷移:
 

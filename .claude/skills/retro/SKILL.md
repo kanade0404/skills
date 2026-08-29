@@ -1,21 +1,21 @@
 ---
 name: retro
 description: >-
-  完了したセッション (PR が merge / close された後、長時間セッションの後、新 skill を運用した直後) のトランスクリプトを
-  **バイアスを排した fresh subagent**
-  に網羅解析させ、ハーネス自身の改善提案を返すスキル。単一セッションだけでなく、`~/.claude/projects`
-  の過去ログ全体を横断する解析にも対応する — 同梱の DuckDB スクリプト (scripts/retro_scan.py) が tool
-  統計・skill 発火実績・権限拒否・retry・token/blocking を複数セッション一括で集計する。tool 統計・権限拒否・subagent
-  結果・ループ/stall/escalation・skill の不発や暴発・token 浪費・blocking 待ちを洗い、各 finding を「どのレバー
-  (hook / settings allow-deny / skill 編集 / 新規 skill / CLAUDE.md・rule /
-  empirical-prompt-tuning への handoff / none) で直すか」「なぜ局所パッチでは再発するか (class
-  レベルの根本原因)」付きで構造化する。`pr-monitor` が merge / close
-  を検出した直後の主経路、「振り返り」「retro」「セッション分析」「ハーネス改善したい」「allow リスト見直したい」「hooks
+  Hands a finished session's transcript to a **bias-free fresh subagent** for
+  exhaustive analysis and returns harness-improvement proposals; a bundled
+  DuckDB script extends the sweep across the whole `~/.claude/projects` log
+  history. Sweeps tool stats, permission denials, loops / stalls / escalations,
+  skills that failed to fire or misfired, token waste, and blocking waits,
+  naming each fix lever (hook / settings / skill edit / new skill / rule /
+  `empirical-prompt-tuning` handoff) and class-level root cause. Use after
+  `pr-monitor` detects a merge / close, after a long session or a new skill's
+  first run, and for 「振り返り」「retro」「セッション分析」「ハーネス改善したい」「allow リスト見直したい」「hooks
   候補ある?」「なんでこの skill
-  起動しなかった?」「過去のログを見て使われていない/発火実績の少ないハーネスを探して」「全セッション横断で振り返って」のような要請で必ず起動する。本スキルは**提案のみ**で、settings
-  / skill / rule / hook の編集・コミットは一切せず、すべて人間承認を待つ。改善の実体 (skill 編集や trigger 調整)
-  は承認後に `skill-builder` / `empirical-prompt-tuning`
-  等が担う。コードレビューやバグ修正のセッション分析ではなく、**エージェント運用 (harness) の改善**に閉じる。
+  起動しなかった?」「過去のログを見て使われていない/発火実績の少ないハーネスを探して」「全セッション横断で振り返って」. **Proposals
+  only** — never edits or commits settings / skills / rules / hooks; every
+  change waits for explicit human approval, and approved findings go to
+  `skill-builder` / `empirical-prompt-tuning`. Scoped to harness improvement,
+  not code review or bug analysis.
 allowed-tools:
   - Read
   - Grep
@@ -29,7 +29,7 @@ allowed-tools:
 
 ## いつ起動するか
 
-- **自動起動 (標準経路)**: `shipping` が SHIPPED を宣言した後 / `pr-monitor` が PR の merge / close を検出した直後 (実走実績: PR #97 決着 → cron → retro)
+- **自動起動 (標準経路)**: `shipping` が SHIPPED を宣言した後 / `pr-monitor` が PR の merge / close を検出した直後
 - 長時間セッションの後 / 新しい skill を初めて運用した直後
 - 手動: 「振り返り」「retro」「セッション分析」「ハーネス改善」「allow リスト見直し」「hooks 候補」「なんでこの skill 起動しなかった / 暴発した」
 
@@ -41,7 +41,7 @@ allowed-tools:
 
 ## アーキテクチャ — 収集と評価を分離する
 
-データソースは 2 系統ある: **transcript** (エージェント自身の実行記録) と **PR レビューループ** (レビュー指摘 → 対応 → re-review の往復、実装計画へのレビューとの往復)。transcript 単独では「レビューで何が繰り返し指摘されるか」という PR 横断の再発クラスが見えない (実測: PR #96/#97 決着後の retro で、レビュースレッド 20 件の遡及分類から transcript 単独では出ない再発クラス 3 種を検出)。
+データソースは 2 系統ある: **transcript** (エージェント自身の実行記録) と **PR レビューループ** (レビュー指摘 → 対応 → re-review の往復、実装計画へのレビューとの往復)。transcript 単独では「レビューで何が繰り返し指摘されるか」という PR 横断の再発クラスが見えない — 決着済み PR のレビュースレッドを遡及分類すると、transcript 単独では観測できない再発クラスが出てくる。
 
 subagent は 3 種。いずれも契約 dispatch で、**main に返すのは構造化サマリのみ** (生ログ・スレッド本文の転写は禁止。引用は 1 項目あたり接地根拠の 1 行まで):
 
@@ -96,7 +96,7 @@ tool エラー taxonomy / 同一コマンド反復 / ユーザー介入率・pro
 セッション別 token・cache 比 / wakeup・sleep) をセッション横断で一括集計する。
 **per-file の手組み jq 集計や生ログの丸読みをしない** — 数値はスクリプトから取り、
 transcript の Read は「数値が指した箇所の文脈確認」だけに使う
-(実測: 手組み集計は ~94k tokens / 12 分、スクリプトは uv 起動込みで ~1-2 秒)。
+(手組み集計は token と所要時間の両方を桁違いに食う。スクリプト経由は比較にならないほど安い)。
 uv が使えない環境だけ、fallback として jq / Read で同じ観点を集計する。
 
 ## 網羅スキャン (観点を 1 つも飛ばさない。定量部はプリスキャン出力を使う)

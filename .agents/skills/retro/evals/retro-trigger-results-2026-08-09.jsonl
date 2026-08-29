@@ -1,0 +1,20 @@
+{"id": "t01", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Session retrospective is the skill's core listed trigger"}
+{"id": "t02", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 「retro」が description の例示句"}
+{"id": "t03", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 「セッション分析」が例示句 + improvement proposals"}
+{"id": "t04", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Harness improvement is the stated scope"}
+{"id": "t05", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 「allow リスト見直したい」が例示句"}
+{"id": "t06", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 「hooks 候補ある?」が例示句"}
+{"id": "t07", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 「なんでこの skill 起動しなかった?」が例示句"}
+{"id": "t08", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Waste in past session maps to token/blocking sweep"}
+{"id": "t09", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Post merge/close wrap-up is the named main path"}
+{"id": "t10", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Bug root cause analysis explicitly out of scope"}
+{"id": "t11", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Skill authoring belongs to skill-builder"}
+{"id": "t12", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Description tuning goes to skill-builder/ept"}
+{"id": "t13", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): PR comment handling is pr-review-respond"}
+{"id": "t14", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): CI fixing is ci-self-heal"}
+{"id": "t15", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Meta question about the skill, not a retro request"}
+{"id": "t16", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Code review explicitly out of scope"}
+{"id": "t17", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 「過去のログを見て発火実績の少ないハーネスを探して」が例示句"}
+{"id": "t18", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 「全セッション横断で振り返って」が例示句"}
+{"id": "t19", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Unused-skill sweep matches cross-session log analysis"}
+{"id": "t20", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Plain SQL authoring task, not a retrospective"}
