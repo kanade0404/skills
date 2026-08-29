@@ -423,7 +423,12 @@ _ISSUE_REF_RE = re.compile(
     r"/issues/\d+"
     r"|\bissues?\s+#\d+"
     r"|\b(?:track(?:ed|ing)?|defer(?:red|ring)?|follow[- ]?up|see|ref(?:erence)?d?)\b"
-    r"[^\n#]{0,20}#\d+"
+    # The gap may not contain an explicit "PR" label right before the number:
+    # "Tracked in PR #114" / "see PR #123" cross-reference a pull request, not
+    # a follow-up issue, and counting them let a defer reply claim a tracking
+    # issue that does not exist (PR #115 review, Devin). Bare "#NNN" after the
+    # context word — the form F11 widened this regex for — still matches.
+    r"(?:(?![Pp][Rr]\s*#)[^\n#]){0,20}#\d+"
     r"|→\s*#\d+",
     re.I,
 )

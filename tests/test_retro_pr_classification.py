@@ -190,6 +190,16 @@ class TestBoundaries(unittest.TestCase):
         )
 
 
+    def test_labeled_pr_reference_with_defer_wording_is_not_defer(self) -> None:
+        # PR #115 review (Devin): "Tracked in PR #114" carries defer wording and
+        # a #NNN, but names a PR — there is no follow-up issue, so the thread is
+        # not terminated as VALID_DEFER.
+        self.assertEqual(
+            classify([FINDING, "Tracked in PR #114"]), "UNTERMINATED")
+        self.assertEqual(
+            classify([FINDING, "defer this; see PR #123"]), "UNTERMINATED")
+
+
 class TestIssueRefRegex(unittest.TestCase):
     """F11: _ISSUE_REF_RE 単体の境界確認 (classify_thread 経由だと _DEFER_RE との
     共起判定に埋もれるため、regex 自体の挙動を直接固定する)。"""
@@ -215,6 +225,24 @@ class TestIssueRefRegex(unittest.TestCase):
 
     def test_does_not_match_hex_color_like_token(self) -> None:
         self.assertIsNone(retro_scan._ISSUE_REF_RE.search("background: #123456;"))
+
+    def test_does_not_match_explicitly_labeled_pr_reference(self) -> None:
+        # PR #115 review (Devin): a context word followed by an explicit "PR"
+        # label is a pull-request cross-reference, not a follow-up issue —
+        # counting it made replies claim a deferral target that never exists.
+        for text in ("Tracked in PR #114",
+                     "defer this; see PR #123",
+                     "follow-up は pr#99 側で扱う",
+                     "Deferred — see PR  #7"):
+            with self.subTest(text=text):
+                self.assertIsNone(retro_scan._ISSUE_REF_RE.search(text))
+
+    def test_still_matches_bare_number_after_context_word(self) -> None:
+        # The PR-label exclusion must not swallow the bare-number defer forms
+        # F11 widened the regex for in the first place.
+        for text in ("Tracked in #114", "see #120", "follow-up: #7"):
+            with self.subTest(text=text):
+                self.assertIsNotNone(retro_scan._ISSUE_REF_RE.search(text))
 
 
 class TestClassInventory(unittest.TestCase):
