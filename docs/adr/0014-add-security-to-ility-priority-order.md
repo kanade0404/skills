@@ -51,6 +51,16 @@ merge されて稼働した時点で外部に露出し、見落としの代償�
 である。これは 0009 の「例外領域ゼロ」を弱めない — 例外になるのは secret の**値**だけで、secret に
 関する**状態**は権威面に載るからである。
 
+**この制約は「機構で行う」(4 点目) の対象でもある**。[ADR 0013](0013-role-separated-tokens-and-credentials.md)
+は Codex コンテナに code repo への push と PR 作成の権限を与えるため、secret の値は生成差分や PR
+データに混入して GitHub 側へ送信されうる。この経路を塞ぐ機構は、GitHub Conformist
+([ADR 0008](0008-github-conformist.md)) に沿って **code repo と state repo の双方に GitHub 標準の
+secret scanning + push protection を有効化する**ことを既定線とする。検出時は push と PR 更新を停止し、
+secret 値をログ・エラー・監査記録に含めずに失敗させる。**残余として明示する**: push protection は
+git push 経路のみを検査し、worker が Contents API 経由で直接書き込む経路 (state repo への CAS 書き込み
+など) は対象外である — この経路の fail-closed 検査 (書き込み前の pre-flight スキャン等) は Phase 0/1
+の実装検証項目とし、「対処済み」とは書かない。
+
 ### 下流への効き方
 
 - [ADR 0005](0005-dual-track-security-review.md) セキュリティ二重化 — 実質的な Driver は本 ADR である。
