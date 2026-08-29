@@ -665,14 +665,21 @@ def verify_transcript_attribution(files, pr_numbers, branches):
     # (re.escape — a branch name is free text, not a pattern) between ref-name
     # boundaries: the right boundary also excludes "/" so "feature/fix/2" is a
     # different branch, while the left boundary allows "/" so a remote-prefixed
-    # mention ("origin/feature/fix") still counts. "." is allowed on both sides
-    # because it is far more often sentence punctuation than part of a ref.
+    # mention ("origin/feature/fix") still counts. "." is a legal ref character
+    # but in a transcript it is usually sentence punctuation, so it ends the
+    # ref only when what sits on the far side of it is not ref-name material:
+    # "on feature/fix." counts, "feature/fix.next" and "feature.fix" (both
+    # different branches) do not.
     pr_patterns = [
         re.compile(rf"(?:#|/pull/){n}(?!\d)")
         for n in sorted({int(x) for x in pr_numbers})
     ]
     branch_patterns = [
-        re.compile(rf"(?<![0-9A-Za-z_-]){re.escape(b)}(?![0-9A-Za-z_/-])")
+        re.compile(
+            rf"(?<![0-9A-Za-z_-])(?<![0-9A-Za-z_-]\.)"
+            rf"{re.escape(b)}"
+            rf"(?![0-9A-Za-z_/-])(?!\.[0-9A-Za-z_/-])"
+        )
         for b in sorted({b for b in branches.values() if b})
     ]
     for f in files:

@@ -350,6 +350,21 @@ class TestTranscriptAttributionVerification(unittest.TestCase):
                     retro_scan.verify_transcript_attribution(
                         [f], [105], {"105": "feature/fix"})
 
+    def test_rejects_dotted_branch_extensions(self) -> None:
+        # PR #115 review (Devin + CodeRabbit): "." is a legal ref character, so
+        # treating it as a boundary unconditionally let "feature/fix.next" and
+        # "feature.fix" — different branches — count as evidence. A "." only
+        # ends the ref when what follows it is not itself ref-name material.
+        cases = [("feature/fix", '{"text":"switched to feature/fix.next"}\n'),
+                 ("feature", '{"text":"switched to feature.fix"}\n')]
+        for branch, text in cases:
+            with self.subTest(branch=branch):
+                with tempfile.TemporaryDirectory() as tmp:
+                    f = self._write(Path(tmp) / "s.jsonl", text)
+                    with self.assertRaises(SystemExit):
+                        retro_scan.verify_transcript_attribution(
+                            [f], [105], {"105": branch})
+
     def test_branch_name_is_matched_literally_not_as_regex(self) -> None:
         # A branch name is free text; regex metacharacters in it must not be
         # interpreted (". " is not a wildcard).
