@@ -43,6 +43,19 @@ on:
   # レビューコメントで再評価される。required check として運用する場合、この
   # ラグは許容する前提 (merge 前に最新の再評価が走っていることは
   # branch protection 側の「最新コミットに対する green」要求で担保される)。
+  #
+  # ただし「最後の 1 件を resolve して閉じた」直後は、新しい push も新しい
+  # レビューコメントも発生しないまま fail が残りうる (PR #115 review, Devin)。
+  # その場合の逃げ道として workflow_dispatch を用意する:
+  #   gh workflow run review-response-gate.yml -f pr=<PR番号>
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: >-
+          再評価する PR 番号 (thread を resolve しただけでは自動再走しないため
+          の手動トリガー)
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -56,7 +69,15 @@ jobs:
       - name: Fail on unresolved bot review threads with zero replies
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
+          # このジョブは checkout しない (gh api だけで完結する設計) ため、
+          # runner の workspace は git リポジトリではない。`gh repo view` は
+          # 引数も GH_REPO も無いとカレントディレクトリの git remote から
+          # リポジトリを解決するので、そこで
+          # `fatal: not a git repository` で落ちる (PR #115 review,
+          # CodeRabbit — 実際にこの PR の初回実行がこれで fail した)。
+          # owner/name は Actions が必ず提供する github.repository から取る。
+          REPO: ${{ github.repository }}
         run: |
           # shellcheck disable=SC2016
           # (jq programs below use jq's own `$var` / `\(...)` interpolation,
@@ -74,8 +95,12 @@ jobs:
             exit 1
           fi
 
-          owner=$(gh repo view --json owner --jq '.owner.login')
-          name=$(gh repo view --json name --jq '.name')
+          if [ -z "${REPO:-}" ] || [ "${REPO#*/}" = "$REPO" ]; then
+            echo "::error::REPO must be owner/name (got '${REPO:-}')"
+            exit 1
+          fi
+          owner="${REPO%%/*}"
+          name="${REPO##*/}"
 
           # Full cursor-paginated fetch of review threads. comments(first: 100)
           # is enough to decide "has any reply" (root + >=1 more) without
@@ -131,6 +156,15 @@ jobs:
           # Bot detection mirrors skills/pr-review-respond/scripts/fetch_threads.sh's
           # vendor() convention (login prefix/substring), plus the GraphQL Actor
           # __typename == "Bot" signal as the primary check.
+          #
+          # PR #115 review (Devin): "has a second comment" is too weak as the
+          # response test — a reviewer bot's own follow-up (or another review
+          # bot chiming in) cleared the gate while the finding stayed
+          # unanswered by the PR side. A reply only counts when it comes from
+          # the PR side: a human, or the author's own automation
+          # (github-actions[bot] / claude[bot], which is how a headless
+          # pr-review-respond run posts). Review bots (CodeRabbit / Devin /
+          # Copilot, and any other Bot actor) do not count as responders.
           failing=$(jq -c '
             def is_bot(a):
               (a.__typename == "Bot")
@@ -140,11 +174,15 @@ jobs:
                     or ($l | startswith("devin")) or ($l | contains("devin-ai"))
                     or ($l | startswith("copilot")) or ($l | contains("copilot-pull-request-reviewer"))
                     or ($l | startswith("github-actions")));
+            def is_author_agent(a):
+              (a.login // "" | ascii_downcase) as $l
+              | ($l | startswith("github-actions")) or ($l | startswith("claude"));
+            def is_responder(a): (is_bot(a) | not) or is_author_agent(a);
             [ .[]
               | select(.isResolved == false)
               | select((.comments.nodes | length) > 0)
               | select(is_bot(.comments.nodes[0].author))
-              | select((.comments.nodes | length) == 1)
+              | select([.comments.nodes[1:][] | select(is_responder(.author))] | length == 0)
               | {
                   path: (.path // "(no path)"),
                   author: (.comments.nodes[0].author.login // "(unknown)"),

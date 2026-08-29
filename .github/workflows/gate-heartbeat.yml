@@ -130,8 +130,15 @@ jobs:
                 and ((.repo // null) == $repo)
               ))) as $win
             | {
-                merged_prs: ($win | map(select(.event=="pr_closed" and .outcome=="merged")) | length),
-                attempted_prs: ($win | map(select(.event=="pr_closed")) | length),
+                # PR #115 review (CodeRabbit): loop-metrics writes one
+                # pr_closed record per close event, so a PR that is reopened
+                # and closed again (or a re-run of the emitting workflow)
+                # contributes several records for the same PR. Both PR counts
+                # are therefore taken over distinct .pr values — a record
+                # without .pr collapses into a single "unknown" bucket rather
+                # than inflating the denominator that gates the alert.
+                merged_prs: ($win | map(select(.event=="pr_closed" and .outcome=="merged") | .pr) | unique | length),
+                attempted_prs: ($win | map(select(.event=="pr_closed") | .pr) | unique | length),
                 gate_events: ($win | map(select(.event=="agent_run" and .phase=="test-mutation-gate")) | length),
                 gate_blocks: ($win | map(select(.event=="agent_run" and .phase=="test-mutation-gate" and .result_subtype=="block")) | length)
               }
