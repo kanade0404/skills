@@ -649,7 +649,8 @@ def verify_transcript_attribution(files, pr_numbers, branches):
     one of `pr_numbers` (as "#N" or ".../pull/N", matched with a non-digit
     right boundary so "#1050" is not evidence for PR 105) or one of
     `branches.values()`
-    (the PRs' head branch names, from scan_prs()). No-op when pr_numbers is
+    (the PRs' head branch names, from scan_prs(), matched literally between
+    ref-name boundaries). No-op when pr_numbers is
     empty (transcript-only scans are unaffected)."""
     if not pr_numbers:
         return
@@ -658,13 +659,22 @@ def verify_transcript_attribution(files, pr_numbers, branches):
     # only ever mentions #1050 satisfied the check for PR 105 — exactly the
     # misattribution this gate exists to stop. The numeric forms therefore
     # require a non-digit right boundary ("#" / "/pull/" already supplies the
-    # left one). Branch names stay plain substrings: they are free text, not
-    # numeric prefixes of each other.
+    # left one). Branch names get the same treatment (CodeRabbit, second
+    # round): "feature/fixes" is not evidence for head branch "feature/fix",
+    # and "hotfix" is not evidence for "fix". They are matched literally
+    # (re.escape — a branch name is free text, not a pattern) between ref-name
+    # boundaries: the right boundary also excludes "/" so "feature/fix/2" is a
+    # different branch, while the left boundary allows "/" so a remote-prefixed
+    # mention ("origin/feature/fix") still counts. "." is allowed on both sides
+    # because it is far more often sentence punctuation than part of a ref.
     pr_patterns = [
         re.compile(rf"(?:#|/pull/){n}(?!\d)")
         for n in sorted({int(x) for x in pr_numbers})
     ]
-    branch_needles = {b for b in branches.values() if b}
+    branch_patterns = [
+        re.compile(rf"(?<![0-9A-Za-z_-]){re.escape(b)}(?![0-9A-Za-z_/-])")
+        for b in sorted({b for b in branches.values() if b})
+    ]
     for f in files:
         try:
             # Streamed line by line rather than read() in full: transcripts are
@@ -674,7 +684,7 @@ def verify_transcript_attribution(files, pr_numbers, branches):
                 for line in fh:
                     if any(p.search(line) for p in pr_patterns):
                         return
-                    if any(b in line for b in branch_needles):
+                    if any(p.search(line) for p in branch_patterns):
                         return
         except OSError:
             continue

@@ -318,6 +318,47 @@ class TestTranscriptAttributionVerification(unittest.TestCase):
                     retro_scan.verify_transcript_attribution(
                         [f], [105], {"105": None})
 
+    def test_rejects_branch_name_that_is_only_a_prefix_of_another(self) -> None:
+        # PR #115 review (CodeRabbit): a plain substring test accepted
+        # "feature/fixes" as evidence for head branch "feature/fix".
+        with tempfile.TemporaryDirectory() as tmp:
+            f = self._write(Path(tmp) / "s.jsonl",
+                             '{"text":"git switch feature/fixes"}\n')
+            with self.assertRaises(SystemExit) as ctx:
+                retro_scan.verify_transcript_attribution(
+                    [f], [105], {"105": "feature/fix"})
+            self.assertIn("TRANSCRIPT_MISMATCH", str(ctx.exception.code))
+
+    def test_rejects_branch_name_that_is_only_a_suffix_of_another(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            f = self._write(Path(tmp) / "s.jsonl",
+                             '{"text":"git switch hotfix"}\n')
+            with self.assertRaises(SystemExit):
+                retro_scan.verify_transcript_attribution(
+                    [f], [105], {"105": "fix"})
+
+    def test_accepts_branch_name_at_a_ref_boundary(self) -> None:
+        # Quoting, surrounding punctuation, a remote prefix and end-of-line are
+        # all still genuine mentions of the branch.
+        for text in ('{"text":"git switch -c feature/fix"}\n',
+                     '{"text":"pushed origin/feature/fix"}\n',
+                     '{"text":"on feature/fix."}\n',
+                     '{"text":"branch=feature/fix'):
+            with self.subTest(text=text):
+                with tempfile.TemporaryDirectory() as tmp:
+                    f = self._write(Path(tmp) / "s.jsonl", text)
+                    retro_scan.verify_transcript_attribution(
+                        [f], [105], {"105": "feature/fix"})
+
+    def test_branch_name_is_matched_literally_not_as_regex(self) -> None:
+        # A branch name is free text; regex metacharacters in it must not be
+        # interpreted (". " is not a wildcard).
+        with tempfile.TemporaryDirectory() as tmp:
+            f = self._write(Path(tmp) / "s.jsonl", '{"text":"fix/aXb"}\n')
+            with self.assertRaises(SystemExit):
+                retro_scan.verify_transcript_attribution(
+                    [f], [105], {"105": "fix/a.b"})
+
     def test_rejects_pr_number_preceded_by_digits(self) -> None:
         # "#2105" is PR 2105, not PR 105 — the left side needs a boundary too.
         with tempfile.TemporaryDirectory() as tmp:
