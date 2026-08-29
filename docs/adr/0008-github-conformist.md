@@ -68,10 +68,11 @@ DDD の文脈マッピングには、上流の文脈 (ここでは GitHub) の�
   GitHub は強制してくれないので、その検証は自前のチェックとして残る。型の恩恵を受けられない領域
   が確実に生じる。
 - **ドメイン語彙がプラットフォームの都合に汚染される**。label の文字列長、GitHub の `state_reason`
-  (`completed` / `not_planned` / `duplicate` / `reopened`) を決着の 2 値
-  (`completed` / `not_planned` 相当。`duplicate` は `not_planned` 側へ正規化) に畳み込む必要が
-  あること、といった GitHub 側の事情が CONTEXT.md の用語定義に染み出す圧力が常にかかる。用語の
-  意味をレビューし続ける規律が別途要る。
+  のうち **`state = closed` の場合の** `completed` / `not_planned` / `duplicate` の 3 値を決着の
+  2 値 (`completed` / `not_planned` 相当。`duplicate` は `not_planned` 側へ正規化) に畳み込む必要が
+  あること、といった GitHub 側の事情が CONTEXT.md の用語定義に染み出す圧力が常にかかる (`reopened`
+  は `state = open` を示す別カテゴリで、決着判定の対象外)。用語の意味をレビューし続ける規律が別途
+  要る。
 
 ### Neutral
 
