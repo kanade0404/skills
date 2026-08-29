@@ -46,16 +46,19 @@ on:
   #
   # ただし「最後の 1 件を resolve して閉じた」直後は、新しい push も新しい
   # レビューコメントも発生しないまま fail が残りうる (PR #115 review, Devin)。
-  # その場合の逃げ道として workflow_dispatch を用意する:
-  #   gh workflow run review-response-gate.yml -f pr=<PR番号>
-  workflow_dispatch:
-    inputs:
-      pr:
-        description: >-
-          再評価する PR 番号 (thread を resolve しただけでは自動再走しないため
-          の手動トリガー)
-        required: true
-        type: string
+  # その場合の再走は、この check を作った run 自体を再実行する:
+  #   gh run rerun <run-id>          # または PR の Checks タブの "Re-run jobs"
+  # 元の pull_request イベントの payload ごと再生されるため、PR に紐づいた
+  # 同じ check run が更新される。workflow_dispatch は使わない — dispatch した
+  # run は PR の status check rollup に載らず、required check の fail を
+  # 解消できないため (PR #115 review, CodeRabbit)。
+
+# 同一 PR に対して synchronize とレビューコメント系イベントが重なると run が
+# 多重に走り、古い run が後から完了して新しい評価結果を上書きしうる
+# (PR #115 review, CodeRabbit)。PR 単位で直列化し、古い run は打ち切る。
+concurrency:
+  group: review-response-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -69,7 +72,7 @@ jobs:
       - name: Fail on unresolved bot review threads with zero replies
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           # このジョブは checkout しない (gh api だけで完結する設計) ため、
           # runner の workspace は git リポジトリではない。`gh repo view` は
           # 引数も GH_REPO も無いとカレントディレクトリの git remote から
