@@ -17,16 +17,17 @@ Driver: [-ilities 1 可監査性・回復可能性](0009-ility-priority-order.md
 再構築できない。設計の過程で、実行体の内部状態だけが例外領域として残る案を検討したが、その一点が
 可監査性と回復可能性の両方を無効化することが分かった。
 
-GitHub 側で耐久な器として使えるものは、issue / PR / label / comment / git ref である。これらは
-GitHub Conformist の方針 ([ADR 0008](0008-github-conformist.md)) により、変換せずそのまま使う。
+GitHub 側で耐久な器として使えるものは、issue (sub-issue・dependencies を含む) / PR (check を含む) /
+label / comment / git ref である。これらは GitHub Conformist の方針
+([ADR 0008](0008-github-conformist.md)) により、変換せずそのまま使う。
 
 キューについては、webhook が高速化の経路であって必須経路ではない (取りこぼしは定期的な状態の
 読み直しが拾う) ため、耐久キューが買うものが無い、という事実が前提にある。
 
 ## Decision
 
-**耐久状態は GitHub のみに置く**。issue / PR / ラベル / コメント / git ref が唯一の状態ストア
-である。
+**耐久状態は GitHub のみに置く**。issue (sub-issue・dependencies を含む) / PR (check を含む) /
+ラベル / コメント / git ref が唯一の状態ストアである。
 
 実行体のメモリ・in-process キュー・worktree は **キャッシュ**であり、失われてよい。実行体は起動時
 に GitHub から状態を再構築する。GitHub の外に置く永続コンポーネントを持たない。

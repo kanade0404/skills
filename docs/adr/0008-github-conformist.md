@@ -32,7 +32,9 @@ DDD の文脈マッピングには、上流の文脈 (ここでは GitHub) の�
 - タスク = 親 issue
 - 実装 issue = sub-issue ([ADR 0003](0003-two-layer-task-and-implementation-issues.md))
 - 着手可 = blocked-by の依存が全て決着
-- 決着 = issue が closed (completed / not_planned)
+- 決着 = issue が closed (completed / not_planned。GraphQL `IssueStateReason` の `DUPLICATE` は
+  not_planned 相当として扱う — 後続タスクへの警告付与を含め、CONTEXT.md の not_planned 決着と同じ
+  経路に乗せる)
 
 ## Considered Options
 

@@ -48,8 +48,9 @@ Driver: [-ilities 1 可監査性・回復可能性](0009-ility-priority-order.md
 
 ### Positive
 
-- outcome が一意の宿主 (親 issue) を持つ。完了判定「配下の全実装 issue の決着 + 親 AC の全満たし」
-  が issue 階層から機械的に読める。
+- outcome が一意の宿主 (親 issue) を持つ。完了判定の前半 (配下の全実装 issue の決着) は issue
+  階層から機械的に読める。後半 (親 AC の全満たし) の最終判定は人間が merge ゲートで担う
+  ([ADR 0004](0004-two-human-approval-gates.md))。
 - 実装粒度の裁量が、実装コンテキストを持つ側 (Codex) に寄る。判断材料と判断権限が一致する。
 - 分解結果が GitHub 上の耐久状態として残るので、実行体が死んでも復元できる。
 
