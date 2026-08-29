@@ -381,9 +381,21 @@ class TestPrScanOrdering(unittest.TestCase):
 
     def test_matching_transcript_passes_verification(self) -> None:
         # A transcript that does reference the PR must clear verification and
-        # reach the duckdb stage (the bundled stub module has no `connect`,
-        # so an AttributeError there is evidence execution got past the
-        # TRANSCRIPT_MISMATCH check rather than being blocked by it).
+        # reach the duckdb stage. Evidence is taken from an explicitly injected
+        # duckdb module whose connect() raises a sentinel, plus a spy on
+        # verify_transcript_attribution: the previous version inferred "we got
+        # past verification" from an AttributeError raised by the bundled stub,
+        # but sys.modules.setdefault() does not replace a real duckdb, so that
+        # assertion silently depended on duckdb being absent from the
+        # environment (PR #115 review, CodeRabbit).
+        sentinel = RuntimeError("reached the duckdb stage")
+
+        def boom(*args, **kwargs):
+            raise sentinel
+
+        fake_duckdb = types.ModuleType("duckdb")
+        fake_duckdb.connect = boom
+
         with tempfile.TemporaryDirectory() as tmp:
             transcript = Path(tmp) / "session.jsonl"
             transcript.write_text('{"text":"opened PR #105"}\n', encoding="utf-8")
@@ -393,10 +405,21 @@ class TestPrScanOrdering(unittest.TestCase):
                         "branches": {"105": None}}
 
             argv = ["retro_scan.py", "--transcript", str(transcript), "--pr", "105"]
-            with mock.patch.object(retro_scan, "scan_prs", fake_scan_prs), \
+            with mock.patch.object(
+                    retro_scan, "verify_transcript_attribution",
+                    wraps=retro_scan.verify_transcript_attribution) as verify, \
+                    mock.patch.dict(sys.modules, {"duckdb": fake_duckdb}), \
+                    mock.patch.object(retro_scan, "scan_prs", fake_scan_prs), \
                     mock.patch.object(sys, "argv", argv):
-                with self.assertRaises(AttributeError):
+                with self.assertRaises(RuntimeError) as ctx:
                     retro_scan.main()
+
+        self.assertIs(ctx.exception, sentinel)
+        verify.assert_called_once()
+        called_files, called_prs, called_branches = verify.call_args.args
+        self.assertEqual([str(transcript)], [str(f) for f in called_files])
+        self.assertEqual([105], list(called_prs))
+        self.assertEqual({"105": None}, called_branches)
 
 
 if __name__ == "__main__":
