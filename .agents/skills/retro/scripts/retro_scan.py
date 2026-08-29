@@ -641,28 +641,38 @@ def scan_prs(pr_numbers, repo_arg):
 # reference the PR (by number/URL) or its head branch, or the run aborts.
 def verify_transcript_attribution(files, pr_numbers, branches):
     """Exit with TRANSCRIPT_MISMATCH unless at least one of `files` mentions
-    one of `pr_numbers` (as "#N" or ".../pull/N") or one of `branches.values()`
+    one of `pr_numbers` (as "#N" or ".../pull/N", matched with a non-digit
+    right boundary so "#1050" is not evidence for PR 105) or one of
+    `branches.values()`
     (the PRs' head branch names, from scan_prs()). No-op when pr_numbers is
     empty (transcript-only scans are unaffected)."""
     if not pr_numbers:
         return
-    needles = set()
-    for n in pr_numbers:
-        needles.add(f"#{n}")
-        needles.add(f"/pull/{n}")
-    for b in branches.values():
-        if b:
-            needles.add(b)
-    if not needles:
-        return
+    # PR #115 review (Devin + CodeRabbit): plain substring needles ("#105",
+    # "/pull/105") also matched inside a longer number, so a transcript that
+    # only ever mentions #1050 satisfied the check for PR 105 — exactly the
+    # misattribution this gate exists to stop. The numeric forms therefore
+    # require a non-digit right boundary ("#" / "/pull/" already supplies the
+    # left one). Branch names stay plain substrings: they are free text, not
+    # numeric prefixes of each other.
+    pr_patterns = [
+        re.compile(rf"(?:#|/pull/){n}(?!\d)")
+        for n in sorted({int(x) for x in pr_numbers})
+    ]
+    branch_needles = {b for b in branches.values() if b}
     for f in files:
         try:
+            # Streamed line by line rather than read() in full: transcripts are
+            # JSONL and can be very large, and no needle contains a newline, so
+            # a per-line scan is equivalent (CodeRabbit, PR #115).
             with open(f, encoding="utf-8", errors="replace") as fh:
-                content = fh.read()
+                for line in fh:
+                    if any(p.search(line) for p in pr_patterns):
+                        return
+                    if any(b in line for b in branch_needles):
+                        return
         except OSError:
             continue
-        if any(needle in content for needle in needles):
-            return
     pr_list = ", ".join(f"#{n}" for n in sorted(set(pr_numbers)))
     branch_list = ", ".join(sorted({b for b in branches.values() if b})) or "(none)"
     sys.exit(

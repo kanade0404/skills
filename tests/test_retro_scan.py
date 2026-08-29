@@ -292,6 +292,40 @@ class TestTranscriptAttributionVerification(unittest.TestCase):
             self.assertIn("TRANSCRIPT_MISMATCH", str(ctx.exception.code))
             self.assertIn("#105", str(ctx.exception.code))
 
+    def test_rejects_longer_pr_number_that_only_shares_a_prefix(self) -> None:
+        # A transcript that mentions #1050 / /pull/1050 must NOT satisfy the
+        # attribution check for PR 105: substring matching let an unrelated
+        # session's transcript pass (PR #115 review, Devin + CodeRabbit).
+        with tempfile.TemporaryDirectory() as tmp:
+            f = self._write(
+                Path(tmp) / "s.jsonl",
+                '{"text":"opened PR #1050 https://github.com/o/r/pull/1050"}\n')
+            with self.assertRaises(SystemExit) as ctx:
+                retro_scan.verify_transcript_attribution(
+                    [f], [105], {"105": None})
+            self.assertIn("TRANSCRIPT_MISMATCH", str(ctx.exception.code))
+
+    def test_accepts_pr_number_followed_by_non_digit(self) -> None:
+        # The boundary is "not another digit" — punctuation, whitespace and
+        # end-of-file all still count as a genuine reference.
+        for text in ('{"text":"#105"}\n',
+                     '{"text":"see #105, then merge"}\n',
+                     '{"text":"https://github.com/o/r/pull/105#issuecomment-1"}\n',
+                     '{"text":"https://github.com/o/r/pull/105"}'):
+            with self.subTest(text=text):
+                with tempfile.TemporaryDirectory() as tmp:
+                    f = self._write(Path(tmp) / "s.jsonl", text)
+                    retro_scan.verify_transcript_attribution(
+                        [f], [105], {"105": None})
+
+    def test_rejects_pr_number_preceded_by_digits(self) -> None:
+        # "#2105" is PR 2105, not PR 105 — the left side needs a boundary too.
+        with tempfile.TemporaryDirectory() as tmp:
+            f = self._write(Path(tmp) / "s.jsonl", '{"text":"see #2105"}\n')
+            with self.assertRaises(SystemExit):
+                retro_scan.verify_transcript_attribution(
+                    [f], [105], {"105": None})
+
     def test_unreadable_file_is_skipped_not_fatal(self) -> None:
         # A missing/unreadable file must not itself raise — it's treated like
         # a non-matching file, and the overall mismatch (if any) still exits
