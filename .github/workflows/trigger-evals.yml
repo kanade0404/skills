@@ -11,6 +11,7 @@ on:
       - ".github/trigger-evals-known-failures.json"
       - ".github/workflows/trigger-evals.yml"
       - "tests/**"
+      - "subagents/**"
   workflow_dispatch:
 
 jobs:
