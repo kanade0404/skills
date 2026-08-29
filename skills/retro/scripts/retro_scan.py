@@ -408,7 +408,25 @@ def render_table(rows):
 _FIXED_RE = re.compile(r"fixed\s+in\s+`?[0-9a-f]{7,40}\b", re.I)
 _PUSHBACK_RE = re.compile(
     r"maintainer\s*判断|self-resolve\s*しません|pushback", re.I)
-_ISSUE_REF_RE = re.compile(r"/issues/\d+|\bissues?\s+#\d+", re.I)
+# F11: the original pattern required the literal word "issue(s)" immediately
+# before "#NNN", so defer replies written as "Tracked in #114" / "Deferred to
+# #113" (no "issue" word, no /issues/ URL) matched nothing and the thread fell
+# through to UNTERMINATED even though it had a real terminal defer reply.
+# Widened to also match "#NNN" co-occurring with a defer/reference context
+# word (tracked/deferred/follow-up/see/ref/→) within a short window directly
+# before it — proximity-bound so a stray "#123" elsewhere in the reply (a
+# cross-referenced PR number, a code-comment ticket number) does not
+# false-positive just because the reply separately contains defer wording
+# (_DEFER_RE is checked independently over the whole reply by classify_thread;
+# only this proximity requirement is what keeps overmatching bounded).
+_ISSUE_REF_RE = re.compile(
+    r"/issues/\d+"
+    r"|\bissues?\s+#\d+"
+    r"|\b(?:track(?:ed|ing)?|defer(?:red|ring)?|follow[- ]?up|see|ref(?:erence)?d?)\b"
+    r"[^\n#]{0,20}#\d+"
+    r"|→\s*#\d+",
+    re.I,
+)
 _DEFER_RE = re.compile(r"defer|follow[- ]?up|後続|別途|追跡|track", re.I)
 # Tradeoff: a fix reply that merely cross-references another thread
 # (#discussion_r...) is misread as DUPLICATE — accepted for this pre-read;
@@ -461,6 +479,7 @@ _THREADS_QUERY = """
 query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
+      headRefName
       reviewThreads(first: 50, after: $cursor) {
         pageInfo { hasNextPage endCursor }
         nodes {
@@ -537,14 +556,19 @@ def _graphql(query, fields):
 
 
 def fetch_review_threads(owner, name, number):
-    """All review threads of one PR, comments fully paginated per thread."""
+    """All review threads of one PR (comments fully paginated per thread),
+    plus the PR's head branch name — used by verify_transcript_attribution()
+    to confirm a transcript actually belongs to this PR's session."""
     threads, cursor = [], None
+    head_ref_name = None
     for _ in range(_MAX_PAGES):
         data = _graphql(_THREADS_QUERY, {"owner": owner, "name": name,
                                          "number": number, "cursor": cursor})
         pr = (data.get("repository") or {}).get("pullRequest")
         if pr is None:
             sys.exit(f"PR #{number} not found in {owner}/{name}")
+        if head_ref_name is None:
+            head_ref_name = pr.get("headRefName")
         conn = pr["reviewThreads"]
         for node in conn["nodes"]:
             bodies = [c.get("body") for c in node["comments"]["nodes"]]
@@ -568,7 +592,7 @@ def fetch_review_threads(owner, name, number):
                             "resolved": bool(node["isResolved"]),
                             "bodies": bodies})
         if not conn["pageInfo"]["hasNextPage"]:
-            return threads
+            return threads, head_ref_name
         cursor = conn["pageInfo"]["endCursor"]
     sys.exit(f"PR #{number}: thread pagination exceeded {_MAX_PAGES} pages")
 
@@ -587,9 +611,12 @@ def scan_prs(pr_numbers, repo_arg):
     repo = resolve_repo(repo_arg)
     owner, name = repo.split("/", 1)
     prs = {}
+    branches = {}
     for number in sorted(set(pr_numbers)):
         threads = []
-        for node in fetch_review_threads(owner, name, number):
+        nodes, head_ref_name = fetch_review_threads(owner, name, number)
+        branches[str(number)] = head_ref_name
+        for node in nodes:
             # path is API-derived but still sanitized before the output fork —
             # same contract as summary (--json must not pass ANSI/C0 through).
             path = strip_controls(node["path"])
@@ -602,7 +629,50 @@ def scan_prs(pr_numbers, repo_arg):
                 "resolved": node["resolved"],
             })
         prs[str(number)] = threads
-    return {"repo": repo, "prs": prs}
+    return {"repo": repo, "prs": prs, "branches": branches}
+
+
+# F10: PR-scoped analysis previously trusted whatever transcript(s) were
+# selected (often via the --latest fallback) without ever checking that the
+# transcript actually belongs to the session that produced the PR under
+# review — this caused a real misattribution where retro analyzed an
+# unrelated session. verify_transcript_attribution() is the fail-closed check:
+# when --pr is combined with a transcript scan, at least one scanned file must
+# reference the PR (by number/URL) or its head branch, or the run aborts.
+def verify_transcript_attribution(files, pr_numbers, branches):
+    """Exit with TRANSCRIPT_MISMATCH unless at least one of `files` mentions
+    one of `pr_numbers` (as "#N" or ".../pull/N") or one of `branches.values()`
+    (the PRs' head branch names, from scan_prs()). No-op when pr_numbers is
+    empty (transcript-only scans are unaffected)."""
+    if not pr_numbers:
+        return
+    needles = set()
+    for n in pr_numbers:
+        needles.add(f"#{n}")
+        needles.add(f"/pull/{n}")
+    for b in branches.values():
+        if b:
+            needles.add(b)
+    if not needles:
+        return
+    for f in files:
+        try:
+            with open(f, encoding="utf-8", errors="replace") as fh:
+                content = fh.read()
+        except OSError:
+            continue
+        if any(needle in content for needle in needles):
+            return
+    pr_list = ", ".join(f"#{n}" for n in sorted(set(pr_numbers)))
+    branch_list = ", ".join(sorted({b for b in branches.values() if b})) or "(none)"
+    sys.exit(
+        f"TRANSCRIPT_MISMATCH: none of the {len(files)} scanned transcript(s) "
+        f"mention PR {pr_list} (checked for the PR number/URL and head "
+        f"branch(es) {branch_list}) — the selected transcript(s) likely do "
+        "not belong to the session that produced this PR. Pass the correct "
+        "--transcript explicitly instead of relying on --latest, or drop "
+        "--pr if this scan is not meant to be PR-scoped."
+    )
 
 
 def render_pr_report(data):
@@ -734,6 +804,9 @@ def main():
     # GraphQL calls spend API rate limit (r3695744834).
     if args.pr:
         pr_data = scan_prs(args.pr, args.repo)
+        # F10: fail closed before the (expensive) duckdb scan runs if none of
+        # the selected transcripts actually belong to the PR(s) under review.
+        verify_transcript_attribution(files, args.pr, pr_data["branches"])
 
     try:
         import duckdb

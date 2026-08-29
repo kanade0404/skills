@@ -165,6 +165,57 @@ class TestBoundaries(unittest.TestCase):
         self.assertEqual(
             classify([FINDING, "後続で検討します"]), "UNTERMINATED")
 
+    def test_tracked_in_bare_issue_number_is_defer(self) -> None:
+        # F11: "Tracked in #114" は issue URL でも "issue #N" でもない —
+        # 従来の _ISSUE_REF_RE は "issue" という語を要求しており、この形の defer
+        # 表記を拾えず UNTERMINATED に誤判定していた
+        self.assertEqual(
+            classify([FINDING, "Tracked in #114"]), "VALID_DEFER")
+
+    def test_deferred_to_bare_issue_number_is_defer(self) -> None:
+        self.assertEqual(
+            classify([FINDING, "Deferred to #113"]), "VALID_DEFER")
+
+    def test_arrow_bare_issue_number_with_defer_wording_is_defer(self) -> None:
+        self.assertEqual(
+            classify([FINDING, "後続対応します → #120"]), "VALID_DEFER")
+
+    def test_bare_hash_number_without_context_word_is_not_defer(self) -> None:
+        # 過剰マッチガード: 返信中に defer 語 (後続) があっても、#NNN の直前に
+        # 文脈語 (tracked/deferred/issue/→ 等) が無ければ issue 参照とみなさない
+        # (コード中の #123 コメントや無関係な PR 参照を defer と誤認しない)
+        self.assertEqual(
+            classify([FINDING, "後続で検討します。関連 PR #123 を見てください"]),
+            "UNTERMINATED",
+        )
+
+
+class TestIssueRefRegex(unittest.TestCase):
+    """F11: _ISSUE_REF_RE 単体の境界確認 (classify_thread 経由だと _DEFER_RE との
+    共起判定に埋もれるため、regex 自体の挙動を直接固定する)。"""
+
+    def test_matches_tracked_in_bare_number(self) -> None:
+        self.assertIsNotNone(retro_scan._ISSUE_REF_RE.search("Tracked in #114"))
+
+    def test_matches_deferred_to_bare_number(self) -> None:
+        self.assertIsNotNone(retro_scan._ISSUE_REF_RE.search("Deferred to #113"))
+
+    def test_matches_arrow_bare_number(self) -> None:
+        self.assertIsNotNone(retro_scan._ISSUE_REF_RE.search("→ #120"))
+
+    def test_matches_issue_word_plus_number(self) -> None:
+        self.assertIsNotNone(retro_scan._ISSUE_REF_RE.search("issue #7"))
+
+    def test_matches_issues_url(self) -> None:
+        self.assertIsNotNone(
+            retro_scan._ISSUE_REF_RE.search("https://github.com/o/r/issues/9"))
+
+    def test_does_not_match_bare_number_without_context(self) -> None:
+        self.assertIsNone(retro_scan._ISSUE_REF_RE.search("関連 PR #123 を見てください"))
+
+    def test_does_not_match_hex_color_like_token(self) -> None:
+        self.assertIsNone(retro_scan._ISSUE_REF_RE.search("background: #123456;"))
+
 
 class TestClassInventory(unittest.TestCase):
     def test_thread_classes_cover_the_six_terminals(self) -> None:
