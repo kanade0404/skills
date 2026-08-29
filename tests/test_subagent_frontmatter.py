@@ -23,6 +23,10 @@ typo もそのまま通る。**その検証は本テストが担う**、とい�
 - `name` が `^[a-z0-9]+(-[a-z0-9]+)*$` に一致し、`:` を含まない
 - `description` が存在し空でない
 - `model` / `effort` / `tools` がトップレベルに存在しない (silent failure の検出)
+- `claudecode` が mapping として存在し、その下に `tools` がある — 欠けると呼出側の
+  既定ツールを継承し、README「ツール権限の方針」が構造で担保している read-only 契約が
+  エラーも警告も無しに失効する。`model` / `effort` は継承が正当な選択なので必須にしない
+  (`problem-solver.md` が両方を意図的に省いている)
 - `claudecode.model` は alias (sonnet / opus / haiku / fable / inherit) かフル model id
 - `claudecode.effort` は low / medium / high / xhigh / max のいずれか
 
@@ -30,6 +34,12 @@ typo もそのまま通る。**その検証は本テストが担う**、とい�
 pip install 無しで実行し、既存テストも yaml を import していない)。そのため
 frontmatter の解析は下の YAML サブセットパーサで行い、PyYAML は **入っていれば**
 クロスチェックに使う (無ければ該当テストのみ skip)。
+
+PyYAML が無い CI ではそのクロスチェックが skip されるため、**サブセットパーサ自身が
+fail-closed であること**が唯一の防波堤になる。未閉じ引用符・閉じられていない flow
+sequence・閉じ記号の後ろの余分な文字は、素通しせず `FrontmatterError` にする
+(PR #111 レビュー指摘)。YAML 全仕様への適合は本パーサの目標ではない — 読めない構文は
+黙って文字列にせず落とす、という一方向の安全側倒しだけを保証する。
 """
 
 from __future__ import annotations
@@ -82,16 +92,32 @@ def _next_meaningful(lines: list[str], i: int) -> int:
     return i
 
 
+def _require_only_comment_after(text: str, end: int, raw: str) -> None:
+    """閉じ記号 (`text[end]`) の後ろに来てよいのはコメントだけ."""
+    rest = text[end + 1 :].strip()
+    if rest and not rest.startswith("#"):
+        raise FrontmatterError(f"閉じた scalar の後ろに余分な文字がある: {raw!r}")
+
+
 def _parse_scalar(raw: str) -> Any:
     text = raw.strip()
-    if text.startswith("[") and text.endswith("]"):
-        inner = text[1:-1].strip()
+    if text.startswith("["):
+        end = text.rfind("]")
+        if end == -1:
+            raise FrontmatterError(f"flow sequence の ']' がない: {raw!r}")
+        _require_only_comment_after(text, end, raw)
+        inner = text[1:end].strip()
         if not inner:
             return []
         # flow sequence の要素にカンマを含む引用文字列は本サブセットの対象外
         return [_parse_scalar(part) for part in inner.split(",")]
-    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
-        return text[1:-1]
+    if text[:1] in ('"', "'"):
+        quote = text[0]
+        end = text.find(quote, 1)
+        if end == -1:
+            raise FrontmatterError(f"引用符が閉じていない: {raw!r}")
+        _require_only_comment_after(text, end, raw)
+        return text[1:end]
     return re.split(r"\s+#", text, maxsplit=1)[0].strip()
 
 
@@ -237,24 +263,32 @@ def frontmatter_errors(stem: str, data: dict[str, Any]) -> list[str]:
             )
 
     claudecode = data.get("claudecode")
-    if claudecode is not None:
-        if not isinstance(claudecode, dict):
-            errors.append("claudecode: が mapping でない")
-        else:
-            model = claudecode.get("model")
-            if model is not None and not (
-                isinstance(model, str)
-                and (model in MODEL_ALIASES or FULL_MODEL_ID_RE.match(model))
-            ):
-                errors.append(
-                    f"claudecode.model '{model}' が不正 "
-                    f"(alias: {sorted(MODEL_ALIASES)} かフル model id)"
-                )
-            effort = claudecode.get("effort")
-            if effort is not None and effort not in EFFORT_VALUES:
-                errors.append(
-                    f"claudecode.effort '{effort}' が不正 (許容: {sorted(EFFORT_VALUES)})"
-                )
+    if not isinstance(claudecode, dict):
+        errors.append("claudecode: がない、または mapping でない")
+    else:
+        # `tools` だけは必須。欠けると呼出側の既定ツールをそのまま継承し、
+        # README「ツール権限の方針」が構造で担保している read-only 契約が
+        # エラーも警告も無しに失効する。`model` / `effort` は継承が正当な
+        # 選択なので必須化しない (`problem-solver.md` が実例)。
+        if "tools" not in claudecode:
+            errors.append(
+                "claudecode.tools がない — 呼出側の既定ツールを継承し、"
+                "read-only 契約が黙って失効する"
+            )
+        model = claudecode.get("model")
+        if model is not None and not (
+            isinstance(model, str)
+            and (model in MODEL_ALIASES or FULL_MODEL_ID_RE.match(model))
+        ):
+            errors.append(
+                f"claudecode.model '{model}' が不正 "
+                f"(alias: {sorted(MODEL_ALIASES)} かフル model id)"
+            )
+        effort = claudecode.get("effort")
+        if effort is not None and effort not in EFFORT_VALUES:
+            errors.append(
+                f"claudecode.effort '{effort}' が不正 (許容: {sorted(EFFORT_VALUES)})"
+            )
     return errors
 
 
@@ -351,12 +385,62 @@ class TestParseFrontmatter(unittest.TestCase):
         data = parse_frontmatter("---\nname: a\ntools:\n---\n")
         self.assertIsNone(data["tools"])
 
+    def test_block_scalar_running_to_end_of_document(self) -> None:
+        # `_consume_block_scalar` の `i < len(lines)` が `<=` に変異すると、block
+        # scalar がドキュメント末尾まで続く場合にだけ lines[len(lines)] を参照して
+        # IndexError になる。後続キーがある VALID_FRONTMATTER では早く break する
+        # ため、この境界でしか検出できない。
+        text = "---\nname: a\ndescription: |\n  line one\n  line two\n---\n"
+        self.assertEqual(parse_frontmatter(text)["description"], "line one\nline two\n")
+
     def test_two_char_quoted_scalar_is_empty_string(self) -> None:
         # `_parse_scalar` の `len(text) >= 2` は、ちょうど 2 文字 (引用符 2 つだけ =
         # 空文字列) の境界でのみ `> 2` / `>= 3` との違いが現れる。3 文字以上では
         # いずれの条件も真になり区別できない。
         self.assertEqual(_parse_scalar('""'), "")
         self.assertEqual(_parse_scalar("''"), "")
+
+    def test_unterminated_quoted_scalar_raises(self) -> None:
+        # PyYAML なしの CI では本サブセットパーサが唯一の検査。未閉じ引用符を
+        # 素通しすると consumer 側で frontmatter が読めなくなるまで検出されない。
+        # 原因を名指しする形 (「閉じていない」) であることまで固定する — 後段の
+        # `_require_only_comment_after` も raise はするが「余分な文字」と誤診する。
+        for raw in ('"unterminated', "'unterminated", '"', "'"):
+            with self.subTest(raw=raw):
+                with self.assertRaisesRegex(FrontmatterError, "引用符が閉じていない"):
+                    _parse_scalar(raw)
+
+    def test_unterminated_quoted_scalar_in_document_raises(self) -> None:
+        with self.assertRaises(FrontmatterError):
+            parse_frontmatter('---\nname: a\ndescription: "unterminated\n---\n')
+
+    def test_unmatched_flow_sequence_raises(self) -> None:
+        # 引用符と同じく、原因を名指しする形であることまで固定する。
+        for raw in ("[Read, Grep", "["):
+            with self.subTest(raw=raw):
+                with self.assertRaisesRegex(FrontmatterError, "']' がない"):
+                    _parse_scalar(raw)
+
+    def test_flow_sequence_with_trailing_garbage_raises(self) -> None:
+        with self.assertRaisesRegex(FrontmatterError, "余分な文字"):
+            _parse_scalar("[Read] extra")
+
+    def test_unmatched_flow_sequence_in_document_raises(self) -> None:
+        with self.assertRaises(FrontmatterError):
+            parse_frontmatter('---\nname: a\ntargets: ["*"\n---\n')
+
+    def test_quoted_scalar_with_trailing_comment_keeps_value(self) -> None:
+        for raw in ('"a"  # note', "'a' # note"):
+            with self.subTest(raw=raw):
+                self.assertEqual(_parse_scalar(raw), "a")
+
+    def test_quoted_scalar_with_trailing_garbage_raises(self) -> None:
+        # 終端引用符の後ろに来てよいのはコメントだけ。それ以外は YAML として不正。
+        with self.assertRaises(FrontmatterError):
+            _parse_scalar('"a" trailing')
+
+    def test_flow_sequence_with_trailing_comment(self) -> None:
+        self.assertEqual(_parse_scalar('["*"]  # all targets'), ["*"])
 
 
 class TestFrontmatterErrors(unittest.TestCase):
@@ -417,6 +501,31 @@ class TestFrontmatterErrors(unittest.TestCase):
         self.assertTrue(
             any("claudecode.effort" in e for e in frontmatter_errors("sample-agent", data))
         )
+
+    def test_missing_claudecode_is_rejected(self) -> None:
+        # `claudecode` ごと欠落すると tools の指定も消える = read-only 契約が
+        # 構造的に崩れる (subagents/README.md「ツール権限の方針」)。
+        data = {k: v for k, v in self.valid.items() if k != "claudecode"}
+        self.assertTrue(
+            any("claudecode" in e for e in frontmatter_errors("sample-agent", data))
+        )
+
+    def test_missing_claudecode_tools_is_rejected(self) -> None:
+        data = dict(
+            self.valid,
+            claudecode={
+                k: v for k, v in self.valid["claudecode"].items() if k != "tools"
+            },
+        )
+        self.assertTrue(
+            any("claudecode.tools" in e for e in frontmatter_errors("sample-agent", data))
+        )
+
+    def test_omitted_model_and_effort_are_allowed(self) -> None:
+        # `problem-solver.md` は model / effort を意図的に省いて呼出側から継承する。
+        # tools 必須化がこの正当なケースを巻き込まないことを固定する。
+        data = dict(self.valid, claudecode={"tools": ["Read"]})
+        self.assertEqual(frontmatter_errors("sample-agent", data), [])
 
 
 if __name__ == "__main__":
