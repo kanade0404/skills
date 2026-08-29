@@ -63,6 +63,6 @@ _Avoid_: アーキテクチャテスト (テストと混同するため)
 ## Example dialogue
 
 > Dev: この機能、issue 1 本でいい?
-> Expert: AC を見て。単独で merge して壊れないなら 1 タスク。DB migration と API 変更が別々に merge できないなら、それは 1 つの垂直スライス — 分けたら水平分割になる。
+> Expert: AC を見て。単独で merge して壊れないなら 1 つの実装 issue。親のタスクはこの実装 issue を 1 つ持つ。DB migration と API 変更が別々に merge できないなら、それは 1 つの垂直スライス — 分けたら水平分割になる。
 > Dev: 実装started のラベルは人間が付ける?
-> Expert: 付けない。承認ゲートは merge だけ。Codex 着手は自動で始まる。
+> Expert: 付けない。Codex 着手は自動で始まる。承認ゲートは merge と差し戻し再検討の 2 点。
