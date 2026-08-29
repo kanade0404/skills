@@ -23,10 +23,11 @@ typo もそのまま通る。**その検証は本テストが担う**、とい�
 - `name` が `^[a-z0-9]+(-[a-z0-9]+)*$` に一致し、`:` を含まない
 - `description` が存在し空でない
 - `model` / `effort` / `tools` がトップレベルに存在しない (silent failure の検出)
-- `claudecode` が mapping として存在し、その下に `tools` がある — 欠けると呼出側の
-  既定ツールを継承し、README「ツール権限の方針」が構造で担保している read-only 契約が
-  エラーも警告も無しに失効する。`model` / `effort` は継承が正当な選択なので必須にしない
-  (`problem-solver.md` が両方を意図的に省いている)
+- `claudecode` が mapping として存在し、その下の `tools` が**非空文字列の非空リスト**である
+  — 欠けたり `tools:` (null) / `[]` だったりすると呼出側の既定ツールを継承し、README
+  「ツール権限の方針」が構造で担保している read-only 契約がエラーも警告も無しに失効する
+  (キーの存在だけを見ると素通しする)。`model` / `effort` は継承が正当な選択なので必須に
+  しない (`problem-solver.md` が両方を意図的に省いている)
 - `claudecode.model` は alias (sonnet / opus / haiku / fable / inherit) かフル model id
 - `claudecode.effort` は low / medium / high / xhigh / max のいずれか
 
@@ -270,10 +271,14 @@ def frontmatter_errors(stem: str, data: dict[str, Any]) -> list[str]:
         # README「ツール権限の方針」が構造で担保している read-only 契約が
         # エラーも警告も無しに失効する。`model` / `effort` は継承が正当な
         # 選択なので必須化しない (`problem-solver.md` が実例)。
-        if "tools" not in claudecode:
+        tools = claudecode.get("tools")
+        if not isinstance(tools, list) or not tools or not all(
+            isinstance(tool, str) and tool.strip() for tool in tools
+        ):
             errors.append(
-                "claudecode.tools がない — 呼出側の既定ツールを継承し、"
-                "read-only 契約が黙って失効する"
+                "claudecode.tools がない / 空 / 非空文字列のリストでない — "
+                "呼出側の既定ツールを継承して read-only 契約が黙って失効するか、"
+                "consumer 側の rulesync generate が落ちる"
             )
         model = claudecode.get("model")
         if model is not None and not (
@@ -520,6 +525,20 @@ class TestFrontmatterErrors(unittest.TestCase):
         self.assertTrue(
             any("claudecode.tools" in e for e in frontmatter_errors("sample-agent", data))
         )
+
+    def test_unusable_claudecode_tools_is_rejected(self) -> None:
+        # キーの存在だけを見ると `tools:` (null) や `tools: []` を通してしまう。
+        # どちらも「ツールを渡さない」ではなく「既定を継承する」or rulesync の
+        # 生成失敗になるので、read-only 契約の担保にならない。
+        for tools in (None, [], "Read", ["Read", ""], ["Read", None]):
+            with self.subTest(tools=tools):
+                data = dict(self.valid, claudecode={"tools": tools})
+                self.assertTrue(
+                    any(
+                        "claudecode.tools" in e
+                        for e in frontmatter_errors("sample-agent", data)
+                    )
+                )
 
     def test_omitted_model_and_effort_are_allowed(self) -> None:
         # `problem-solver.md` は model / effort を意図的に省いて呼出側から継承する。
