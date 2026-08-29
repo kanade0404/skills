@@ -53,12 +53,13 @@ credential を役割で分離する。
 - **token のスコープでは merge を独立に禁止できない**ことを明記する — GitHub の権限モデルでは、PR の
   merge は `Contents: write` の下に属し、push に必要な `Contents: write` と分離できない。したがって
   human-only merge の実効的な強制点は **branch protection の required review 数のみ**であり、Codex
-  コンテナの token スコープはこれを独立には守らない。この境界を成立させるには、**Codex の App/token を
-  code repo の ruleset の bypass actor に登録しない**こと、**review dismissal を人間アクターに限定
-  する**ことが必須条件になる。**worker の Integration bypass は state repo の ruleset に対してのみ
-  張る** ([ADR 0011](0011-authority-state-in-dedicated-state-repo.md) の Considered Options が
-  「code repo の ruleset へ権威用の bypass を張ると人間の merge ゲートが緩む」ことを S1 却下理由に
-  挙げている、その裏返し)。code repo 側では Codex を含めどの credential も bypass actor に登録しない。
+  コンテナの token スコープはこれを独立には守らない。したがって code repo の ruleset は、**Codex の
+  App/token を bypass actor に登録せず**、**review dismissal を人間アクターに限定する**ことで、この
+  境界を token スコープではなく ruleset 側で機構的に成立させる。**worker の Integration bypass は
+  state repo の ruleset に対してのみ張り**、code repo 側では Codex を含めどの credential も bypass
+  actor に登録しない ([ADR 0011](0011-authority-state-in-dedicated-state-repo.md) の Considered
+  Options が「code repo の ruleset へ権威用の bypass を張ると人間の merge ゲートが緩む」ことを S1
+  却下理由に挙げている、その裏返し)。
 - token の撤回経路は App の installation suspend とする。鍵の rotation 手順と侵害時の suspend 手順を
   運用文書に持つ。
 - **App 化は Phase 1 の完了条件**とする。PAT の暫定運用は Phase 0-1 の開発中に限り、**権威分離の無い
