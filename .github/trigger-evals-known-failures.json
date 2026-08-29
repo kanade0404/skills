@@ -1,10 +1,10 @@
 [
   {
-    "skill": "retro",
-    "case_id": "t04",
+    "skill": "software-design",
+    "case_id": "t10",
     "kind": "FN",
-    "reason": "harness 改善の相談は retro 対象だが最新結果は未発火している",
-    "recorded": "2026-07-05"
+    "reason": "曖昧なコード相談 (設計語彙を含まない) は code-review 側に流れる。2026-08-09 の description 幅削減時に旧 description で対照測定したところ同一の FN が出たため、幅削減に起因しない既存の境界特性として記録する",
+    "recorded": "2026-08-09"
   },
   {
     "skill": "verify-done",

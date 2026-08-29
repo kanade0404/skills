@@ -87,7 +87,7 @@ ADR に値しないと判定された場合は、**何も永続化しない**。
 
 scratchpad と (生成された場合は) ADR ドラフトをセットで `design-review` に渡す。レビュアー subagent が severity 三分類で findings を返す。
 
-Critical が残っているなら Step 2 に戻る。Important 以下は次の実装フェーズに引き継ぎ可能。
+Critical が残っているなら Step 2 に戻る。Major 以下は次の実装フェーズに引き継ぎ可能。
 
 ### Step 6 — Scratchpad の破棄計画
 
@@ -123,7 +123,7 @@ PR マージ後に scratchpad を削除する旨を **PR description に明記�
 - (値する場合) ADR draft → adr-writer に dispatch 済 → docs/adr/<NNNN>-<slug>.md
 
 ### Review
-- design-review findings: Critical=<n> / Important=<n> / Minor=<n>
+- design-review findings: Critical=<n> / Major=<n> / Minor=<n>
 - Critical 残: <あれば一覧 / なければ "なし">
 
 ### 次の手

@@ -1,0 +1,24 @@
+{"id": "t01", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): ドメインモデル・集約境界は中核トリガ"}
+{"id": "t02", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 「Result 型に直したい」が例示句 (ROP レンズ)"}
+{"id": "t03", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 「CQRS 入れる?」「Event Sourcing 採用する?」が例示句"}
+{"id": "t04", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 「ADR 書く」「アーキテクチャ決定を残す」が例示句"}
+{"id": "t05", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): データモデル是正 = immutable data model レンズ"}
+{"id": "t06", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): バリデーション境界・責務配置の設計問題 (Secure by Design)"}
+{"id": "t07", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Deep Module / 情報隠蔽の設計指摘"}
+{"id": "t08", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 「TDD で進めたい」が例示句"}
+{"id": "t09", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 「設計どうする」が例示句"}
+{"id": "t10", "predicted": false, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 曖昧なコード確認で設計語彙なし; code-review 寄り (旧 description でも同結果: 本変更に起因しない既知の FN)"}
+{"id": "t11", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 「サブドメイン分けたい」が例示句"}
+{"id": "t12", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 「TM法でモデル化して」が例示句"}
+{"id": "t13", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Test Double 過多は結合度・モジュール境界の設計臭"}
+{"id": "t14", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 認可の配置は Secure by Design / 責務境界の設計レビュー"}
+{"id": "t15", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): アーキテクチャ特性の絞り込みは architecture characteristics レンズ"}
+{"id": "t16", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): microservices 採否はアーキテクチャ決定の判断"}
+{"id": "t17", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): flaky テストの原因追跡は test-review の領域"}
+{"id": "t18", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): テスト本体のレビューは test-review と明記"}
+{"id": "t19", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 文献調査は research-practices の担当と明記"}
+{"id": "t20", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): skill 新規作成は skill-builder と明記"}
+{"id": "t21", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): タイポ修正は明示的に範囲外"}
+{"id": "t22", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): lint 違反対応は明示的に範囲外"}
+{"id": "t23", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 純粋なパフォーマンスチューニングは明示的に範囲外"}
+{"id": "t24", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 別エージェントでの最終レビューは design-review の担当"}

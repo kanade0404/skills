@@ -1,0 +1,20 @@
+{"id": "t01", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): ADR review with missing options check = core trigger"}
+{"id": "t02", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Blind re-read by separate agent, writer-bias removal = core"}
+{"id": "t03", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Final check on a software-design proposal = main path"}
+{"id": "t04", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 「集約境界これで OK?」が description の例示句"}
+{"id": "t05", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 「Result への置き換え、抜けない?」が例示句"}
+{"id": "t06", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 「Secure by Design 観点で監査して」が例示句"}
+{"id": "t07", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 「ADR の Negative consequences 薄い」が例示句"}
+{"id": "t08", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Design diff/boundaries in a PR is in-scope review"}
+{"id": "t09", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 「設計で抜け落ちている観点ない?」が例示句"}
+{"id": "t10", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 「この提案で行く?」が例示句"}
+{"id": "t11", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Producing a new design -> software-design"}
+{"id": "t12", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Asking how to produce a design -> software-design"}
+{"id": "t13", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Flaky test fixing, not design review"}
+{"id": "t14", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Test code review -> test-review, explicitly excluded"}
+{"id": "t15", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Literature research -> research-practices, out of scope"}
+{"id": "t16", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Skill authoring/improvement -> skill-builder"}
+{"id": "t17", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Typo fix, code rewriting out of scope"}
+{"id": "t18", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): lint fix explicitly out of scope"}
+{"id": "t19", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Refactoring/code rewrite explicitly out of scope"}
+{"id": "t20", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Final design check by separate agent = core trigger"}

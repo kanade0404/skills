@@ -1,0 +1,20 @@
+{"id": "t01", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 「ship して」が description の例示句"}
+{"id": "t02", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Canonical trigger phrase: all the way to merge-ready"}
+{"id": "t03", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): 「commit-push-pr の検証付き版で」が例示句"}
+{"id": "t04", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): CI red + all reviewer comments to merge-ready = shipping"}
+{"id": "t05", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Commit->PR->CI green->all review comments loop = full shipping"}
+{"id": "t06", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Finished implementation handed off to ship"}
+{"id": "t07", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Hand off everything to PR and green = merge-ready shipping"}
+{"id": "t08", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Done; PR plus review-comment handling = shipping loop"}
+{"id": "t09", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Ship with CI and review both handled = shipping"}
+{"id": "t10", "predicted": true, "actual": true, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): PR + loop until CI red and comments cleared = shipping"}
+{"id": "t11", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Review only -> code-review"}
+{"id": "t12", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Existing PR comments only -> pr-review-respond"}
+{"id": "t13", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): CI fix alone -> ci-self-heal"}
+{"id": "t14", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Completion check only -> verify-done"}
+{"id": "t15", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): commit->push->PR without loop -> commit-push-pr"}
+{"id": "t16", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Local test run only, no PR/CI/review loop"}
+{"id": "t17", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Production deploy, not PR merge-ready stage"}
+{"id": "t18", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): Release notes writing is out of scope"}
+{"id": "t19", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): DB design review; 'shipping' is a domain noun here"}
+{"id": "t20", "predicted": false, "actual": false, "reason": "blind judge subagent (opus, 2026-08-09 description 幅削減後の再測定; description のみ提示・正解ラベル非提示): How-to question, no implementation handoff"}
