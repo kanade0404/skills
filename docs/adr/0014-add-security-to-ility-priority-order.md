@@ -51,15 +51,51 @@ merge されて稼働した時点で外部に露出し、見落としの代償�
 である。これは 0009 の「例外領域ゼロ」を弱めない — 例外になるのは secret の**値**だけで、secret に
 関する**状態**は権威面に載るからである。
 
-**この制約は「機構で行う」(4 点目) の対象でもある**。[ADR 0013](0013-role-separated-tokens-and-credentials.md)
-は Codex コンテナに code repo への push と PR 作成の権限を与えるため、secret の値は生成差分や PR
-データに混入して GitHub 側へ送信されうる。この経路を塞ぐ機構は、GitHub Conformist
-([ADR 0008](0008-github-conformist.md)) に沿って **code repo と state repo の双方に GitHub 標準の
-secret scanning + push protection を有効化する**ことを既定線とする。検出時は push と PR 更新を停止し、
-secret 値をログ・エラー・監査記録に含めずに失敗させる。**残余として明示する**: push protection は
-git push 経路のみを検査し、worker が Contents API 経由で直接書き込む経路 (state repo への CAS 書き込み
-など) は対象外である — この経路の fail-closed 検査 (書き込み前の pre-flight スキャン等) は Phase 0/1
-の実装検証項目とし、「対処済み」とは書かない。
+**この制約は「機構で行う」(4 点目) の対象でもある**。Codex が書いた差分・PR 本文・コメントは GitHub へ
+送信されるため、secret の値がそこに混入する経路がある。
+
+初版はこの経路を塞ぐ機構として、GitHub Conformist ([ADR 0008](0008-github-conformist.md)) に沿って
+**GitHub 標準の secret scanning + push protection を既定線**にしていた。**2026-08-30 の調査でこれが
+成立しないことが確定した** — GitHub Secret Protection は org / enterprise 限定で、**個人アカウントの
+private repo では無償・有償のいずれでも利用できない**。無償の push protection for users も public repo
+限定であることが公式に明文化されている。純正機構を既定線にできない以上、自前の既定線は選好ではなく必然
+である。
+
+### secret 検出の既定線 — 自前 4 層
+
+| 層 | 機構 | 要点 |
+|---|---|---|
+| 1 | **構造的排除** | Crucible (Codex 実行コンテナ) と CI の実行 context に credential を配布しない不変条件 ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md))。実 credential を要する統合テストはコンテナ外へ出す |
+| 2 | **broker pre-flight** | worker の **全 GitHub 書き込み** (push の全 commit patch / PR title・body / コメント / issue / state repo の CAS 書き込み) を scanner で検査する。**scanner の設定・baseline・ignore は worker 配備版のみを使い、repo 内の設定は無視する** |
+| 3 | **CI required check** | PR diff への scanner を required check として置く。**人間の直接 push にも効く第 2 の網**。config は worker 配備版から供給し、契約の「3 点同時 bump」に編入する (drift 防止) |
+| 4 | **GitHub 純正** | public repo では有効化する。private repo は org 移行時の追加層 — 条件付きの将来オプションであり、既定線には数えない |
+
+- **層 2 が repo 内の scanner 設定を無視するのは、被検査側が検査を無効化する経路を塞ぐため**である。
+  `.gitleaksignore` や設定ファイルの追加・改変は保護パス検査 ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md)
+  の受理手順 3) の対象でもあり、触れる diff は needs-human に倒れる。
+- **層 2 は Fable が起票するタスク issue の本文も同じ関数を通す**。worker が代行する GitHub 書き込みは
+  すべて 1 つの検査点を通り、書き手によって網の目が変わらない。
+- **escalation のレコードに secret の値を書かない**。載せてよいのは rule id・パス・行番号・fingerprint
+  だけで、値・周辺行・payload 本文の転記は禁止する — escalation 経路自体を漏洩経路にしない。誤検知の
+  解除は worker 配備版の baseline 管理で行い、自動 unblock はしない。
+- **残余として明示する**: 人間が GitHub へ直接書き込む経路は層 2 の対象外で、層 3 の CI check だけが網
+  である。自前 scanner はエントロピーを持たない独自形式の credential を取りこぼす。どちらも「対処済み」
+  とは書かない。
+
+### CI (GitHub Actions) を信頼境界として数える
+
+信頼境界の一覧に **CI runner** を加える。それまで数えていた境界 (Fable / Crucible / worker / GitHub) は
+どれも CI を含んでおらず、**設計上の数え落とし**だった。Codex が書いたテストは PR イベントで Actions と
+して実行され、そこには `GITHUB_TOKEN` と無制限の egress がある。**Crucible に課した egress 制限を、CI が
+丸ごと迂回する**。境界として扱い、次を課す。
+
+- `pull_request` workflow の permissions は **`contents: read` のみ**。codex 由来 PR の workflow に
+  secrets を注入しない (注入は environment secrets + 人間承認の経路に限る)。
+- **`pull_request_target` は使用禁止**。
+- egress 制限アクション (block mode + allowlist、action は SHA pin) を必須ステップに置く。ただしこれは
+  **縮小策であって機構ではない** — GitHub-hosted runner の job は sudo を持つため bypass できる。完全な
+  機構は self-hosted runner + egress proxy のみで、org 移行と同時期の条件付きオプションとする。
+- worker が CI artifact (ac-report) を権威面へ転記する際は、契約スキーマで機械検証する。
 
 ### 下流への効き方
 
@@ -67,10 +103,13 @@ git push 経路のみを検査し、worker が Contents API 経由で直接書�
   0005 の本文は変更しないが、以後この決定を読むときは Driver をこちらに読み替える。
 - [ADR 0013](0013-role-separated-tokens-and-credentials.md) credential の役割分離 — 直接の帰結。
   「権限は既定で最小」と「境界の強制は機構で」の適用そのもの。
+- [ADR 0015](0015-capability-broker-instead-of-container-credentials.md) capability broker — 「境界の
+  強制は機構で行う」の最も強い形 (権限を最小にするのではなく、credential 自体を置かない)。上の 4 層の
+  層 1 と、層 2 の実装点を供給する。
 - [ADR 0012](0012-write-authority-by-lease-and-sha-cas.md) lease と sha-CAS — 「副作用面は fence され
   ない」を残余として明示するのは、4 点目の適用。
-- [ADR 0010](0010-resident-worker-with-codex-python-sdk.md) 常駐 worker — Codex コンテナの隔離と token
-  失効、および ChatGPT auth の残余リスクの明示。
+- [ADR 0010](0010-resident-worker-with-codex-python-sdk.md) 常駐 worker — Crucible の隔離、および
+  ChatGPT auth の残余リスクの明示。
 
 ## Considered Options
 
@@ -87,6 +126,17 @@ git push 経路のみを検査し、worker が Contents API 経由で直接書�
 - **安全性を -ilities に入れず、決定ごとの個別判断に留める** — 0009 が「優先順を決めず個別に判断する」
   を却下したのと同じ理由。しかも今回は、0005 で代理の Driver が書かれるという形で失敗が既に観測されて
   いる。却下。
+- **secret 検出の既定線を GitHub 標準の secret scanning + push protection に置く (本 ADR の初版)** —
+  GitHub Conformist ([ADR 0008](0008-github-conformist.md)) に最も忠実で、維持コストも他人持ちになる。
+  **調査で前提が崩れた** — Secret Protection は org / enterprise 限定で、個人アカウントの private repo
+  では購入すらできず、無償の user push protection も public repo 限定である。conform する相手が存在
+  しない。却下 (public repo と org 移行後の追加層としてのみ残す)。
+- **CI runner を信頼境界に数えず、コンテナの egress 制限だけで足りるとする** — 実際には Codex が書いた
+  テストが Actions 上で `GITHUB_TOKEN` と無制限 egress を持って走る。境界を 1 つ数え落としているだけで、
+  攻撃者にとっては最も安い迂回路になる。却下。
+- **egress 制限アクションを「機構」として数える** — GitHub-hosted runner の job は sudo を持つので、
+  同じ job から無効化できる。機構と呼べば残余の記述が消え、4 点目 (残余を消さずに書き出す) に反する。
+  縮小策として採用し、機構としては数えない。却下。
 
 ## Consequences
 
@@ -97,6 +147,12 @@ git push 経路のみを検査し、worker が Contents API 経由で直接書�
 - 可監査性と安全性の衝突に規則があるので、「これは GitHub に書いてよいか」を決定のたびに議論しなくて
   よい。
 - 0009 を不変に保ったまま順序を進化させた記録が残る。以後の -ility 追加も同じ形式で積める。
+- **secret 検出が自前の層になったことで、検出点が自分の手の内に入った**。プランや org の所属に依存せず、
+  検査の対象範囲 (git push だけでなく API payload 全体) と失敗時の挙動を自分で決められる。
+- **検査点が 1 つの関数に集まる**。worker が代行する GitHub 書き込みは Fable の起票分も含めて同じ関数を
+  通るため、「どの経路が検査されているか」を経路ごとに数えなくてよい。
+- 信頼境界の一覧に CI runner が入ったことで、**「コンテナは締めたが CI は素通り」という非対称が設計文書
+  の上で見えるようになった**。
 
 ### Negative
 
@@ -111,9 +167,24 @@ git push 経路のみを検査し、worker が Contents API 経由で直接書�
   「とりあえず広めに取って後で絞る」ができなくなる。
 - -ility が 1 つ増えたことで、各 ADR の Driver 行の選択肢が増えた。**代理の Driver を書く誤りは、今回の
   修正では構造的には防げていない** — 防いでいるのは今回見つかった 1 種類だけである。
+- **secret 検出のルール保守が恒久コストになった**。純正機構なら他人が更新し続けるルールを、自前で
+  持ち続ける。エントロピーを持たない独自形式の credential は原理的に取りこぼす。
+- **[ADR 0008](0008-github-conformist.md) GitHub Conformist から意図的に外れた領域が 1 つできた**。
+  conform する相手が個人アカウントには存在しないという理由での逸脱だが、org へ移行すれば「純正と自前の
+  どちらを正とするか」を決め直すことになる。
+- **CI を境界に数えた結果、そこに完全な機構が無いことが確定した**。GitHub-hosted runner では egress を
+  機構的に強制できず、self-hosted + egress proxy への移行は org 移行と同時期の未着手項目である。境界を
+  1 つ増やして、閉じられない残余を 1 つ増やした。
+- 検査点が 1 つの関数に集中したことで、**その関数が単一障害点にもなった**。検査の false negative は全
+  経路に等しく効く。
 
 ### Neutral
 
 - 本 ADR は 0009 を supersede しない。**0009 と本 ADR を合わせたものが現在の -ilities である。**
+  0009 はさらに [ADR 0016](0016-quantum-scoped-fitness-functions.md) にも amend されている — 本 ADR が
+  一覧と順序を、0016 が適用単位と測定方法を扱う。
 - さらに -ility を追加する場合も、同じく amend ADR を積む形式を採る。0009 を頂点とする 1 本の系列として
   読めるように保つ。
+- 上の 4 層のうち層 2 の**実装点**は [ADR 0015](0015-capability-broker-instead-of-container-credentials.md)
+  の broker であり、本 ADR は「何を検査すべきか」だけを決める。scanner の実装 (gitleaks 等) は interface
+  の背後にあり差し替え可能で、本 ADR の決定には含めない。
