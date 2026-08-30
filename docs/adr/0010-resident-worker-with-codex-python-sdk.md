@@ -48,8 +48,10 @@ Codex の実行を、**常駐 worker (VM daemon) 内の 1 プロセス・1 clien
 - issue ↔ `thread_id` の対応は権威面に記録する ([ADR 0011](0011-authority-state-in-dedicated-state-repo.md)
   の `state.json` の runtime フィールド)。worker のメモリ上の対応表はキャッシュである。
 - **thread resume を第一候補**とし、thread を失った場合にのみ stateless 再構成にフォールバックする。
-- **codex hooks は使わない** (#27133)。境界の強制は外側 — コンテナ・token スコープ・ruleset — だけで
-  行う ([ADR 0013](0013-role-separated-tokens-and-credentials.md))。
+- **codex hooks は使わない** (#27133)。**境界の強制はコンテナの外側だけで行う** — コンテナ隔離・
+  credential の分離 ([ADR 0013](0013-role-separated-tokens-and-credentials.md))・broker の受理検査
+  ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md))・ruleset。コンテナ内で動く
+  ものは境界にしない、が要点である。
 - **abort を一級操作として持つ**。版上げ・cap 超過・needs-human 遷移・lease 喪失時に、worker は当該
   issue に紐づく thread とコンテナを kill する。
 - **codex-action は fallback ではなく contingency (別設計への切替) として保持する**。

@@ -66,15 +66,17 @@ private repo では無償・有償のいずれでも利用できない**。無�
 | 層 | 機構 | 要点 |
 |---|---|---|
 | 1 | **構造的排除** | Crucible (Codex 実行コンテナ) と CI の実行 context に credential を配布しない不変条件 ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md))。実 credential を要する統合テストはコンテナ外へ出す |
-| 2 | **broker pre-flight** | worker の **全 GitHub 書き込み** (push の全 commit patch / PR title・body / コメント / issue / state repo の CAS 書き込み) を scanner で検査する。**scanner の設定・baseline・ignore は worker 配備版のみを使い、repo 内の設定は無視する** |
+| 2 | **broker pre-flight** | **GitHub へ出る payload を漏れなく検査対象にする** — push される差分・PR の title と body・コメント・issue・state repo への CAS 書き込みまで。どこで何をどう走査するかは [ADR 0015](0015-capability-broker-instead-of-container-credentials.md) が決める。本 ADR が課すのは**対象の網羅**と、**scanner の設定・baseline・ignore は worker 配備版のみを使い repo 内の設定は無視する**ことの 2 点 |
 | 3 | **CI required check** | PR diff への scanner を required check として置く。**人間の直接 push にも効く第 2 の網**。config は worker 配備版から供給し、契約の「3 点同時 bump」に編入する (drift 防止) |
 | 4 | **GitHub 純正** | public repo では有効化する。private repo は org 移行時の追加層 — 条件付きの将来オプションであり、既定線には数えない |
 
 - **層 2 が repo 内の scanner 設定を無視するのは、被検査側が検査を無効化する経路を塞ぐため**である。
   `.gitleaksignore` や設定ファイルの追加・改変は保護パス検査 ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md)
   の受理手順 3) の対象でもあり、触れる diff は needs-human に倒れる。
-- **層 2 は Fable が起票するタスク issue の本文も同じ関数を通す**。worker が代行する GitHub 書き込みは
-  すべて 1 つの検査点を通り、書き手によって網の目が変わらない。
+- **層 2 は Fable が起票するタスク issue の本文にも適用する**。Fable は App として code repo に直接
+  書き込む書き手であり ([ADR 0011](0011-authority-state-in-dedicated-state-repo.md) の表)、worker の
+  代行経路には乗らない。それでも**同じ scan 関数を通すことを要件とする** — 検査の網の目が書き手ごとに
+  変わってはならない。適用点が worker の外にある分、これは層 2 の中で最も破れやすい箇所である。
 - **escalation のレコードに secret の値を書かない**。載せてよいのは rule id・パス・行番号・fingerprint
   だけで、値・周辺行・payload 本文の転記は禁止する — escalation 経路自体を漏洩経路にしない。誤検知の
   解除は worker 配備版の baseline 管理で行い、自動 unblock はしない。

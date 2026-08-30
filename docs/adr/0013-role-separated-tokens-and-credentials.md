@@ -9,8 +9,9 @@ Driver: [安全性 (Secure by Design)](0014-add-security-to-ility-priority-order
 
 ## Context
 
-このパイプラインには書き手が 3 種いる。権威面と派生面を書く worker (Foreman)、実装差分を書く Codex
-実行コンテナ (Crucible)、merge する人間である。3 者が同じ credential を共有すると、
+このパイプラインには書き手が 3 種いる。権威面と派生面を書く worker (**Foreman**)、実装差分を書く
+Codex 実行コンテナ (**Crucible**)、merge する人間である。仮名の定義は
+[ADR 0016](0016-quantum-scoped-fitness-functions.md) にある。3 者が同じ credential を共有すると、
 [ADR 0011](0011-authority-state-in-dedicated-state-repo.md) と
 [ADR 0012](0012-write-authority-by-lease-and-sha-cas.md) が決めた権威の分離が、token の層で崩れる。
 
@@ -23,8 +24,8 @@ Driver: [安全性 (Secure by Design)](0014-add-security-to-ility-priority-order
   **二重の根拠**で App 化を要求している。
 - **ruleset は private repo でも enforcement が実効**である (パイロットの agegis で確認)。したがって
   private な state repo にも保護規則を張れる。
-- **installation token は branch を絞れない。** push 先の制限は token では表現できず、ruleset で表現
-  するしかない。
+- **installation token は branch を絞れない。** push 先の制限は token では表現できない (初版はこれを
+  ruleset で表現するしかないと結論したが、下記の追補で受理検査へ移した)。
 
 信頼境界の側にも事実がある。実装 issue の本文は Codex が起草する (データ扱い)。issue は code repo に
 あるため、**repo 境界だけでは、Codex が契約ブロックを偽造して自分への指示を書き戻す経路を塞げない**。
@@ -50,18 +51,22 @@ credential を役割で分離する。
 | PR 操作用 job token | **worker のみ** (job 別・短命) | code repo の `pull_requests:write` **のみ** | PR の作成・更新・コメント |
 | 権威面 (state repo) への書き込み | **worker のみ** | state repo | lease・遷移・予算・heartbeat |
 | Codex の auth (ChatGPT auth または API key) | **worker のみ** | — | Codex SDK の認証 ([ADR 0010](0010-resident-worker-with-codex-python-sdk.md))。Codex thread は VM 上の worker 側の部品であり、Crucible とは別物 |
+| Watchtower (監視 workflow) の token | Actions の workflow | **read + 通知のみ。書き込み権威を持たない** | heartbeat の鮮度読みと `needs-human` 通知 ([ADR 0016](0016-quantum-scoped-fitness-functions.md)) |
+| CI runner の `GITHUB_TOKEN` | Actions の workflow | **`contents: read` のみ。secrets を注入しない** | codex 由来 PR のテスト実行 ([ADR 0014](0014-add-security-to-ility-priority-order.md) の信頼境界) |
 
-- **Crucible に GitHub credential を配布しないのは構造的な決定**である。`issues:write` を外すだけでは
-  契約ブロック偽造しか塞げず、push/PR の引数 (branch・パス・payload) は token では制約できない。Codex が
-  起草した実装 issue 本文はデータとして扱い、worker が契約スキーマで検証・正規化して起票する — これは
-  credential を持たせないことの帰結であって、規約ではない。
+- **Crucible の行が「なし」であることの根拠と、それでも成果が GitHub に届く仕組みは
+  [ADR 0015](0015-capability-broker-instead-of-container-credentials.md) が決める。** 本 ADR はその決定を
+  credential 表に反映するだけで、受理検査の内容には立ち入らない。表の帰結として、Codex が起草した実装
+  issue 本文はデータとして扱われ、worker が契約スキーマで検証・正規化して起票する — これは credential を
+  持たせないことの帰結であって、規約ではない。
 - **worker の job token は操作の種類ごとに分割して発行する** — push 用は `contents:write` のみ、PR 用は
-  `pull_requests:write` のみ。**「両方入りの token を作らない」を発行関数の不変条件とする**。
-- **push 先の制限は broker の受理検査で表現する** — `codex/**` 一致・保護パス・全 commit patch の scan
-  に合格した SHA だけを worker が push する ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md))。
-  ruleset (`codex/**` 以外への push 禁止、force-push 禁止、`.github/workflows/**` および契約スキーマ・
-  ac-verify スクリプトの変更は required review) は**この検査を代替するものではなく、独立した第 2 の網**
-  として重ねる。
+  `pull_requests:write` のみ。**「両方入りの token を作らない」を発行関数の不変条件とする**。これが本
+  ADR 固有の決定である。
+- **push 先の制限を token に期待しない** — installation token は branch を絞れないため、制限は
+  [ADR 0015](0015-capability-broker-instead-of-container-credentials.md) の受理検査が表現する。ruleset
+  (`codex/**` 以外への push 禁止、force-push 禁止、`.github/workflows/**` および契約スキーマ・ac-verify
+  スクリプトの変更は required review) は**その検査を代替するものではなく、独立した第 2 の網**として
+  重ねる。
 - token の撤回経路は App の installation suspend とする。鍵の rotation 手順と侵害時の suspend 手順を
   運用文書に持つ。
 - **App 化は Phase 1 の完了条件**とする。PAT の暫定運用は Phase 0-1 の開発中に限り、**権威分離の無い
@@ -104,7 +109,7 @@ human-only merge の主張を「human approval gate」に改名し、機械 merg
   認可が GitHub 側に存在しない以上、この線は原理的に完成しない**。
   [ADR 0015](0015-capability-broker-instead-of-container-credentials.md) の B3 に置き換えた。ただし
   PoC ② が不成立の場合の第 2 fallback としては保持する。却下。
-- **Codex コンテナに `issues:write` を与え、自分で実装 issue を起票させる** — 起票の手間は減るが、Codex
+- **Crucible に `issues:write` を与え、自分で実装 issue を起票させる** — 起票の手間は減るが、Codex
   が起草した本文がそのまま指示として読まれる経路ができる。信頼のロンダリングであり、repo 境界では塞げ
   ない。credential ゼロにした現在は選択肢としても存在しない。却下。
 - **token で push 先の branch を絞る** — installation token は branch を絞れない。表現できない制約を

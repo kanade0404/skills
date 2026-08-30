@@ -84,10 +84,12 @@ Contents API の **sha-CAS** で行う。
   と単一 worker の再起動が毎回 TTL 満了を待つことになる。認めた結果、プロセス死からの実効回復は 23min
   から数分になる。
 - **worker が 1 台も居ないときは自動回復しない** — 掃引の担い手が消えるので、上の不等式が成立するのは
-  worker が 1 台以上生存している間だけである。全滅は `heartbeat.json` の鮮度でのみ検出され、30min 超過
-  で監視 workflow (Watchtower、[ADR 0016](0016-quantum-scoped-fitness-functions.md)) が needs-human を
-  通知する。監視側に書き込み権威は無く、回復させるのは人間である。復旧後の初回 tick 掃引が、失効した
-  全 lane をまとめて回収する。
+  worker が 1 台以上生存している間だけである。全滅は `heartbeat.json` の鮮度でのみ検出され、**鮮度
+  30min 超過を失効と判定**して監視 workflow (Watchtower、
+  [ADR 0016](0016-quantum-scoped-fitness-functions.md)) が needs-human を通知する。**判定は 30min だが
+  通知の到達は schedule の遅延分だけ後ろにずれる** — 遅延は監視側の残余であり、通知までの上限は 0016 の
+  fitness function 側で ≤ 45min として測る。監視側に書き込み権威は無く、回復させるのは人間である。
+  復旧後の初回 tick 掃引が、失効した全 lane をまとめて回収する。
 - **lease が守らないもの** — renew し続けながら前進しない zombie lane は lease では検出できない。これは
   thread の 45min 上限・未 dispatch の 24h starvation・needs-human の 72h 再通知という別の網が受け持つ。
 - **副作用を伴う操作は `kind=intent` の write-ahead** を権威面に CAS で先行記録してから実行する。reap
@@ -150,8 +152,9 @@ Contents API の **sha-CAS** で行う。
 - 全ての待機に上限がある。fail closed のデッドロックと lane 再稼働は ≒ 23min (TTL + tick + T_reap)、
   reap 試行は lineage 通算 3 回、needs-human の滞留は 72h で再通知 (上限 3 回)。
 - **回復と通知の時刻が 3 段の不等式に並ぶ** — 数分 (同一 worker_id の再取得) < 23min (掃引 takeover)
-  < 30min (heartbeat 失効 → 人間通知)。「自動回復を人間通知より先に走らせる」が、運用上の願いではなく
-  数値から導出できる関係になった。
+  < 30min (heartbeat 失効の判定。通知の到達はさらに schedule 遅延の分だけ後)。「自動回復を人間通知より
+  先に走らせる」が、運用上の願いではなく数値から導出できる関係になった。**不等式が要求するのは判定時刻
+  の順序だけ**で、通知の遅延はこの順序を強めこそすれ壊さない。
 
 ### Negative
 

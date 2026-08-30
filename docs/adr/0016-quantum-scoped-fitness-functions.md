@@ -67,14 +67,19 @@ credential の 3 つが異なるので、「Codex」と一括りにしない —
 #### Foreman — 特性 3 つ
 
 - **回復可能性** — 障害モードごとに fitness function 3 本。
-  - プロセス死: heartbeat の連続欠測 ≤ 1 回 (10min 窓)、再起動から初回 tick 完了 ≤ 5min [常時 /
-    `heartbeat.json` の commit 履歴]
+  - プロセス死: heartbeat (書き込み周期 5min) の連続欠測 ≤ 1 回 (10min 窓)、再起動から初回 tick 完了
+    ≤ 5min [常時 / `heartbeat.json` の commit 履歴]
   - lane: lease 失効から takeover までの遅延 ≤ tick + T_reap、`T_recover ≤ 23min`、超過 0 件
     [常時 / `state.json` の lease 時刻と takeover event の差分。数値の根拠は
     [ADR 0012](0012-write-authority-by-lease-and-sha-cas.md)]
   - 再構築: 空の VM と state repo だけから全 lane を再開できる = pass [drill /「例外領域ゼロ」の実測形]
-- **有界性** — cap 超過時の `needs-human` 到達率 100%、API は 1,000 req/hr 以内で remaining の枯渇 0 回
-  [常時 + drill]
+- **有界性** — cap 超過時の `needs-human` 到達率 100%、**core quota の消費**が 1,000/hr 以内で remaining
+  の枯渇 0 回、同時 thread 数と thread 時間が
+  [ADR 0010](0010-resident-worker-with-codex-python-sdk.md) の上限内 [常時 + drill]
+  - 閾値は**発行したリクエスト数ではなく消費した quota** で数える。tick 掃引は全 active lane を毎分読む
+    ため発行数は 1,000/hr を超えるが、ETag の 304 は core quota を消費しない
+    ([ADR 0011](0011-authority-state-in-dedicated-state-repo.md) の実測)。観測は実レスポンスの
+    `x-ratelimit-remaining` を使う。
 - **安全性** — fault suite (secret 入り diff・保護パス・`codex/**` 外・TOCTOU・scanner 設定の改変) の
   fail closed 率 100% [drill / [ADR 0015](0015-capability-broker-instead-of-container-credentials.md)
   の受理検査]
@@ -85,7 +90,10 @@ credential の 3 つが異なるので、「Codex」と一括りにしない —
   倒れない) [drill]
 - **隔離** — credential 検査 (env・mount の allowlist) がデプロイごとに pass、allowlist 外 egress の
   deny 率 100% [常時 / image の CI 検査と proxy ログ]
-- **有界性** — 生存が 45min を超えるコンテナ 0 件 [常時]
+- **有界性** — 生存が 45min を超える**コンテナ** 0 件 [常時]。これは Crucible の寿命の測定であり、
+  [ADR 0012](0012-write-authority-by-lease-and-sha-cas.md) が挙げる **thread の 45min 上限とは別物**で
+  ある (thread は Foreman 側の部品)。数値が同じなのは、コンテナが thread に従属して生きるためで、
+  片方を変えたらもう片方も検算する。
 
 #### Watchtower — 特性 2 つ
 
@@ -162,7 +170,7 @@ Crucible ⊥ Foreman (Crucible の死は正常なイベントで、回復は lan
 - **drill の運用コストが恒久的に発生する**。fault injection を定期的に回すこと自体が仕事であり、回さな
   ければ drill 種別の fitness function は「書いてあるだけ」に退化する。**測定しない fitness function は
   宣言より悪い** — 測っているつもりになる分だけ悪い。
-- **閾値の数値が根拠を持ち続けるとは限らない**。23min も 45min も 1,000 req/hr も、現在の設計と規模から
+- **閾値の数値が根拠を持ち続けるとは限らない**。23min も 45min も quota 1,000/hr も、現在の設計と規模から
   導いた値である。設計が変われば全部を検算し直す必要があり、
   [ADR 0012](0012-write-authority-by-lease-and-sha-cas.md) の規範不等式と同じ結合が、閾値の一覧全体に
   広がった。
@@ -183,7 +191,14 @@ Crucible ⊥ Foreman (Crucible の死は正常なイベントで、回復は lan
 - 仮名は本 ADR を定義の所在とする。[CONTEXT.md](../../CONTEXT.md) の用語集はパイプラインの業務語彙
   (タスク・実装 issue・差し戻し等) を扱っており、実行基盤の構成要素名は本 ADR 側に置く。
 - 個々の閾値の根拠は各 ADR にある — 回復時間は
-  [ADR 0012](0012-write-authority-by-lease-and-sha-cas.md)、fault suite の内容は
-  [ADR 0015](0015-capability-broker-instead-of-container-credentials.md)、Tribunal と Foreman を別
-  システムにする理由は [ADR 0005](0005-dual-track-security-review.md) と
+  [ADR 0012](0012-write-authority-by-lease-and-sha-cas.md)、fault suite の内容と worker 侵害の残余は
+  [ADR 0015](0015-capability-broker-instead-of-container-credentials.md)、保護パスと scanner の要件は
   [ADR 0014](0014-add-security-to-ility-priority-order.md)。本 ADR はそれらを測定可能な形に束ねる。
+- **Tribunal を Foreman と別の quantum にする理由は本 ADR で述べたものが全てである** (検査と駆動の分離
+  = Foreman が侵害されても検査結果が偽造されない)。[ADR 0005](0005-dual-track-security-review.md) は
+  レビュー系統を 2 本に冗長化する決定であって、レビュー層と実行体を分ける決定ではない — 別の論点なので
+  根拠として引かない。
+- Tribunal は CodeRabbit という**自分でデプロイしない第三者 SaaS を含む**。上の閾値が測っているのは
+  自前の部分 (ac-verify の決定性、mutation smoke の検出力、保護パスの拒否) だけで、SaaS 側の判定品質は
+  測定対象にしていない。[ADR 0005](0005-dual-track-security-review.md) が「LLM 2 系統は独立事象では
+  ない」と書いた残余は、本 ADR の測定では縮まない。
