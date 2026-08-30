@@ -74,3 +74,26 @@ GitHub 側の機構として、branch protection + ruleset により merge を�
 
 - ゲートを減らす方向 (merge のみ) への変更は two-way door。増やす方向は運用負荷として即座に現れる
   ため、変更の是非は運用実績で判断できる。
+
+## Erratum (2026-08-30)
+
+**本 ADR の Context と Decision は変更しない。** 事実の記述に誤りが 1 点あったので、ここに訂正を記す。
+
+Context の「**App に merge 系権限を与えないことと合わせて、これは規約ではなく機構として強制できる**」
+という記述は不正確である。
+
+- **GitHub は「merge だけを除外する」permission の粒度を持たない。** installation 全体としては、merge に
+  必要な permission を持ちうる。
+- merge が `contents` と `pull_requests` の両方を要する見込みであることを利用して、**worker が発行する
+  job token を操作の種類ごとに分割し、両方入りの token を作らない**という運用が可能である。しかしこれは
+  **worker の token 発行関数が守る不変条件であって、GitHub が強制する機構ではない**。発行関数にバグが
+  あれば成立しないし、merge を gate する permission の特定自体が Phase 1 の実測項目である。
+- **機構としての強制は、[ADR 0015](0015-capability-broker-instead-of-container-credentials.md) の
+  第 1 層 (Codex 実行コンテナが GitHub credential 自体を持たないという構造) が担う。** ruleset による
+  制限は第 3 層に当たるが、restrict-update が merge API の呼出 actor に効くかは公式の明文がなく、
+  実測待ちである。
+
+訂正後の正しい姿 — merge を人間に限定する 3 層とその load-bearing 度合い — は
+[ADR 0013](0013-role-separated-tokens-and-credentials.md) の「merge を人間に限定する 3 層」に記す。
+**本 ADR の決定 (承認ゲートを merge と差し戻し再検討の 2 点に置く) 自体は、この訂正の影響を受けない。**
+変わったのは「その決定を何が支えているか」の説明だけである。
