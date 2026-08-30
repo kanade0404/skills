@@ -83,7 +83,17 @@ Contents API の **sha-CAS** で行う。
   **掃引も判定式は 1 つ**で、`state.json` 本文の派生時刻は掃引でも使わない — 派生値は書き込み後に古く
   なりうるので、それで判定すると**生きている lease を失効と誤判定して早すぎる takeover を起こし、
   並行 worker を生む**。そのため掃引は本文だけでなく**その lane の直近 lease 書き込みの commit 時刻**も
-  読む (読みの回数は増えるが、ETag が効くので予算の議論は変わらない)。検知した worker がその場で
+  読む — 具体的には lane branch 上で `state.json` を変更した直近 commit を 1 件取る commits 系の読みに
+  なる。**この読みの予算への影響は未実測である**: [ADR 0011](0011-authority-state-in-dedicated-state-repo.md)
+  が実測した「ETag の 304 は core quota を消費しない」は **Contents API での `state.json` 本文の読みに
+  ついての結果**であって、commits 系エンドポイントで同じ挙動になるかは確かめていない。**この仮定を
+  load-bearing にしない** — R3 や PoC ② と同じ扱いで、**PoC の検証項目に「掃引が使う commit 時刻の読みで
+  ETag/304 が core quota を消費しないこと」を追加する**。**不成立だった場合の縮退は 2 段階掃引**: 第 1 段で
+  全 lane の本文を ETag で読み、`state.json` 内の派生時刻で**失効の疑いがある lane だけを絞り込み**、
+  第 2 段でその lane についてのみ commit 時刻を読んで判定する。派生時刻は直前のレスポンスの Date を写した
+  値なので**必ず commit 時刻以前**であり、`now − 派生時刻 > TTL` は真に失効した lane を取りこぼさない
+  (絞り込みは超集合になる)。**判定そのものは第 2 段の commit 時刻だけで行う**ので、上の「派生値で判定
+  しない」規範は保たれる。検知した worker がその場で
   takeover (CAS 更新 + epoch+1) して reap する。**専任の reaper は居ない — reap は独立したプロセスの名
   ではなく、失効 lease を見つけた worker がその場で行う仕事の名前**である。復元は **intent と transition
   の差分 + code repo 実体の照会** (PR / branch / thread の存在) で行い、**未適用の intent のみを対象と

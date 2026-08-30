@@ -95,8 +95,11 @@ heartbeat 間隔 5min / heartbeat 失効判定 30min / thread 時間上限 45min
   - **core quota の消費が 1,000/hr 以内**で remaining の枯渇 0 回。閾値は**発行したリクエスト数ではなく
     消費した quota** で数える — tick 掃引は全 active lane の状態を毎分読むため発行数は 1,000/hr を超えるが、
     ETag の 304 は core quota を消費しない
-    ([ADR 0011](0011-authority-state-in-dedicated-state-repo.md) の実測)。観測は実レスポンスの
-    `x-ratelimit-remaining`。**この 1,000 は、凍結設計が「worker 1 台 (同時 1 installation) を主語と
+    ([ADR 0011](0011-authority-state-in-dedicated-state-repo.md) の実測)。**ただしこの実測は Contents API
+    での本文の読みに対するもので、掃引が併せて行う commit 時刻の読みについては未実測である**
+    ([ADR 0012](0012-write-authority-by-lease-and-sha-cas.md) の検証項目)。**閾値がこの仮定に依存している
+    ことを明示しておく** — 不成立なら 0012 の 2 段階掃引に縮退し、commit 時刻の読みを失効の疑いがある
+    lane だけに限定する。観測は実レスポンスの `x-ratelimit-remaining`。**この 1,000 は、凍結設計が「worker 1 台 (同時 1 installation) を主語と
     する設計時の数値目標」として宣言した値**であり、恣意的な仮置きではない。ただし **GitHub 側の実効上限
     に対する比としての導出は無い**ため、Phase 1 に実測トラフィックから再導出する。
   - **同時 thread 数 ≤ 3、1 thread の実行時間 ≤ 45min**。
@@ -112,7 +115,7 @@ heartbeat 間隔 5min / heartbeat 失効判定 30min / thread 時間上限 45min
     違い、この値は既存の権威レコードから導けない — 実体は VM のディスク上にあり、書かなければ GitHub から
     は見えない。「例外領域を作らない」([ADR 0009](0009-ility-priority-order.md)) の適用として、**測れる
     ようにするための書き込みを 1 つ足す**]。**標本の範囲は lane の bare repo ディレクトリ全体の実使用量
-    で、quarantine と受信中の一時ファイルを含む** — 上限強制・p95 集計・下記の受信中 quota が**すべて同じ
+    で、objects・refs に加えて quarantine と受信中の一時ファイルを含む** — 上限強制・p95 集計・下記の受信中 quota が**すべて同じ
     量**を見る ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md))。違う量を測ると、
     閾値監視が上限の妥当性を何も語らなくなる
   - **この 2 つは既定値群に未収録のため [ADR 0015](0015-capability-broker-instead-of-container-credentials.md)
