@@ -1,6 +1,8 @@
 # 書き込み権威を TTL lease + epoch fencing で定義し、Contents API の sha-CAS で調停する
 
-Status: accepted (2026-08-29)
+Status: accepted (2026-08-29), revised (2026-08-30)
+
+**本 ADR は #117 の未 merge バッチ内の ADR であり、同バッチが merge される前に上記の日付で改訂された。** 初版を参照した第三者はまだ存在しないため、accepted 済み ADR の不変性 ([ADR 0014](0014-add-security-to-ility-priority-order.md) の Considered Options) を破らずに本文を直接改訂している。merge 後の変更は amend ADR か Erratum で積む。
 
 Driver: [-ilities 1 可監査性・回復可能性](0009-ility-priority-order.md) (権威が GitHub 上の耐久事実で
 あり、実行体が全滅しても復元できること) と同 2 有界性 (全ての待機に数値の上限があること)。並行性は

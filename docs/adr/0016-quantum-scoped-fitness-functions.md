@@ -73,16 +73,35 @@ credential の 3 つが異なるので、「Codex」と一括りにしない —
     [常時 / `state.json` の lease 時刻と takeover event の差分。数値の根拠は
     [ADR 0012](0012-write-authority-by-lease-and-sha-cas.md)]
   - 再構築: 空の VM と state repo だけから全 lane を再開できる = pass [drill /「例外領域ゼロ」の実測形]
-- **有界性** — cap 超過時の `needs-human` 到達率 100%、**core quota の消費**が 1,000/hr 以内で remaining
-  の枯渇 0 回、同時 thread 数と thread 時間が
-  [ADR 0010](0010-resident-worker-with-codex-python-sdk.md) の上限内 [常時 + drill]
-  - 閾値は**発行したリクエスト数ではなく消費した quota** で数える。tick 掃引は全 active lane を毎分読む
-    ため発行数は 1,000/hr を超えるが、ETag の 304 は core quota を消費しない
+- **有界性** — 障害の起きる面ごとに以下を全て満たすこと [常時 + drill]
+  - cap 超過時の `needs-human` 到達率 100%
+  - **core quota の消費が 1,000/hr 以内**で remaining の枯渇 0 回。閾値は**発行したリクエスト数ではなく
+    消費した quota** で数える — tick 掃引は全 active lane を毎分読むため発行数は 1,000/hr を超えるが、
+    ETag の 304 は core quota を消費しない
     ([ADR 0011](0011-authority-state-in-dedicated-state-repo.md) の実測)。観測は実レスポンスの
-    `x-ratelimit-remaining` を使う。
-- **安全性** — fault suite (secret 入り diff・保護パス・`codex/**` 外・TOCTOU・scanner 設定の改変) の
-  fail closed 率 100% [drill / [ADR 0015](0015-capability-broker-instead-of-container-credentials.md)
-  の受理検査]
+    `x-ratelimit-remaining`。**1,000 という値は暫定である** — GitHub App の installation token の実効
+    上限に対する安全余裕として置いたもので、設計資料に導出は無い。Phase 1 に実測トラフィックから再導出
+    する。
+  - **同時 thread 数 ≤ 5、1 thread の実行時間 ≤ 45min**。thread 時間は
+    [ADR 0012](0012-write-authority-by-lease-and-sha-cas.md) の 45min と同一の制約である。
+    **同時 thread 数 5 は暫定値** — [ADR 0010](0010-resident-worker-with-codex-python-sdk.md) は「同時
+    thread 数と thread 時間に数値の上限を**置けること**」を要求し、Python SDK がその能力を持つことまでは
+    確かめているが、値そのものは決めていない。Phase 1 で確定する。
+  - lane あたりの受理試行回数 ≤ 20 回、bare repo のディスクサイズ ≤ 1 GiB (どちらも暫定値。
+    [ADR 0015](0015-capability-broker-instead-of-container-credentials.md))
+  - **未 dispatch の lane が 24h を超えて滞留する件数 0**、**`needs-human` の滞留に対する 72h 再通知の
+    到達率 100% (通算 3 回まで)** — lease が検出できない停滞を受け持つ別の網が実際に働いていることの
+    測定 ([ADR 0012](0012-write-authority-by-lease-and-sha-cas.md))
+- **安全性** — 以下の fault injection が全て fail closed になること (率 100%) [drill]
+  - 受理検査の fault suite: secret 入り diff・保護パス・`codex/**` 外・TOCTOU・scanner 設定の改変
+    ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md))
+  - **Fable が起票したタスク issue の本文が scan 関数を通過した率 100%** — Fable は worker の代行経路に
+    乗らない直接の書き手なので、層 2 の中で最も破れやすい
+    ([ADR 0014](0014-add-security-to-ility-priority-order.md))。通過を測って初めて「網の目が書き手ごと
+    に変わらない」が主張できる。
+  - **`contents` と `pull_requests` の両方を持つ token の発行試行が拒否される率 100%** —
+    [ADR 0013](0013-role-separated-tokens-and-credentials.md) の第 2 層は GitHub が強制しない worker 内
+    の不変条件なので、テストで守るしかない。
 
 #### Crucible — 特性 3 つ
 
@@ -97,10 +116,11 @@ credential の 3 つが異なるので、「Codex」と一括りにしない —
 
 #### Watchtower — 特性 2 つ
 
-- **可用性 (Foreman と運命を共有しないこと)** — schedule 発火の欠測 (間隔 > 2 × 周期) 0 回/週。かつ
-  **Foreman が停止している間に発火すること** [常時 + drill]
-- **検知遅延と権威の不在** — heartbeat 停止から `needs-human` 通知まで ≤ 45min (30min の判定 + schedule
-  遅延の許容 15min)、token の permission は read + 通知のみ [drill + workflow permissions の lint]
+- **可用性 (Foreman と運命を共有しないこと)** — **schedule 周期は 15min**。発火の欠測 (間隔 > 2 × 周期
+  = 30min) 0 回/週。かつ **Foreman が停止している間に発火すること** [常時 + drill]
+- **検知遅延と権威の不在** — heartbeat 停止から `needs-human` 通知まで ≤ 45min (30min の失効判定 +
+  schedule 周期 1 回分の遅延許容 15min)、token の permission は read + 通知のみ
+  [drill + workflow permissions の lint]
 
 #### Herald — 特性 1 つ
 
@@ -126,7 +146,10 @@ credential の 3 つが異なるので、「Codex」と一括りにしない —
 
 運命分離 (⊥) の主張はそのまま drill の対象になる — Watchtower ⊥ Foreman (Foreman が死んでいるときに
 こそ動く。だから Actions に置く) / Ledger ⊥ VM (VM が全損しても状態は無傷) / Herald ⊥ 全て (落ちても
-劣化はレイテンシだけ) / Tribunal ⊥ Foreman (**Foreman が侵害されても検査結果は偽造されない**) /
+劣化はレイテンシだけ) / Tribunal ⊥ Foreman (**Actions 上で走る検査の実行とその生成物は、Foreman が
+侵害されても偽造されない** — ただし CI artifact から権威面への**転記は Foreman が行う**ので、転記後の
+`ac/<PR>.json` は Foreman 侵害で偽造されうる。運命分離が守るのは判定の生産までで、登記から先は
+[ADR 0015](0015-capability-broker-instead-of-container-credentials.md) の worker 侵害の残余に含まれる) /
 Crucible ⊥ Foreman (Crucible の死は正常なイベントで、回復は lane 側の仕事)。逆に **Customs は Foreman
 の内側に置いた** — 片方だけ生きていても意味がない同士は、運命を共有してよい。
 
@@ -188,6 +211,13 @@ Crucible ⊥ Foreman (Crucible の死は正常なイベントで、回復は lan
   測定) を合わせたものが現在の -ilities である。**
 - 優先順そのものは変えていない。競合したときに上位を採る規則は 0009 のまま有効で、本 ADR は「どの単位に
   どの特性を、どの閾値で置くか」だけを決める。
+- **Fable は quantum に含めない。意図的な除外である。** Fable は claude.ai 上の cloud session であり、
+  こちらがデプロイも構成も測定もしない **Anthropic 管理のマネージド実行**で、「独立にデプロイ可能な
+  単位」という quantum の定義に当てはまらない。閾値を置いても、破れたときに直せる手がこちら側に無い。
+  **代わりに、Fable が触れる面をこちら側の quantum の閾値で覆う** — Fable がタスク issue に書く本文が
+  scan 関数を通過した率を Foreman の安全性に入れたのはこのためである
+  ([ADR 0014](0014-add-security-to-ility-priority-order.md) が層 2 の最も破れやすい箇所と認めた経路)。
+  **「全 quantum 閾値内 = 成功」は、Fable 自体の振る舞いを保証しない**ことを明記しておく。
 - 仮名は本 ADR を定義の所在とする。[CONTEXT.md](../../CONTEXT.md) の用語集はパイプラインの業務語彙
   (タスク・実装 issue・差し戻し等) を扱っており、実行基盤の構成要素名は本 ADR 側に置く。
 - 個々の閾値の根拠は各 ADR にある — 回復時間は
@@ -198,7 +228,11 @@ Crucible ⊥ Foreman (Crucible の死は正常なイベントで、回復は lan
   = Foreman が侵害されても検査結果が偽造されない)。[ADR 0005](0005-dual-track-security-review.md) は
   レビュー系統を 2 本に冗長化する決定であって、レビュー層と実行体を分ける決定ではない — 別の論点なので
   根拠として引かない。
-- Tribunal は CodeRabbit という**自分でデプロイしない第三者 SaaS を含む**。上の閾値が測っているのは
-  自前の部分 (ac-verify の決定性、mutation smoke の検出力、保護パスの拒否) だけで、SaaS 側の判定品質は
-  測定対象にしていない。[ADR 0005](0005-dual-track-security-review.md) が「LLM 2 系統は独立事象では
-  ない」と書いた残余は、本 ADR の測定では縮まない。
+- Tribunal は**自分でデプロイしない第三者 SaaS を 2 系統含む** —
+  [ADR 0005](0005-dual-track-security-review.md) が定めた CodeRabbit (line-level のコード品質・バグ・
+  セキュリティ) と Claude Code Actions (仕様適合・アーキテクチャ・適合度関数・セキュリティ) である。
+  上の閾値が測っているのは**自前で書いた部分だけ** — ac-verify の決定性、mutation smoke の検出力、
+  保護パスの拒否がそれに当たる。**2 系統の判定品質そのものは測定対象にしていない**。0005 が「セキュリ
+  ティは両系統が担い、重複を許す」ことで得た冗長は、どちらも LLM である以上、相関する見落としが残る
+  — その残余は本 ADR の測定では縮まない。測っているのは「レビューが動いたか」であって「レビューが
+  正しかったか」ではない。

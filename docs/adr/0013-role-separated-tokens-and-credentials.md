@@ -1,6 +1,8 @@
 # トークンと credential を役割で分離する
 
-Status: accepted (2026-08-29)
+Status: accepted (2026-08-29), revised (2026-08-30)
+
+**本 ADR は #117 の未 merge バッチ内の ADR であり、同バッチが merge される前に上記の日付で改訂された。** 初版を参照した第三者はまだ存在しないため、accepted 済み ADR の不変性 ([ADR 0014](0014-add-security-to-ility-priority-order.md) の Considered Options) を破らずに本文を直接改訂している。merge 後の変更は amend ADR か Erratum で積む。
 
 Driver: [安全性 (Secure by Design)](0014-add-security-to-ility-priority-order.md) — 権限は既定で最小、
 境界の強制は規約ではなく機構で行う。同時に

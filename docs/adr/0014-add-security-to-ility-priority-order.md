@@ -1,7 +1,10 @@
 # -ilities に安全性 (Secure by Design) を加え、可監査性と同格の第 1 位とする
 
-Status: accepted (2026-08-29) — [ADR 0009](0009-ility-priority-order.md) を amend する。0009 は
-supersede せず、Status は accepted のまま据え置く。現在の -ilities は 0009 と本 ADR を合わせたものである。
+Status: accepted (2026-08-29), revised (2026-08-30) — [ADR 0009](0009-ility-priority-order.md) を
+amend する。0009 は supersede せず、Status は accepted のまま据え置く。現在の -ilities は 0009 と本 ADR
+と [ADR 0016](0016-quantum-scoped-fitness-functions.md) を合わせたものである。
+
+**本 ADR は #117 の未 merge バッチ内の ADR であり、同バッチが merge される前に上記の日付で改訂された。** 初版を参照した第三者はまだ存在しないため、accepted 済み ADR の不変性 ([ADR 0014](0014-add-security-to-ility-priority-order.md) の Considered Options) を破らずに本文を直接改訂している。merge 後の変更は amend ADR か Erratum で積む。
 
 Driver: 本 ADR は [ADR 0009](0009-ility-priority-order.md) と同じく、下流の決定に対して Driver を供給
 する側である。用語は [CONTEXT.md](../../CONTEXT.md) に従う。
@@ -151,8 +154,8 @@ private repo では無償・有償のいずれでも利用できない**。無�
 - 0009 を不変に保ったまま順序を進化させた記録が残る。以後の -ility 追加も同じ形式で積める。
 - **secret 検出が自前の層になったことで、検出点が自分の手の内に入った**。プランや org の所属に依存せず、
   検査の対象範囲 (git push だけでなく API payload 全体) と失敗時の挙動を自分で決められる。
-- **検査点が 1 つの関数に集まる**。worker が代行する GitHub 書き込みは Fable の起票分も含めて同じ関数を
-  通るため、「どの経路が検査されているか」を経路ごとに数えなくてよい。
+- **検査点が 1 つの関数に集まる**。**worker の代行経路と Fable の起票経路が同じ scan 関数を共有する**
+  ため、「どの経路が検査されているか」を経路ごとに数えなくてよい。書き手は 2 つだが、検査は 1 つである。
 - 信頼境界の一覧に CI runner が入ったことで、**「コンテナは締めたが CI は素通り」という非対称が設計文書
   の上で見えるようになった**。
 
