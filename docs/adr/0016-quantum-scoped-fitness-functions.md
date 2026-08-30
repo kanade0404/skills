@@ -77,8 +77,12 @@ heartbeat 間隔 5min / heartbeat 失効判定 30min / thread 時間上限 45min
 - **回復可能性** — 障害モードごとに fitness function 3 本。
   - プロセス死: heartbeat (書き込み周期 5min) の連続欠測 ≤ 1 回 (10min 窓)、再起動から初回 tick 完了
     ≤ 5min [常時 / `heartbeat.json` の commit 履歴]
-  - lane (**worker が 1 台以上生存している区間に限定して測る**): lease 失効から takeover までの遅延
-    ≤ tick + T_reap、`T_recover ≤ 23min`、超過 0 件
+  - lane (**worker が 1 台以上生存している区間に限定して測る**):
+    `t_expire → t_detect ≤ tick`、**`T_reap = t_detect → t_resume ≤ 2min`**、`T_recover ≤ 23min`、
+    超過 0 件。**計測点は [ADR 0012](0012-write-authority-by-lease-and-sha-cas.md) が固定した 4 点
+    (`t_expire` / `t_detect` / `t_takeover` / `t_resume`) を使う** — 終点は `t_takeover` (CAS 成立) では
+    なく `t_resume` (復元完了 = lane 再稼働) である。CAS が通った時点を回復と数えると、復元の所要時間が
+    測定から抜け落ちる
     [常時 / `state.json` の lease 時刻と takeover event の差分。数値の根拠は
     [ADR 0012](0012-write-authority-by-lease-and-sha-cas.md)]。
     **全 worker 停止中の区間はこの測定から除外する** — 掃引の担い手が居ない間は上記の不等式が成立しない
@@ -107,13 +111,18 @@ heartbeat 間隔 5min / heartbeat 失効判定 30min / thread 時間上限 45min
     [常時 / **Foreman が tick ごとに実測サイズを lane の runtime 記録に書き、それを集計する**。他の閾値と
     違い、この値は既存の権威レコードから導けない — 実体は VM のディスク上にあり、書かなければ GitHub から
     は見えない。「例外領域を作らない」([ADR 0009](0009-ility-priority-order.md)) の適用として、**測れる
-    ようにするための書き込みを 1 つ足す**]
+    ようにするための書き込みを 1 つ足す**]。**標本の範囲は lane の bare repo ディレクトリ全体の実使用量
+    で、quarantine と受信中の一時ファイルを含む** — 上限強制・p95 集計・下記の受信中 quota が**すべて同じ
+    量**を見る ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md))。違う量を測ると、
+    閾値監視が上限の妥当性を何も語らなくなる
   - **この 2 つは既定値群に未収録のため [ADR 0015](0015-capability-broker-instead-of-container-credentials.md)
     が暫定の初期値を置いた**もので (仮置きではなく、運用データで再導出する前提の初期値)、確定後は同じ
     既定値群 (Charter の rules) に収録し ADR 側から数値を落とす。
     **上の 2 つの測定は閾値の合否を見るだけでなく、値の見直し状態の検出器でもある** — 定常運転の **p95 が
-    上限の 50% を超えたら値を再導出する**、および**上限超過による `needs-human` が正当な作業で起きたら
-    即再考する** (敵対的入力による超過は再考理由にしない) というトリガを 0015 が定義しており、
+    上限の 50% を超えたら値を再導出する** (集計は直近 30 日に決着した lane、最小標本数 20 lane、未満なら
+    判定保留)、および**上限超過による `needs-human` が正当な作業で起きたら即再考する** (落ちた検査の
+    種別が敵対寄りなら再考理由にしない。量的な上限による超過だけが人間の判断を要し、その判断は
+    needs-human の決着記録に残る) というトリガを 0015 が定義しており、
     **その判定に必要なデータはこの 2 つの測定源がそのまま供給する**。閾値を測ることと、閾値が正しいかを
     測ることを、同じ 1 本で賄う。
   - **reap の 4 つの終了条件 — deadline (2min) 超過・retry budget 枯渇・個別呼び出しの timeout・reap 中の
@@ -123,7 +132,7 @@ heartbeat 間隔 5min / heartbeat 失効判定 30min / thread 時間上限 45min
     **不等式を主張する以上、終了条件は測定対象である。**
   - **受信中 quota の fail closed 率 100%** — 受信 pack の入力サイズ上限、および受け口プロセスに対する
     filesystem ないし cgroup の quota を超えた push が、**pre-receive の判定を待たずに**受信段階で落ちる
-    こと [drill]。**上の「受理試行 ≤ 20 回 / bare repo ≤ 1 GiB」とは別の防壁である** — あちらは
+    こと [drill]。**上の「bare repo ≤ 1 GiB」と同じ量を、違う時点で見ている防壁である** — あちらは
     「正常系の上限」、こちらは「敵対的入力からの防壁」であり、`git-receive-pack` が pre-receive の実行前に
     quarantine へ書く以上、後者を hook の内側では強制できない
     ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md))。

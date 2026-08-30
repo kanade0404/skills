@@ -78,8 +78,12 @@ Contents API の **sha-CAS** で行う。
   (自分の子 thread / コンテナを即 abort して停止)。**規範不等式は「TTL > 失効検知周期 (tick) + abort
   所要時間」**。TTL は 20min。
 - **reap のトリガは scheduler の tick 掃引** — 失効 lease の回収役は「次にその lane の lease を取得
-  しようとする worker」ではなく、**毎 tick、全 active lane (≤ 30) の `state.json` を ETag で読み、
-  「サーバ時刻 now − `renewed_at` > TTL」の lane を検知した worker** である。検知した worker がその場で
+  しようとする worker」ではなく、**毎 tick、全 active lane (≤ 30) を ETag で読み、上の期限判定
+  (「サーバ時刻 now − 直近 lease 書き込みの commit 時刻 > TTL」) で失効を検知した worker** である。
+  **掃引も判定式は 1 つ**で、`state.json` 本文の派生時刻は掃引でも使わない — 派生値は書き込み後に古く
+  なりうるので、それで判定すると**生きている lease を失効と誤判定して早すぎる takeover を起こし、
+  並行 worker を生む**。そのため掃引は本文だけでなく**その lane の直近 lease 書き込みの commit 時刻**も
+  読む (読みの回数は増えるが、ETag が効くので予算の議論は変わらない)。検知した worker がその場で
   takeover (CAS 更新 + epoch+1) して reap する。**専任の reaper は居ない — reap は独立したプロセスの名
   ではなく、失効 lease を見つけた worker がその場で行う仕事の名前**である。復元は **intent と transition
   の差分 + code repo 実体の照会** (PR / branch / thread の存在) で行い、**未適用の intent のみを対象と
@@ -89,8 +93,18 @@ Contents API の **sha-CAS** で行う。
   掃引ではなく、掃引は heartbeat / renew と同格に扱う。掃引の読みは ETag + `If-None-Match` で、304 は
   core のレート制限を消費しない ([ADR 0011](0011-authority-state-in-dedicated-state-repo.md) の実測)。
   縮退で掃引まで止めると、最も回復が要る局面で回復の担い手が消える。
-- **回復上限の不等式** — `T_recover ≤ TTL (20min) + tick (60s) + T_reap (≤ 2min) ≒ 23min`。TTL が有界に
-  するのは**回収可能になるまで**であり、**lane が再稼働するまで**はこの不等式で有界にする。
+- **回復上限の不等式と、その計測点** — `T_recover ≤ TTL (20min) + tick (60s) + T_reap (≤ 2min) ≒ 23min`。
+  TTL が有界にするのは**回収可能になるまで**であり、**lane が再稼働するまで**はこの不等式で有界にする。
+  **項がどこからどこまでを指すかを固定する** — 曖昧なままだと、同じ実装が閾値内にも超過にも見える。
+  - `t_expire` = **lease が失効した時刻** = 直近 lease 書き込みの commit 時刻 + TTL
+  - `t_detect` = **掃引が失効を検知した時刻** (`t_expire ≤ t_detect ≤ t_expire + tick`)
+  - `t_takeover` = **CAS takeover (epoch+1) が成立した時刻**
+  - `t_resume` = **復元が完了し lane が再稼働した時刻**
+  - **`T_reap = t_detect → t_resume`** — takeover の CAS も復元もこの中に入る。**`t_takeover` を終点に
+    しない**: CAS が通っただけでは lane は進んでおらず、その時点を「回復した」と数えると
+    復元の所要時間が不等式から抜け落ちる。2min の deadline はこの区間に掛かる。
+  - **`T_recover` の起点は worker の死**であり、`t_resume` が終点である。`TTL` の項が「死 → `t_expire`」、
+    `tick` の項が「`t_expire` → `t_detect`」、`T_reap` の項が「`t_detect` → `t_resume`」に対応する。
 - **1 lease 区間の未確定 intent は ≤ 3** — reap の照会数は未適用 intent の数に比例するため、この上限が
   ないと T_reap が閉じず、上の不等式が成立しない。上限に達した lane はそれ以上の副作用を起こさず
   needs-human に倒す。
