@@ -215,6 +215,13 @@ lane の通常活動 (intent や policy_decision の追記) でも commit が載
     epoch が自分の現 epoch と一致することを確認する** — lane の lease を失っていれば lane branch 側の
     書き込みが先に敗北して self-fence しているはずだが、共有 branch で待っている間に takeover された
     場合は、この epoch 検査と `reserve_void` の掃引が後始末を引き受ける。
+    **この epoch 検査の読みは `T_reap` の内数である。** reap は復元の過程で lineage 側の reap カウント
+    (通算 3 回) を更新するため、**共有 branch への書き込みは reap の経路にも現れる** — したがって
+    「reap は lane branch しか触らないから免除」とは言えない。**免除ではなく、既存の予算に含める**:
+    リトライも epoch 検査の読みも、reap 全体の 2min deadline と各呼び出しの retry budget・timeout の
+    内側で行い、**枯渇したら fail closed で needs-human に倒す** (上記の 4 つの終了条件)。**共有 branch
+    の競合が長引いても `T_recover ≤ 23min` は deadline 側で閉じる**のであって、競合が短いことを当てには
+    しない。
   - **worker 別 branch (`heartbeat.json`) は競合しない** — branch を worker ごとに分けてあるため
     ([ADR 0011](0011-authority-state-in-dedicated-state-repo.md))、ここでの CAS 敗北は想定外であり
     needs-human。**fail closed 時に lease は release しない** — 保持したまま停止し、
