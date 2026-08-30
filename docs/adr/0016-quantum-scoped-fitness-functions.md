@@ -99,10 +99,23 @@ heartbeat 間隔 5min / heartbeat 失効判定 30min / thread 時間上限 45min
     [ADR 0010](0010-resident-worker-with-codex-python-sdk.md) は「同時 thread 数と thread 時間に数値の
     上限を**置けること**」を要求し、Python SDK がその能力を持つことを確かめた。**値そのものは既定値群が
     与える** (下記)。
-  - lane あたりの受理試行回数 ≤ 20 回、bare repo のディスクサイズ ≤ 1 GiB
-    ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md))。**この 2 つは既定値群に
-    未収録のため本 ADR で暫定を置いた**。Phase 1 で確定し、**確定時は同じ既定値群 (Charter の rules) に
-    収録する** — ADR 側に数値を残したままにしない。
+  - **lane あたりの受理試行回数 ≤ 20 回**
+    [常時 / lane `state.json` の `kind=policy_decision` レコードを lane ごとに数える。1 レコード =
+    1 受理試行で、allow / deny の別も記録されているため、**上限に迫っているのが正常な反復なのか拒否の
+    連続なのかを区別して読める** ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md))]
+  - **bare repo のディスクサイズ ≤ 1 GiB**
+    [常時 / **Foreman が tick ごとに実測サイズを lane の runtime 記録に書き、それを集計する**。他の閾値と
+    違い、この値は既存の権威レコードから導けない — 実体は VM のディスク上にあり、書かなければ GitHub から
+    は見えない。「例外領域を作らない」([ADR 0009](0009-ility-priority-order.md)) の適用として、**測れる
+    ようにするための書き込みを 1 つ足す**]
+  - **この 2 つは既定値群に未収録のため [ADR 0015](0015-capability-broker-instead-of-container-credentials.md)
+    が暫定の初期値を置いた**もので (仮置きではなく、運用データで再導出する前提の初期値)、確定後は同じ
+    既定値群 (Charter の rules) に収録し ADR 側から数値を落とす。
+    **上の 2 つの測定は閾値の合否を見るだけでなく、値の見直し状態の検出器でもある** — 定常運転の **p95 が
+    上限の 50% を超えたら値を再導出する**、および**上限超過による `needs-human` が正当な作業で起きたら
+    即再考する** (敵対的入力による超過は再考理由にしない) というトリガを 0015 が定義しており、
+    **その判定に必要なデータはこの 2 つの測定源がそのまま供給する**。閾値を測ることと、閾値が正しいかを
+    測ることを、同じ 1 本で賄う。
   - **reap の 4 つの終了条件 — deadline (2min) 超過・retry budget 枯渇・個別呼び出しの timeout・reap 中の
     CAS 敗北 — それぞれの `needs-human` 到達率 100%** (復元を中断し、lease は保持したまま倒れること) [drill]。
     `T_reap ≤ 2min` は照会数の上限だけでは成立せず、この 4 つの fail closed が効いて初めて
