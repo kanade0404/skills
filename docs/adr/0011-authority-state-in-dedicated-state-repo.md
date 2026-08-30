@@ -46,7 +46,7 @@ code repo には権威を置かない。
 
 | レコード | 置き場 (権威) | 書き手 | code repo / issue 面 |
 |---|---|---|---|
-| lease (取得 / renew / release) | `lane/<issue>` branch / `state.json` | worker のみ | — |
+| lease (取得 / renew / release) + epoch / incarnation | `lane/<issue>` branch / **`lease.json`** | worker のみ | — |
 | 遷移事実 (transition / intent) | 同 `state.json` の events 配列 | worker のみ | ラベル・コメントは派生表示 |
 | runtime (`thread_id` / `container_id`) | 同 `state.json` の runtime フィールド | worker のみ | — |
 | lineage cap + checkpoint | `lineage/<lineage_id>` branch / `aggregate.json` | worker のみ | — |
@@ -55,6 +55,10 @@ code repo には権威を置かない。
 | ac-report | `lane/<issue>` branch / `ac/<PR番号>.json` | worker のみ | PR コメントは派生表示 |
 | タスク / 実装 issue 本文・blocked-by | code repo (GitHub native) | Fable (App) / worker | 契約ブロックのみ指示 |
 
+- **lease を `lease.json` として `state.json` と別ファイルにしているのは、期限判定の対象を一意にするため**である
+  ([ADR 0012](0012-write-authority-by-lease-and-sha-cas.md))。同居させると lane の通常活動の commit でも
+  lease の見かけの鮮度が更新されてしまう。競合検出は branch tip 単位なので、ファイルを分けても同じ lane
+  への書き込み同士は排他のままである。
 - **runtime を権威面に置くのは、実行体の内部状態だけが GitHub から見えない例外領域になるのを防ぐため**
   である (-ilities 1 の「例外領域ゼロ」)。
 - **heartbeat が worker 別 branch にあるのは意図的**で、branch tip 単位の競合検出により、worker が

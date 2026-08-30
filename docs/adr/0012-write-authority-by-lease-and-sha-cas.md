@@ -48,29 +48,41 @@ worker 構成 (同時 1 installation・1 VM) では「別の worker が拾う」
 書き込み権威を **lane ごとの TTL lease** として定義する。権威は「プロセス」ではなく「lease を現在
 保持していること」であり、lease を持つ実行体だけがその lane の権威レコードを書ける。
 
-lease は lane branch 上の単一オブジェクト `state.json` に状態と同居し、取得・renew・release の全てを
-Contents API の **sha-CAS** で行う。
+lease は **lane branch 上の専用オブジェクト `lease.json`** に置き、取得・renew・release の全てを
+Contents API の **sha-CAS** で行う。lane の他の権威レコード (events の `intent` / `transition` /
+`policy_decision`、runtime、ac-report) は同じ branch の `state.json` 側にある。
 
-- **取得 / release** — いずれも `state.json` の CAS 更新。**release は DELETE ではなく `status=released`
+**lease を状態と別ファイルにするのは、期限判定の対象を一意にするため**である。初版は `state.json` に
+同居させていたが、期限判定は「lease 書き込みの commit 時刻」を見る (下記) 一方で、`state.json` には
+lane の通常活動 (intent や policy_decision の追記) でも commit が載る。同居のままだと、**renew して
+いなくても普通に作業しているだけで lease の見かけの鮮度が更新され、失効しなくなる**。ファイルを分けると
+「`lease.json` を変更した直近 commit」が lease 書き込みそのものを指し、判定対象が曖昧でなくなる。
+
+**分けても調停は壊れない** — 競合検出は **branch tip 単位**なので
+([ADR 0011](0011-authority-state-in-dedicated-state-repo.md) の実測、同じ branch なら別ファイルへの
+書き込みでも 409)、`lease.json` と `state.json` は依然として互いに排他である。分割は判定対象を絞る
+だけで、CAS の意味論を変えない。
+
+- **取得 / release** — いずれも `lease.json` の CAS 更新。**release は DELETE ではなく `status=released`
   の追記**とする。レコードを消さないことで、「未取得」「release 済み」「壊れた」の三義を消す。
-- **epoch** — `state.json` 内の永続的な単調カウンタ。**増分トリガは lease の取得と takeover のみ**
+- **epoch** — `lease.json` 内の永続的な単調カウンタ (incarnation も同居する)。**増分トリガは lease の取得と takeover のみ**
   (renew では増えない)。スコープは lane。**用途は順序 (fencing) 専用**で、期限判定には使わない。受理
   検査は「書き込みに刻まれた epoch == その lane の現 epoch」。
 - **期限判定 — 権威時刻は「書き込み自身のコミット時刻」であって、レコード本文に書いた値ではない。**
   初版は `renewed_at` を「worker が自分の書き込みレスポンスの Date ヘッダを転記した値」と定義していたが、
   **これは循環していて実装できない** — その Date は書き込みが完了して初めて存在するので、同じ書き込みの
   body に入れることはできない。正しい契約はこうである:
-  - **lease の鮮度は、その lease 書き込みが作った commit のサーバ時刻で判定する。** Contents API は
+  - **lease の鮮度は、`lease.json` を変更した直近 commit のサーバ時刻で判定する。** Contents API は
     commit の日付にサーバ時刻を強制する (上記の実測) ので、これは worker が申告する値ではなく GitHub が
     刻む値である。判定者は lane branch の当該 commit の時刻を読む。
-  - 失効は「サーバ時刻 now − 直近 lease 書き込みの commit 時刻 > TTL」で判定し、**now は判定者自身の
+  - 失効は「サーバ時刻 now − `lease.json` を変更した直近 commit の時刻 > TTL」で判定し、**now は判定者自身の
     直近 API レスポンスの Date** を使う。比較する 2 つの値がどちらも GitHub 由来になり、**時刻源が 1 つに
     閉じる**。
   - **前提**: 権威レコードへの書き込みが Contents API 経由に限られること。Git Data 経由で作った commit の
     日付は偽装可能で読み手には区別できないため、この経路が開いていると権威時刻が偽装可能になる。state
     repo の書き手を worker のみに閉じる ([ADR 0013](0013-role-separated-tokens-and-credentials.md)) のは、
     権限分離だけでなく**この時刻契約の前提でもある**。
-  - `state.json` 本文に人間向けの時刻を持たせてよいが、それは**直前のレスポンスの Date を写した派生値**
+  - `lease.json` 本文に人間向けの時刻を持たせてよいが、それは**直前のレスポンスの Date を写した派生値**
     であり、**判定には使わない**。権威と派生をここでも取り違えない。
   - **実行体のローカル時計は判定に使わない。**
 - **lane 内の権威書き込みは単線である (不変条件)** — **1 つの lane に対する権威面への書き込みは、
@@ -98,17 +110,17 @@ Contents API の **sha-CAS** で行う。
   TTL は 20min。
 - **reap のトリガは scheduler の tick 掃引** — 失効 lease の回収役は「次にその lane の lease を取得
   しようとする worker」ではなく、**毎 tick、全 active lane (≤ 30) を ETag で読み、上の期限判定
-  (「サーバ時刻 now − 直近 lease 書き込みの commit 時刻 > TTL」) で失効を検知した worker** である。
-  **掃引も判定式は 1 つ**で、`state.json` 本文の派生時刻は掃引でも使わない — 派生値は書き込み後に古く
+  (「サーバ時刻 now − `lease.json` を変更した直近 commit の時刻 > TTL」) で失効を検知した worker** で
+  ある。**掃引も判定式は 1 つ**で、`lease.json` 本文の派生時刻は掃引でも使わない — 派生値は書き込み後に古く
   なりうるので、それで判定すると**生きている lease を失効と誤判定して早すぎる takeover を起こし、
   並行 worker を生む**。そのため掃引は本文だけでなく**その lane の直近 lease 書き込みの commit 時刻**も
-  読む — 具体的には lane branch 上で `state.json` を変更した直近 commit を 1 件取る commits 系の読みに
-  なる。**この読みの予算への影響は未実測である**: [ADR 0011](0011-authority-state-in-dedicated-state-repo.md)
+  読む — 具体的には lane branch 上で `lease.json` を変更した直近 commit を 1 件取る commits 系の読みに
+  なる (path で絞れるので、lane の通常活動の commit は混ざらない)。**この読みの予算への影響は未実測である**: [ADR 0011](0011-authority-state-in-dedicated-state-repo.md)
   が実測した「ETag の 304 は core quota を消費しない」は **Contents API での `state.json` 本文の読みに
   ついての結果**であって、commits 系エンドポイントで同じ挙動になるかは確かめていない。**この仮定を
   load-bearing にしない** — R3 や PoC ② と同じ扱いで、**PoC の検証項目に「掃引が使う commit 時刻の読みで
   ETag/304 が core quota を消費しないこと」を追加する**。**不成立だった場合の縮退は 2 段階掃引**: 第 1 段で
-  全 lane の本文を ETag で読み、`state.json` 内の派生時刻で**失効の疑いがある lane だけを絞り込み**、
+  全 lane の `lease.json` を ETag で読み、その派生時刻で**失効の疑いがある lane だけを絞り込み**、
   第 2 段でその lane についてのみ commit 時刻を読んで判定する。派生時刻は直前のレスポンスの Date を写した
   値なので**必ず commit 時刻以前**であり、`now − 派生時刻 > TTL` は真に失効した lane を取りこぼさない
   (絞り込みは超集合になる)。**判定そのものは第 2 段の commit 時刻だけで行う**ので、上の「派生値で判定
@@ -125,7 +137,7 @@ Contents API の **sha-CAS** で行う。
 - **回復上限の不等式と、その計測点** — `T_recover ≤ TTL (20min) + tick (60s) + T_reap (≤ 2min) ≒ 23min`。
   TTL が有界にするのは**回収可能になるまで**であり、**lane が再稼働するまで**はこの不等式で有界にする。
   **項がどこからどこまでを指すかを固定する** — 曖昧なままだと、同じ実装が閾値内にも超過にも見える。
-  - `t_expire` = **lease が失効した時刻** = 直近 lease 書き込みの commit 時刻 + TTL
+  - `t_expire` = **lease が失効した時刻** = `lease.json` を変更した直近 commit の時刻 + TTL
   - `t_detect` = **掃引が失効を検知した時刻** (`t_expire ≤ t_detect ≤ t_expire + tick`)
   - `t_takeover` = **CAS takeover (epoch+1) が成立した時刻**
   - `t_resume` = **復元が完了し lane が再稼働した時刻**
@@ -267,6 +279,10 @@ Contents API の **sha-CAS** で行う。
   したが、**`worker_id` そのものの一意性は依然として運用規律であって機構ではない** — VM を作り直した
   実行体が同じ id を名乗るのを止めるものは無い。incarnation が守るのは「旧起動を新起動と取り違えない」
   ことまでで、「別のインストールが同じ名を騙らない」ことではない。
+- **lease を別ファイルにしたことで、lease と状態を 1 回の CAS で同時に更新できなくなった**。「lease を
+  取って同時に遷移を記録する」が 2 commit になり、その間でのクラッシュがありうる。単線の不変条件が順序は
+  保証するが原子性は与えないので、**副作用は従来どおり `intent` の write-ahead で守る**必要がある — 分割
+  によって write-ahead の重要性が上がった。lane branch の commit 数も増える (1 回の作業で 2 回の CAS)。
 - **lane 内の書き込みを単線にしたことで、lane ごとの直列化点が実装に必要になった**。renew のような時間
   駆動の書き込みまで同じ経路に載せるので、**タイマが独立に発火する素直な実装ができない**。しかも
   直列化点は新しい滞留源であり、そこが詰まると renew が遅れて lease を失う — 安全のために入れた機構が、
@@ -291,9 +307,12 @@ Contents API の **sha-CAS** で行う。
 - one-way door に近い。運用開始後にプロトコルを変えるなら、稼働中の lane を drain してからの切替になる。
 - 権威の**置き場**は [ADR 0011](0011-authority-state-in-dedicated-state-repo.md) が決めており、本 ADR は
   その上に載るプロトコルだけを決める。
-- **並行での lane 初回作成 (sha なし PUT の 422) は PoC 未実測**であり、Phase 1 の実装前の検証項目。
-  再読込で既存 `state.json` を確認できた場合のみ CAS 敗北として扱い、確認できなければ fail closed と
-  する。
+- **並行での lane 初回作成 (sha なし PUT の create-if-absent 挙動) は PoC 未実測**であり、Phase 1 の
+  実装前の検証項目。**この挙動を本運用の前提にしない (load-bearing にしない)** — 422 が
+  create-if-absent の調停として使えることは非文書化の観測であって、契約ではない。**未実測のうちは安全側
+  に倒す**: 初回作成の競合は**両者とも fail closed** とし、再読込で既存の `lease.json` を確認できた場合
+  のみ CAS 敗北 (= 相手が勝った) として扱ってリトライする。確認できなければ遷移せず needs-human。
+  「どちらかが必ず勝つ」ことを当てにしないので、実測が外れても安全性は落ちない (落ちるのは可用性だけ)。
 - 権威を token の層で守るのは [ADR 0013](0013-role-separated-tokens-and-credentials.md) の責務であり、
   本 ADR のプロトコルはそれを前提にしている。副作用面 (push) を守るのは
   [ADR 0015](0015-capability-broker-instead-of-container-credentials.md) の broker であり、本 ADR は

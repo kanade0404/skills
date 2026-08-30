@@ -83,7 +83,7 @@ heartbeat 間隔 5min / heartbeat 失効判定 30min / thread 時間上限 45min
     (`t_expire` / `t_detect` / `t_takeover` / `t_resume`) を使う** — 終点は `t_takeover` (CAS 成立) では
     なく `t_resume` (復元完了 = lane 再稼働) である。CAS が通った時点を回復と数えると、復元の所要時間が
     測定から抜け落ちる
-    [常時 / `state.json` の lease 時刻と takeover event の差分。数値の根拠は
+    [常時 / `lease.json` を変更した commit の時刻と、`state.json` の takeover event の差分。数値の根拠は
     [ADR 0012](0012-write-authority-by-lease-and-sha-cas.md)]。
     **全 worker 停止中の区間はこの測定から除外する** — 掃引の担い手が居ない間は上記の不等式が成立しない
     ことを 0012 が明示しており、そこは自動回復ではなく heartbeat 失効判定 (30min) と Watchtower の通知
