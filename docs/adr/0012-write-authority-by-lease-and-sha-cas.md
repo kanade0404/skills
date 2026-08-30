@@ -63,6 +63,11 @@ lane の通常活動 (intent や policy_decision の追記) でも commit が載
 書き込みでも 409)、`lease.json` と `state.json` は依然として互いに排他である。分割は判定対象を絞る
 だけで、CAS の意味論を変えない。
 
+ファイル分離の代替として **lease 書き込み commit を commit message の機械可読 marker で識別する案**も
+検討したが却下した — 判定のたびに commit 列を marker で遡る必要があり、直近 lease commit に当たるまでの
+読みの回数が **lane の活動量に依存して非有界**になる。回復時間の不等式 (下記) に読みの回数が乗るため、
+判定の読みは「path で絞った 1 件取得」の形を崩さないことを優先した。
+
 - **取得 / release** — いずれも `lease.json` の CAS 更新。**release は DELETE ではなく `status=released`
   の追記**とする。レコードを消さないことで、「未取得」「release 済み」「壊れた」の三義を消す。
 - **epoch** — `lease.json` 内の永続的な単調カウンタ (incarnation も同居する)。**増分トリガは lease の取得と takeover のみ**
