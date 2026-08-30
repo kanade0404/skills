@@ -87,7 +87,7 @@ heartbeat 間隔 5min / heartbeat 失効判定 30min / thread 時間上限 45min
     [ADR 0012](0012-write-authority-by-lease-and-sha-cas.md)]。
     **全 worker 停止中の区間はこの測定から除外する** — 掃引の担い手が居ない間は上記の不等式が成立しない
     ことを 0012 が明示しており、そこは自動回復ではなく heartbeat 失効判定 (30min) と Watchtower の通知
-    (≤ 45min) が受け持つ**別経路**だからである。除外しないと、**設計として許容した通知遅延を Foreman の
+    (目標 45min — 保証値ではない、下記 Watchtower の項) が受け持つ**別経路**だからである。除外しないと、**設計として許容した通知遅延を Foreman の
     回復失敗として記録してしまう**。全滅時の経路は Watchtower の「検知遅延と権威の不在」で測る。
   - 再構築: 空の VM と state repo だけから全 lane を再開できる = pass [drill /「例外領域ゼロ」の実測形]
 - **有界性** — 障害の起きる面ごとに以下を全て満たすこと [常時 + drill]
