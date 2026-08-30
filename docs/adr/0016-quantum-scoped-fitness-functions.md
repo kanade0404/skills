@@ -98,12 +98,28 @@ heartbeat 間隔 5min / heartbeat 失効判定 30min / thread 時間上限 45min
     ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md))。**この 2 つは既定値群に
     未収録のため本 ADR で暫定を置いた**。Phase 1 で確定し、**確定時は同じ既定値群 (Charter の rules) に
     収録する** — ADR 側に数値を残したままにしない。
+  - **reap の 3 つの終了条件 — deadline (2min) 超過・retry budget 枯渇・reap 中の CAS 敗北 — それぞれの
+    `needs-human` 到達率 100%** (復元を中断し、lease は保持したまま倒れること) [drill]。
+    `T_reap ≤ 2min` は照会数の上限だけでは成立せず、この 3 つの fail closed が効いて初めて
+    `T_recover ≤ 23min` が閉じる ([ADR 0012](0012-write-authority-by-lease-and-sha-cas.md))。
+    **不等式を主張する以上、終了条件は測定対象である。**
+  - **受信中 quota の fail closed 率 100%** — 受信 pack の入力サイズ上限、および受け口プロセスに対する
+    filesystem ないし cgroup の quota を超えた push が、**pre-receive の判定を待たずに**受信段階で落ちる
+    こと [drill]。**上の「受理試行 ≤ 20 回 / bare repo ≤ 1 GiB」とは別の防壁である** — あちらは
+    「正常系の上限」、こちらは「敵対的入力からの防壁」であり、`git-receive-pack` が pre-receive の実行前に
+    quarantine へ書く以上、後者を hook の内側では強制できない
+    ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md))。
   - **未 dispatch の lane が 24h を超えて滞留する件数 0**、**`needs-human` の滞留に対する 72h 再通知の
     到達率 100% (通算 3 回まで)** — lease が検出できない停滞を受け持つ別の網が実際に働いていることの
     測定 ([ADR 0012](0012-write-authority-by-lease-and-sha-cas.md))
 - **安全性** — 以下の fault injection が全て fail closed になること (率 100%) [drill]
   - 受理検査の fault suite: secret 入り diff・保護パス・`codex/**` 外・TOCTOU・scanner 設定の改変
     ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md))
+  - **古い `incarnation` / `epoch` からの push・書き込みが受理検査で拒否される率 100%** —
+    [ADR 0012](0012-write-authority-by-lease-and-sha-cas.md) の期限内再取得は incarnation で fence する
+    設計であり、**fence の正しさが lease と broker の 2 箇所に分かれている**ため、両者が同じ値を見て
+    いることをここで押さえる。測っているのは「古い実行体の副作用が落ちること」であって、broker を
+    通らない副作用 (発行済み token の直接呼び出し等) は対象外 — それは 0012 が残余として書いている。
   - **Fable が起票したタスク issue の本文が scan 関数を通過した率 100%** — Fable は worker の代行経路に
     乗らない直接の書き手なので、層 2 の中で最も破れやすい
     ([ADR 0014](0014-add-security-to-ility-priority-order.md))。通過を測って初めて「網の目が書き手ごと
