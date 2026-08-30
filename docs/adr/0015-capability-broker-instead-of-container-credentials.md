@@ -83,6 +83,25 @@ secret scan** → 合格 SHA の固定 push。この順序が有界性を買う:
 **副作用面に fence を刻めるのは、push が credential を要する操作として broker を通るようになったからで
 ある** — token を直接持たせる設計では、この検査を差し込む場所自体が無かった。
 
+この検査には**値の出どころ**と**検査の時点**という 2 つの規定が要る。どちらも欠けると fence が形だけに
+なる。
+
+- **権威値は Ledger から読む。押し込まれた値を信じない。** `epoch` と `incarnation` は、**判定する側が
+  権威面 (state repo) を読んで得る**ものであって、push の payload やリクエスト元の自己申告から取らない。
+  自己申告を信じる実装では、古い実行体が現在値を騙るだけで fence を迂回できる。これは本 ADR の判定原理
+  「検証は迂回できない場所に置く」の、値の取得経路への適用である。
+- **検査は upstream への push の直前に、`intent` の CAS と同じ書き込みで束ねる。** 受け入れ時に 1 回
+  検査するだけでは、scan のような重い処理を挟む間に takeover が起きて、**検査に通った古い worker が
+  そのまま upstream へ publish する**窓が開く。そこで、upstream push に先行する
+  `kind=intent` の CAS 記録 ([ADR 0012](0012-write-authority-by-lease-and-sha-cas.md) の write-ahead) に
+  **その時点の epoch を刻み、CAS が通ることをもって「今も権威である」ことの検査とする**。takeover が
+  先に起きていれば、この CAS が敗北するので push には進めない。**認可を「入口で 1 回」ではなく
+  「副作用の直前の 1 回」に置き直す** — 検査後に ref が進む TOCTOU を SHA 固定で塞いだのと同じ流儀である。
+- **残る窓は CAS 成功から push 実行までの一瞬**に縮まる。これは
+  [ADR 0012](0012-write-authority-by-lease-and-sha-cas.md) が「副作用面の fence は部分的にしか効かない」
+  として既に引き受けている残余と同じもので、規範不等式 (TTL > tick + abort 所要時間) が上限を与える。
+  **消えたとは書かない。**
+
 どの段の失敗も **fail closed** で `needs-human` に倒す。scanner の timeout・未知 exit・OOM も「検出」と
 同じ扱いにする。
 
@@ -160,9 +179,9 @@ PR の作成・コメント・issue の起票も同じ形で worker が代行す
   しない以上、原理的に完成しない** — token をどれだけ絞っても「`codex/**` 外への push」と「`codex/**`
   への push」を区別できず、ruleset は branch 単位の補正しかできない。pre-flight の scan を差し込む場所
   も無い (コンテナ内に置けば迂回される)。却下 — ただし PoC ② が不成立の場合の**第 2 fallback** として
-  保持する。この fallback を採ったときに human-only merge の主張を「human approval gate」へ改名するか
-  否かの条件は、[ADR 0013](0013-role-separated-tokens-and-credentials.md) が定める (第 2・第 3 層も
-  実測で不成立だった場合にのみ改名する) — 本 ADR では条件を重ねて定義しない。
+  保持する。なお **B3 を採っても `human-only merge` は言えない** — B3 が覆うのは Crucible の経路だけで、
+  worker 自身の merge 経路は別である。呼称の条件 (R3 の成否で決まる) は
+  [ADR 0013](0013-role-separated-tokens-and-credentials.md) が定める — 本 ADR では条件を重ねて定義しない。
 - **B2: 汎用の GitHub API proxy を立て、Crucible に API を話させる** — Crucible に「GitHub API を話す
   能力」を残すこと自体が不要である。Codex の仕事は code を書くことであって、GitHub を操作することでは
   ない。能力を残せば、その能力に対する認可を全 API について設計することになる。却下。

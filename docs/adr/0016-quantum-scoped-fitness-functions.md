@@ -77,9 +77,14 @@ heartbeat 間隔 5min / heartbeat 失効判定 30min / thread 時間上限 45min
 - **回復可能性** — 障害モードごとに fitness function 3 本。
   - プロセス死: heartbeat (書き込み周期 5min) の連続欠測 ≤ 1 回 (10min 窓)、再起動から初回 tick 完了
     ≤ 5min [常時 / `heartbeat.json` の commit 履歴]
-  - lane: lease 失効から takeover までの遅延 ≤ tick + T_reap、`T_recover ≤ 23min`、超過 0 件
+  - lane (**worker が 1 台以上生存している区間に限定して測る**): lease 失効から takeover までの遅延
+    ≤ tick + T_reap、`T_recover ≤ 23min`、超過 0 件
     [常時 / `state.json` の lease 時刻と takeover event の差分。数値の根拠は
-    [ADR 0012](0012-write-authority-by-lease-and-sha-cas.md)]
+    [ADR 0012](0012-write-authority-by-lease-and-sha-cas.md)]。
+    **全 worker 停止中の区間はこの測定から除外する** — 掃引の担い手が居ない間は上記の不等式が成立しない
+    ことを 0012 が明示しており、そこは自動回復ではなく heartbeat 失効判定 (30min) と Watchtower の通知
+    (≤ 45min) が受け持つ**別経路**だからである。除外しないと、**設計として許容した通知遅延を Foreman の
+    回復失敗として記録してしまう**。全滅時の経路は Watchtower の「検知遅延と権威の不在」で測る。
   - 再構築: 空の VM と state repo だけから全 lane を再開できる = pass [drill /「例外領域ゼロ」の実測形]
 - **有界性** — 障害の起きる面ごとに以下を全て満たすこと [常時 + drill]
   - cap 超過時の `needs-human` 到達率 100%

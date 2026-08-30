@@ -98,9 +98,13 @@ GitHub 側の機構として、branch protection + ruleset により merge を�
   機構的に」は、この実測が済むまでは確定した機構ではない。
 - **現時点で機構と呼べるのは、[ADR 0015](0015-capability-broker-instead-of-container-credentials.md) が
   決めた構造** — Codex 実行コンテナが GitHub credential 自体を持たないので merge API に到達できない —
-  **だけである**。ただしこれは worker 自身の侵害を覆わない。
+  **だけである**。**そしてこれは worker の経路を覆わない**: worker は push のために `contents:write` を
+  持ち、merge API がその permission だけで通るなら worker は merge できる。**worker の経路を機構で塞ぎ
+  うるのは ruleset (R3) だけで、それは未実測である。** したがって現時点の正直な言い方は
+  「**merge は人間が通す承認ゲートである**」であって「機械には merge できない」ではない。
 
-訂正後の正しい姿 — merge を人間に限定する 3 層と、どの層が load-bearing かの書き分け (層の番号もそこで
-定義する) — は [ADR 0013](0013-role-separated-tokens-and-credentials.md) の「merge を人間に限定する
-3 層」に記す。**本 ADR の決定 (承認ゲートを merge と差し戻し再検討の 2 点に置く) 自体は、この訂正の影響
+訂正後の正しい姿 — merge を機械から遠ざける 3 層、どの層が load-bearing か、そして worker の経路が
+覆えていないこと (層の番号もそこで定義する) — は
+[ADR 0013](0013-role-separated-tokens-and-credentials.md) の「merge を機械から遠ざける 3 層と、覆えて
+いない経路」に記す。**本 ADR の決定 (承認ゲートを merge と差し戻し再検討の 2 点に置く) 自体は、この訂正の影響
 を受けない。** 変わったのは「その決定を何が支えているか」の説明だけである。

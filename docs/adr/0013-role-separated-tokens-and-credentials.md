@@ -87,14 +87,20 @@ credential を役割で分離する。
 - **App 化は Phase 1 の完了条件**とする。PAT の暫定運用は Phase 0-1 の開発中に限り、**権威分離の無い
   dev モードであることを明示する**。パイロットの本運用 (Phase 2 の開始条件) に App 化を含める。
 
-### merge を人間に限定する 3 層
+### merge を機械から遠ざける 3 層と、覆えていない経路
 
-human-only merge を単一の機構に賭けない。3 層を重ね、**どれが機構でどれが不変条件かを書き分ける**。
+**この 3 層は「人間だけが merge できる」を機構的に保証しない。** 保証できるのは「Crucible は merge
+できない」までで、**worker 自身が merge API を呼べてしまう経路は 3 層のどれも塞いでいない** — worker は
+push のために `contents:write` を持ち、merge API がその permission だけで通るなら worker は merge を実行
+できる。したがって本節が達成するのは **機械 merge の経路を減らすこと**であって、human-only merge の証明
+ではない。単一の機構に賭けず 3 層を重ね、**どれが機構でどれが不変条件か、そして何を覆えていないか**を
+書き分ける。
 
-- **第 1 層 (構造・load-bearing)**: Crucible は credential 自体を持たないので merge API に到達できない。
-  第 2・第 3 層が実測で不成立でもこの層は残るため、**これが人間 merge の実質的な根拠である**。ただし
-  この層が守るのは Crucible からの経路だけで、**worker 自身の侵害は覆わない**
-  ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md) の残余)。
+- **第 1 層 (構造・load-bearing。ただし覆う範囲は Crucible の経路のみ)**: Crucible は credential 自体を
+  持たないので merge API に到達できない。第 2・第 3 層が実測で不成立でもこの層は残るため、**「Codex が
+  merge しない」の根拠はこれで足りる**。しかし**この層は worker の経路には何も効かない** — worker は
+  credential を持つ側だからである
+  ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md) の worker 侵害の残余)。
 - **第 2 層 (worker 内の不変条件。成立するかどうかが未確定)**: 上記の token 操作別分割。**この層が merge
   を止められるのは「merge API が `contents` と `pull_requests` の両方の permission を要する」場合に限る**。
   **その前提は確認できていない** — 公開文書には merge が `Contents: write` のみで通ると読める記述があり、
@@ -105,18 +111,23 @@ human-only merge を単一の機構に賭けない。3 層を重ね、**どれ�
   加えて、仮に両方必要だったとしても**これは GitHub が強制する機構ではなく、worker の token 発行関数が
   守る不変条件である** — 発行関数にバグがあれば成立しない。[ADR 0004](0004-two-human-approval-gates.md)
   の Erratum を参照。
-- **第 3 層 (未実測・load-bearing にしない)**: code repo の ruleset で master の update bypass を人間
-  アクターのみに限定する。**ruleset の restrict-update が merge API の呼出 actor に効くかは公式の明文が
-  なく、Phase 1 の実測項目 (R3)** である。auto-merge は ruleset が再評価されないという報告があるため
-  使用禁止。実測で不成立なら、この層は無いものとして扱う。
+- **第 3 層 (未実測・load-bearing にしない。ただし worker の経路を覆える唯一の候補)**: code repo の
+  ruleset で master の update bypass を人間アクターのみに限定する。**ruleset の restrict-update が merge
+  API の呼出 actor に効くかは公式の明文がなく、Phase 1 の実測項目 (R3)** である。auto-merge は ruleset が
+  再評価されないという報告があるため使用禁止。**3 層のうち worker の merge を機構で止めうるのはこの層
+  だけである** — R3 が不成立なら、worker が merge しないことは「worker が merge API を呼ばない」という
+  プログラム上の不変条件だけに支えられ、第 2 層と同じ強さしか持たない。実測で不成立なら、この層は無い
+  ものとして扱う。
 
 **worker の Integration bypass は state repo の ruleset に対してのみ張り**、code repo 側ではどの
 credential も bypass actor に登録しない ([ADR 0011](0011-authority-state-in-dedicated-state-repo.md) の
 Considered Options が「code repo の ruleset へ権威用の bypass を張ると人間の merge ゲートが緩む」ことを
 S1 却下理由に挙げている、その裏返し)。review dismissal も人間アクターに限定する。
 
-PoC が不成立で第 1 層を諦め (B1 への fallback)、かつ第 2・第 3 層も実測で成立しなかった場合にのみ、
-human-only merge の主張を「human approval gate」に改名し、機械 merge の可能性を残余として明記する。
+**呼称の条件**: `human-only merge` と呼んでよいのは、**worker の経路を機構で覆えた場合に限る — すなわち
+R3 が成立した場合だけ**である。R3 が不成立なら、第 1 層と第 2 層が健在でも呼称は **`human approval gate`**
+(人間が通す運用上のゲートであって、機械が通れない機構ではない) とし、**worker による merge を残余として
+明記する**。第 1 層の成否はこの条件を左右しない — 覆うのが Crucible の経路だけだからである。
 
 ## Considered Options
 
@@ -155,8 +166,9 @@ human-only merge の主張を「human approval gate」に改名し、機械 merg
   ことがその前提と噛み合う唯一の設計である。コンテナの残骸から token が漏れる経路も消えた。
 - Codex が契約ブロックを偽造する経路が構造で塞がる。信頼境界 (指示 / データ) の線が、機構の線と一致する。
 - 侵害時の撤回が installation suspend という 1 操作になる。撤回対象を探し回らなくてよい。
-- **merge の禁止が単一の機構に賭けられていない**。3 層のうち load-bearing なのは第 1 層だけで、未実測の
-  第 2・第 3 層が倒れても human-only merge は残る。何が実測待ちかが読んで分かる。
+- **機械 merge の抑止が単一の機構に賭けられていない**。3 層のうち load-bearing なのは第 1 層だけで、未実測の
+  第 2・第 3 層が倒れても「Codex は merge しない」は残る。何が実測待ちで、どの経路が覆えていないかが
+  読んで分かる。
 
 ### Negative
 

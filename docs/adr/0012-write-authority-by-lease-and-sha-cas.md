@@ -56,9 +56,23 @@ Contents API の **sha-CAS** で行う。
 - **epoch** — `state.json` 内の永続的な単調カウンタ。**増分トリガは lease の取得と takeover のみ**
   (renew では増えない)。スコープは lane。**用途は順序 (fencing) 専用**で、期限判定には使わない。受理
   検査は「書き込みに刻まれた epoch == その lane の現 epoch」。
-- **期限判定** — `acquired_at` / `renewed_at` は、**worker が自分の書き込みレスポンスの Date ヘッダ
-  (サーバ時刻) を転記した値**である。失効は「サーバ時刻 now − `renewed_at` > TTL」で判定し、now は
-  判定者自身の直近 API レスポンスの Date を使う。**実行体のローカル時計は判定に使わない。**
+- **期限判定 — 権威時刻は「書き込み自身のコミット時刻」であって、レコード本文に書いた値ではない。**
+  初版は `renewed_at` を「worker が自分の書き込みレスポンスの Date ヘッダを転記した値」と定義していたが、
+  **これは循環していて実装できない** — その Date は書き込みが完了して初めて存在するので、同じ書き込みの
+  body に入れることはできない。正しい契約はこうである:
+  - **lease の鮮度は、その lease 書き込みが作った commit のサーバ時刻で判定する。** Contents API は
+    commit の日付にサーバ時刻を強制する (上記の実測) ので、これは worker が申告する値ではなく GitHub が
+    刻む値である。判定者は lane branch の当該 commit の時刻を読む。
+  - 失効は「サーバ時刻 now − 直近 lease 書き込みの commit 時刻 > TTL」で判定し、**now は判定者自身の
+    直近 API レスポンスの Date** を使う。比較する 2 つの値がどちらも GitHub 由来になり、**時刻源が 1 つに
+    閉じる**。
+  - **前提**: 権威レコードへの書き込みが Contents API 経由に限られること。Git Data 経由で作った commit の
+    日付は偽装可能で読み手には区別できないため、この経路が開いていると権威時刻が偽装可能になる。state
+    repo の書き手を worker のみに閉じる ([ADR 0013](0013-role-separated-tokens-and-credentials.md)) のは、
+    権限分離だけでなく**この時刻契約の前提でもある**。
+  - `state.json` 本文に人間向けの時刻を持たせてよいが、それは**直前のレスポンスの Date を写した派生値**
+    であり、**判定には使わない**。権威と派生をここでも取り違えない。
+  - **実行体のローカル時計は判定に使わない。**
 - **renew は時間駆動** — thread の実行中は tick ごとに残 TTL を確認し、**残 TTL < TTL/2 で renew**
   する。renew を含む任意の CAS 敗北は lease の喪失を意味し、そのとき worker は **self-fence** する
   (自分の子 thread / コンテナを即 abort して停止)。**規範不等式は「TTL > 失効検知周期 (tick) + abort
@@ -82,7 +96,10 @@ Contents API の **sha-CAS** で行う。
   needs-human に倒す。
 - **T_reap ≤ 2min は、照会数の上限だけでは成立しない** — API の遅延と再試行が加われば、照会が 3 回でも
   2 分を超えうる。**回数と時間の両方を縛る**: reap 全体に 2min の deadline を持たせ、その内側で各 API
-  呼び出しに retry budget (試行回数と累計待ち時間の両方) を配る。**deadline 超過・budget 枯渇・reap 中の
+  呼び出しに retry budget (試行回数と累計待ち時間の両方) を配る。**さらに、個々の呼び出しにも残り時間を
+  渡して timeout / cancel できるようにする** — 全体 deadline と retry budget だけでは、ハングした 1 本の
+  呼び出しを止められず、budget の判定にすら到達しないまま 2min を超えうる。**deadline 超過・budget 枯渇・
+  個別呼び出しの timeout・reap 中の
   CAS 敗北はいずれも fail closed** — 復元を中断し、lease は保持したまま needs-human に倒す (reap の途中で
   release すると別の worker が同じ状態を踏む)。**takeover の CAS は既に成立している**ので、この経路に
   入っても lane の権威が宙に浮くことはない。この 3 つの終了条件は、不等式を主張する以上テストで押さえる
@@ -170,7 +187,8 @@ Contents API の **sha-CAS** で行う。
   文書化された 409 の契約の上に乗っている。
 - 実行体が死んでも、次の tick で掃引した worker が takeover して復元できる。**専任の回収役が要らない**
   ので、回収役自身の死活監視も要らない。掃引は既に回している tick に相乗りするので、機構は増えない。
-- 時刻の規範がサーバ時刻の転記に統一されているため、実行体の時計ドリフトが判定に混入しない。
+- **判定に使う 2 つの時刻がどちらも GitHub 由来**なので、実行体の時計ドリフトが混入しない。しかも
+  権威時刻が「書き込み自身の commit 時刻」なので、worker が値を申告する余地が無い。
 - 全ての待機に上限がある。fail closed のデッドロックと lane 再稼働は ≒ 23min (TTL + tick + T_reap)、
   reap 試行は lineage 通算 3 回、needs-human の滞留は 72h で再通知 (上限 3 回)。
 - **回復と通知の時刻が 3 段の不等式に並ぶ** — 数分 (同一 worker_id の再取得) < 23min (掃引 takeover)
