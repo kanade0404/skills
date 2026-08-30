@@ -71,12 +71,18 @@ credential を役割で分離する。
   ない」を発行関数の不変条件とする**。これが本 ADR 固有の決定である。実装 issue の起票は worker の仕事
   なので、`issues:write` を worker が持つこと自体は必要である — 与えないのは Crucible に対してであって、
   worker に対してではない。
-- **Fable には `issues:write` だけを与え、直接経路を許すが無検査にはしない** — タスク issue の起票を
-  broker 経由に変えることは可能だが、Fable は claude.ai 上のマネージド実行で worker とは別系統に生きて
-  おり、worker 停止中も仕様策定が進めることに価値がある (運命分離)。代わりに **Fable が書く本文も同じ
-  scan 関数を通すことを要件とし**、通過率を測定する ([ADR 0014](0014-add-security-to-ility-priority-order.md)
-  / [ADR 0016](0016-quantum-scoped-fitness-functions.md))。**適用点が worker の外にあるため、これは層 2 の
-  中で最も弱い箇所である**と明記しておく。
+- **Fable には `issues:write` だけを与える。この経路の scan は予防ではなく検出である。** タスク issue の
+  起票を broker 経由に変えることは可能だが、Fable は claude.ai 上のマネージド実行で worker とは別系統に
+  生きており、worker 停止中も仕様策定が進むことに価値がある (運命分離)。直接経路はこの理由で残す。
+  - **ただし「同じ scan 関数を通すことを要件とする」とは書けない — 強制点が無い。** Fable は我々が
+    デプロイする実行体ではないので、**書き込みの前に我々の scanner を通させる手段が無い**。broker の
+    pre-flight は worker の書き込みラッパの内側にあり、Fable の書き込みはそこを通らない。
+  - **したがってこれは検出的統制である**: worker が Fable 起票の issue を**取り込む時点で scan し**、
+    検出したら `needs-human` に倒して当該 issue を隔離ラベルで作業対象から外す。**予防的統制
+    ([ADR 0014](0014-add-security-to-ility-priority-order.md) の層 2) には数えない。**
+  - **残余を正直に書く**: 検出した時点で、**その本文は既に GitHub 上にある**。検出は公開を取り消さない
+    ので、**混入した secret は漏洩したものとして扱い rotate する**必要がある。この経路だけは「書かせない」
+    ではなく「書かれたら気づく」しか持てない。**worker 経路と同じ強度だと書いてはならない。**
 - **push 先の制限を token に期待しない** — installation token は branch を絞れないため、制限は
   [ADR 0015](0015-capability-broker-instead-of-container-credentials.md) の受理検査が表現する。ruleset
   (`codex/**` 以外への push 禁止、force-push 禁止、`.github/workflows/**` および契約スキーマ・ac-verify

@@ -76,10 +76,13 @@ private repo では無償・有償のいずれでも利用できない**。無�
 - **層 2 が repo 内の scanner 設定を無視するのは、被検査側が検査を無効化する経路を塞ぐため**である。
   `.gitleaksignore` や設定ファイルの追加・改変は保護パス検査 ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md)
   の受理手順 3) の対象でもあり、触れる diff は needs-human に倒れる。
-- **層 2 は Fable が起票するタスク issue の本文にも適用する**。Fable は App として code repo に直接
-  書き込む書き手であり ([ADR 0011](0011-authority-state-in-dedicated-state-repo.md) の表)、worker の
-  代行経路には乗らない。それでも**同じ scan 関数を通すことを要件とする** — 検査の網の目が書き手ごとに
-  変わってはならない。適用点が worker の外にある分、これは層 2 の中で最も破れやすい箇所である。
+- **Fable が起票するタスク issue は層 2 の対象外である**。Fable は App として code repo に直接書き込む
+  書き手であり ([ADR 0011](0011-authority-state-in-dedicated-state-repo.md) の表)、worker の代行経路に
+  乗らないので、**broker の pre-flight という強制点が存在しない**。層 2 は「書き込みの前に検査する」
+  予防的統制なので、ここに数えると層 2 が実際より強く見える。
+  **この経路は検出的統制として別に持つ** — worker が取り込む時点で scan し、検出したら `needs-human` +
+  隔離 ([ADR 0013](0013-role-separated-tokens-and-credentials.md))。**検出時には既に本文が GitHub 上に
+  あるため、混入した secret は漏洩として扱う**。予防と検出を同じ層に混ぜない。
 - **escalation のレコードに secret の値を書かない**。載せてよいのは rule id・パス・行番号・fingerprint
   だけで、値・周辺行・payload 本文の転記は禁止する — escalation 経路自体を漏洩経路にしない。誤検知の
   解除は worker 配備版の baseline 管理で行い、自動 unblock はしない。

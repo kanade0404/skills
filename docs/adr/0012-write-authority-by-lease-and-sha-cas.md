@@ -202,8 +202,22 @@ lane の通常活動 (intent や policy_decision の追記) でも commit が載
   されないまま予算が恒久的に目減りするのを防ぐ。cross-lane の受理検査は「reserve に刻まれた epoch ==
   その lane の現 epoch」で行い、lease を失った worker の予約を棄却する。
 - **fail closed** — 失敗は message 本文で分類する。`does not match` / `is at X but expected Y` は CAS
-  敗北 (再読込してリトライ)、`Repository rule violations found` はポリシー違反 (escalate)。**未知の
-  message は遷移せず needs-human**。**fail closed 時に lease は release しない** — 保持したまま停止し、
+  敗北、`Repository rule violations found` はポリシー違反 (escalate)。**未知の message は遷移せず
+  needs-human**。
+- **CAS 敗北の意味は、どの branch で起きたかで変わる。一律にリトライしてはならない。**
+  - **lane branch (`lease.json` / `state.json`) での敗北 = 権威の喪失**。lane 内の書き込みは単線なので
+    (上記の不変条件)、敗北の原因は「他者がこの lane に書いた」以外にありえない。**リトライせず即座に
+    self-fence する**。ここでリトライすると、**takeover 済みの stale worker が書き続ける**ことになり、
+    fencing が名前だけになる。
+  - **lineage / global branch での敗北 = 正常な競合**。これらの branch は**複数の lane が正当に共有する**
+    ため、敗北は他 lane との衝突であって自分の権威の喪失を意味しない。**再読込してリトライしてよい**
+    (リトライ回数と累計待ち時間は有界とし、枯渇したら needs-human)。**リトライの前後で、reserve に刻む
+    epoch が自分の現 epoch と一致することを確認する** — lane の lease を失っていれば lane branch 側の
+    書き込みが先に敗北して self-fence しているはずだが、共有 branch で待っている間に takeover された
+    場合は、この epoch 検査と `reserve_void` の掃引が後始末を引き受ける。
+  - **worker 別 branch (`heartbeat.json`) は競合しない** — branch を worker ごとに分けてあるため
+    ([ADR 0011](0011-authority-state-in-dedicated-state-repo.md))、ここでの CAS 敗北は想定外であり
+    needs-human。**fail closed 時に lease は release しない** — 保持したまま停止し、
   TTL 失効で自然に回収させる。release すると別の worker が同じ未知 message を踏んで無限ループになる。
   デッドロックは上の不等式 (≒ 23min) で有界である。
 - 全レコードに `schema_version` を持たせ、**不一致検査は write 受理時のみ**行う (read は自 version 以下

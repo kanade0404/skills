@@ -107,9 +107,11 @@ heartbeat 間隔 5min / heartbeat 失効判定 30min / thread 時間上限 45min
     上限を**置けること**」を要求し、Python SDK がその能力を持つことを確かめた。**値そのものは既定値群が
     与える** (下記)。
   - **lane あたりの受理試行回数 ≤ 20 回**
-    [常時 / lane `state.json` の `kind=policy_decision` レコードを lane ごとに数える。1 レコード =
-    1 受理試行で、allow / deny の別も記録されているため、**上限に迫っているのが正常な反復なのか拒否の
-    連続なのかを区別して読める** ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md))]
+    [常時 / lane `state.json` の `kind=policy_decision` レコードのうち**開始レコードだけを lane ごとに
+    数える**。1 試行は開始と終結の 2 レコードを持ち、両方が同じ試行 id を刻むので、**終結レコードは数え
+    ない** — 全レコードを数えると完了した試行が二重に計上され、上限 20 回が実質 10 回になる。終結レコード
+    は allow / deny の別と落ちた検査を持つので、**上限に迫っているのが正常な反復なのか拒否の連続なのかは
+    そちらで読む** ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md))]
   - **bare repo のディスクサイズ ≤ 1 GiB**
     [常時 / **Foreman が tick ごとに実測サイズを lane の runtime 記録に書き、それを集計する**。他の閾値と
     違い、この値は既存の権威レコードから導けない — 実体は VM のディスク上にあり、書かなければ GitHub から
@@ -150,10 +152,13 @@ heartbeat 間隔 5min / heartbeat 失効判定 30min / thread 時間上限 45min
     設計であり、**fence の正しさが lease と broker の 2 箇所に分かれている**ため、両者が同じ値を見て
     いることをここで押さえる。測っているのは「古い実行体の副作用が落ちること」であって、broker を
     通らない副作用 (発行済み token の直接呼び出し等) は対象外 — それは 0012 が残余として書いている。
-  - **Fable が起票したタスク issue の本文が scan 関数を通過した率 100%** — Fable は worker の代行経路に
-    乗らない直接の書き手なので、層 2 の中で最も破れやすい
-    ([ADR 0014](0014-add-security-to-ility-priority-order.md))。通過を測って初めて「網の目が書き手ごと
-    に変わらない」が主張できる。
+  - **Fable 起票の issue に対する取り込み時 scan の実施率 100%、および検出時の `needs-human` + 隔離の
+    到達率 100%** — Fable は worker の代行経路に乗らない直接の書き手で、**書き込み前に強制する点が無い**
+    ため、この経路の統制は予防ではなく検出である
+    ([ADR 0013](0013-role-separated-tokens-and-credentials.md) /
+    [ADR 0014](0014-add-security-to-ility-priority-order.md))。**測っているのは「漏れなく検出できたか」
+    であって「漏洩を防げたか」ではない** — 検出した時点で本文は既に GitHub 上にあり、この fitness
+    function が 100% でも漏洩そのものは起きうる。この差を閾値の意味として明記しておく。
   - **複数の write permission を相乗りさせた token の発行試行が拒否される率 100%** —
     [ADR 0013](0013-role-separated-tokens-and-credentials.md) の token 操作別分割は GitHub が強制しない
     worker 内の不変条件なので、テストで守るしかない。**測っているのは最小権限の不変条件であって、
@@ -286,9 +291,12 @@ Crucible ⊥ Foreman (Crucible の死は正常なイベントで、回復は lan
 - **Fable は quantum に含めない。意図的な除外である。** Fable は claude.ai 上の cloud session であり、
   こちらがデプロイも構成も測定もしない **Anthropic 管理のマネージド実行**で、「独立にデプロイ可能な
   単位」という quantum の定義に当てはまらない。閾値を置いても、破れたときに直せる手がこちら側に無い。
-  **代わりに、Fable が触れる面をこちら側の quantum の閾値で覆う** — Fable がタスク issue に書く本文が
-  scan 関数を通過した率を Foreman の安全性に入れたのはこのためである
-  ([ADR 0014](0014-add-security-to-ility-priority-order.md) が層 2 の最も破れやすい箇所と認めた経路)。
+  **代わりに、Fable が触れる面のうちこちら側で観測できる部分を quantum の閾値で覆う** — Fable 起票の
+  issue に対する**取り込み時 scan の実施率**を Foreman の安全性に入れたのはこのためである。ただし
+  **覆えるのは検出までで、書き込みそのものは覆えない** — Fable の書き込み前に我々の scanner を通させる
+  強制点が無いので、この経路は予防的統制の対象外である
+  ([ADR 0013](0013-role-separated-tokens-and-credentials.md) /
+  [ADR 0014](0014-add-security-to-ility-priority-order.md))。
   **「全 quantum 閾値内 = 成功」は、Fable 自体の振る舞いを保証しない**ことを明記しておく。
 - 仮名は本 ADR を定義の所在とする。[CONTEXT.md](../../CONTEXT.md) の用語集はパイプラインの業務語彙
   (タスク・実装 issue・差し戻し等) を扱っており、実行基盤の構成要素名は本 ADR 側に置く。
