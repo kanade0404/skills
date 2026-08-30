@@ -84,11 +84,11 @@ heartbeat 間隔 5min / heartbeat 失効判定 30min / thread 時間上限 45min
 - **有界性** — 障害の起きる面ごとに以下を全て満たすこと [常時 + drill]
   - cap 超過時の `needs-human` 到達率 100%
   - **core quota の消費が 1,000/hr 以内**で remaining の枯渇 0 回。閾値は**発行したリクエスト数ではなく
-    消費した quota** で数える — tick 掃引は全 active lane を毎分読むため発行数は 1,000/hr を超えるが、
+    消費した quota** で数える — tick 掃引は全 active lane の状態を毎分読むため発行数は 1,000/hr を超えるが、
     ETag の 304 は core quota を消費しない
     ([ADR 0011](0011-authority-state-in-dedicated-state-repo.md) の実測)。観測は実レスポンスの
-    `x-ratelimit-remaining`。**この 1,000 は「worker 1 台 (同時 1 installation) を主語とする設計時の
-    数値目標」として凍結設計が宣言した値**であり、恣意的な仮置きではない。ただし **GitHub 側の実効上限
+    `x-ratelimit-remaining`。**この 1,000 は、凍結設計が「worker 1 台 (同時 1 installation) を主語と
+    する設計時の数値目標」として宣言した値**であり、恣意的な仮置きではない。ただし **GitHub 側の実効上限
     に対する比としての導出は無い**ため、Phase 1 に実測トラフィックから再導出する。
   - **同時 thread 数 ≤ 3、1 thread の実行時間 ≤ 45min**。
     [ADR 0010](0010-resident-worker-with-codex-python-sdk.md) は「同時 thread 数と thread 時間に数値の
@@ -108,9 +108,10 @@ heartbeat 間隔 5min / heartbeat 失効判定 30min / thread 時間上限 45min
     乗らない直接の書き手なので、層 2 の中で最も破れやすい
     ([ADR 0014](0014-add-security-to-ility-priority-order.md))。通過を測って初めて「網の目が書き手ごと
     に変わらない」が主張できる。
-  - **`contents` と `pull_requests` の両方を持つ token の発行試行が拒否される率 100%** —
-    [ADR 0013](0013-role-separated-tokens-and-credentials.md) の第 2 層は GitHub が強制しない worker 内
-    の不変条件なので、テストで守るしかない。
+  - **複数の write permission を相乗りさせた token の発行試行が拒否される率 100%** —
+    [ADR 0013](0013-role-separated-tokens-and-credentials.md) の token 操作別分割は GitHub が強制しない
+    worker 内の不変条件なので、テストで守るしかない。**測っているのは最小権限の不変条件であって、
+    human-only merge ではない** — merge を止められるかは R2 の実測に依存し、この測定では保証されない。
 
 #### Crucible — 特性 3 つ
 

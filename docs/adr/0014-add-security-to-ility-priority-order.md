@@ -68,7 +68,7 @@ private repo では無償・有償のいずれでも利用できない**。無�
 
 | 層 | 機構 | 要点 |
 |---|---|---|
-| 1 | **構造的排除** | Crucible (Codex 実行コンテナ) と CI の実行 context に credential を配布しない不変条件 ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md))。実 credential を要する統合テストはコンテナ外へ出す |
+| 1 | **構造的排除** | Crucible (Codex 実行コンテナ) には GitHub credential を一切配布しない。CI の実行 context には**書き込み credential と secrets を注入しない** ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md))。実 credential を要する統合テストはコンテナ外へ出す |
 | 2 | **broker pre-flight** | **GitHub へ出る payload を漏れなく検査対象にする** — push される差分・PR の title と body・コメント・issue・state repo への CAS 書き込みまで。どこで何をどう走査するかは [ADR 0015](0015-capability-broker-instead-of-container-credentials.md) が決める。本 ADR が課すのは**対象の網羅**と、**scanner の設定・baseline・ignore は worker 配備版のみを使い repo 内の設定は無視する**ことの 2 点 |
 | 3 | **CI required check** | PR diff への scanner を required check として置く。**人間の直接 push にも効く第 2 の網**。config は worker 配備版から供給し、契約の「3 点同時 bump」に編入する (drift 防止) |
 | 4 | **GitHub 純正** | public repo では有効化する。private repo は org 移行時の追加層 — 条件付きの将来オプションであり、既定線には数えない |
@@ -83,8 +83,13 @@ private repo では無償・有償のいずれでも利用できない**。無�
 - **escalation のレコードに secret の値を書かない**。載せてよいのは rule id・パス・行番号・fingerprint
   だけで、値・周辺行・payload 本文の転記は禁止する — escalation 経路自体を漏洩経路にしない。誤検知の
   解除は worker 配備版の baseline 管理で行い、自動 unblock はしない。
+- **層 1 は CI については「credential ゼロ」ではない**。`pull_request` workflow に渡る read-only の
+  `GITHUB_TOKEN` は**それ自体が credential であり、脅威モデルに含める**。read でも、private repo の
+  コード・issue・PR を CI が読める範囲は侵害時の情報取得経路になる。Crucible の「credential ゼロ」と
+  CI の「書き込み credential ゼロ」を同じ言葉で呼ばない。
 - **残余として明示する**: 人間が GitHub へ直接書き込む経路は層 2 の対象外で、層 3 の CI check だけが網
-  である。自前 scanner はエントロピーを持たない独自形式の credential を取りこぼす。どちらも「対処済み」
+  である。自前 scanner はエントロピーを持たない独自形式の credential を取りこぼす。**CI の read-only
+  `GITHUB_TOKEN` が読める範囲は残る** — 完全に無くすには self-hosted runner が要る。いずれも「対処済み」
   とは書かない。
 
 ### CI (GitHub Actions) を信頼境界として数える

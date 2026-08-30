@@ -80,11 +80,31 @@ Contents API の **sha-CAS** で行う。
 - **1 lease 区間の未確定 intent は ≤ 3** — reap の照会数は未適用 intent の数に比例するため、この上限が
   ないと T_reap が閉じず、上の不等式が成立しない。上限に達した lane はそれ以上の副作用を起こさず
   needs-human に倒す。
-- **同一 `worker_id` による期限内の再取得を認める** — 自分名義の lease は TTL 満了前でも再取得してよい。
-  ただし順序を固定する: **runtime 記録から自分名義の残存 thread / コンテナを abort → epoch+1 → 再取得**。
-  この設計は同時 1 installation・1 VM が既定で「別の worker が拾う」はほぼ起きないため、これを認めない
-  と単一 worker の再起動が毎回 TTL 満了を待つことになる。認めた結果、プロセス死からの実効回復は 23min
-  から数分になる。
+- **T_reap ≤ 2min は、照会数の上限だけでは成立しない** — API の遅延と再試行が加われば、照会が 3 回でも
+  2 分を超えうる。**回数と時間の両方を縛る**: reap 全体に 2min の deadline を持たせ、その内側で各 API
+  呼び出しに retry budget (試行回数と累計待ち時間の両方) を配る。**deadline 超過・budget 枯渇・reap 中の
+  CAS 敗北はいずれも fail closed** — 復元を中断し、lease は保持したまま needs-human に倒す (reap の途中で
+  release すると別の worker が同じ状態を踏む)。**takeover の CAS は既に成立している**ので、この経路に
+  入っても lane の権威が宙に浮くことはない。この 3 つの終了条件は、不等式を主張する以上テストで押さえる
+  対象である。
+- **同一 `worker_id` による期限内の再取得を認める。ただし incarnation で fence する。** 自分名義の lease
+  は TTL 満了前でも再取得してよい。順序を固定する: **runtime 記録から自分名義の残存 thread / コンテナを
+  abort → epoch+1 → 再取得**。この設計は同時 1 installation・1 VM が既定で「別の worker が拾う」はほぼ
+  起きないため、これを認めないと単一 worker の再起動が毎回 TTL 満了を待つことになる。認めた結果、プロセス
+  死からの実効回復は 23min から数分になる。
+- **`worker_id` だけでは fence にならない — lease に incarnation (起動ごとの nonce) を刻む。** TTL 満了を
+  待つことには「旧保持者が renew の CAS 敗北で自分の喪失に気づき self-fence する時間」という意味がある。
+  期限内の再取得はその時間を飛ばすので、**旧 incarnation がまだ生きている場合 (ハング・partition・二重
+  起動) に、新旧が同じ `worker_id` を名乗って両方動く**。`worker_id` は「どのインストールか」しか表さず、
+  「どの起動か」を区別しない。したがって:
+  - lease には `worker_id` と**起動ごとに生成する `incarnation`** の両方を記録する。期限内の再取得は
+    **`worker_id` が同じで `incarnation` が異なる** (= 本当に新しい起動である) 場合にのみ許す。
+  - **broker の受理検査が現在の `epoch` と `incarnation` を要求する** —
+    [ADR 0015](0015-capability-broker-instead-of-container-credentials.md) で push が worker 経由の
+    capability になったため、**副作用面にも fence を刻める点がここで効く**。古い incarnation からの push
+    は受理側で落ちる。state 面しか守れなかった epoch の限界を、broker が部分的に埋める。
+  - **旧 incarnation の hard-stop を確認できない場合は、期限内の再取得を行わず TTL 満了を待つ。** 速い
+    回復より、二重に動かないことを優先する。
 - **worker が 1 台も居ないときは自動回復しない** — 掃引の担い手が消えるので、上の不等式が成立するのは
   worker が 1 台以上生存している間だけである。全滅は `heartbeat.json` の鮮度でのみ検出され、**鮮度
   30min 超過を失効と判定**して監視 workflow (Watchtower、
@@ -160,9 +180,12 @@ Contents API の **sha-CAS** で行う。
 
 ### Negative
 
-- **副作用面は fence されない**。state 面は CAS で守れるが、GitHub への git push や PR の更新には epoch
-  を刻めない。takeover の後も、旧 worker の子が abort されるまでの間 push しうる。**残る防壁は
-  `codex/**` への隔離と人間の merge ゲートの 2 つだけで、この残余は設計で消えない**。
+- **副作用面の fence は部分的にしか効かない**。state 面は CAS で守れる。upstream への push は broker が
+  epoch と incarnation を検査するので古い実行体からのものは落ちる
+  ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md))。**しかし broker を通らない
+  副作用 — 既に発行済みの token を握った旧プロセスの直接 API 呼び出し、実行中のコンテナが外部へ出す
+  通信 — には epoch を刻めない**。takeover の後も、旧 worker の子が abort されるまでの間これらは動きうる。
+  残る防壁は `codex/**` への隔離と人間の merge ゲートで、**この残余は設計で消えない**。
 - **token の失効は防壁から外れた**。[ADR 0015](0015-capability-broker-instead-of-container-credentials.md)
   で Crucible (Codex 実行コンテナ) は credential 自体を持たなくなり、upstream への push 主体は worker
   本体になった。worker の token は自分の副作用を止める道具ではないので、**token の TTL 60min を
@@ -177,8 +200,13 @@ Contents API の **sha-CAS** で行う。
   する。304 は quota を消費しないが、リクエスト自体は消えない。lane 上限 30 はこの固定コストの上限でも
   ある。
 - **同一 `worker_id` の期限内再取得を認めたことで、「権威は台数と独立」の純度が下がった**。再取得の可否
-  が `worker_id` の同一性という新しい前提に載る。VM を作り直した実行体が同じ id を名乗ると、fencing が
-  意図せず緩む。id の一意性は運用規律であり、機構ではない。
+  が `worker_id` の同一性という前提に載る。incarnation を足して「同じ起動かどうか」は区別できるように
+  したが、**`worker_id` そのものの一意性は依然として運用規律であって機構ではない** — VM を作り直した
+  実行体が同じ id を名乗るのを止めるものは無い。incarnation が守るのは「旧起動を新起動と取り違えない」
+  ことまでで、「別のインストールが同じ名を騙らない」ことではない。
+- **incarnation の導入で、fence の正しさが lease と broker の 2 箇所に分かれた**。どちらか片方だけを
+  更新すると、通るはずの push が落ちるか、落ちるはずの push が通る。2 箇所が同じ値を見ていることを
+  テストで押さえる必要がある。
 - **未確定 intent ≤ 3 という制約が実装に漏れる**。副作用を起こすコードのすべてが「これは何本目の未確定
   intent か」を意識することになり、reap の都合が副作用側の設計に染み出す。
 - 2 相予約は、予約・確定・無効化の 3 種のレコードと、それらを掃く scheduler 掃引を追加する。lane 横断

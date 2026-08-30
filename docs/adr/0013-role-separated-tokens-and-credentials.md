@@ -11,9 +11,12 @@ Driver: [安全性 (Secure by Design)](0014-add-security-to-ility-priority-order
 
 ## Context
 
-このパイプラインには書き手が 3 種いる。権威面と派生面を書く worker (**Foreman**)、実装差分を書く
-Codex 実行コンテナ (**Crucible**)、merge する人間である。仮名の定義は
-[ADR 0016](0016-quantum-scoped-fitness-functions.md) にある。3 者が同じ credential を共有すると、
+このパイプラインには GitHub への書き手が 4 種いる。権威面と派生面を書く worker (**Foreman**)、実装差分を
+書く Codex 実行コンテナ (**Crucible**)、タスク issue を起票する **Fable** (claude.ai 上の cloud session)、
+そして merge する人間である。仮名の定義は
+[ADR 0016](0016-quantum-scoped-fitness-functions.md) にある。**Fable は worker の代行経路に乗らない直接の
+書き手**であり ([ADR 0011](0011-authority-state-in-dedicated-state-repo.md) の権威面の表)、credential を
+論じる以上ここに書き出さないと境界が閉じない。3 者が同じ credential を共有すると、
 [ADR 0011](0011-authority-state-in-dedicated-state-repo.md) と
 [ADR 0012](0012-write-authority-by-lease-and-sha-cas.md) が決めた権威の分離が、token の層で崩れる。
 
@@ -51,6 +54,8 @@ credential を役割で分離する。
 | Crucible (Codex 実行コンテナ) の GitHub credential | **なし** | — | GitHub への到達手段を持たない。push は broker 経由の条件付き capability として受け取る ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md)) |
 | push 用 job token | **worker のみ** (job 別・短命) | code repo の `contents:write` **のみ** | 検査に合格した SHA の `codex/**` への push |
 | PR 操作用 job token | **worker のみ** (job 別・短命) | code repo の `pull_requests:write` **のみ** | PR の作成・更新・コメント |
+| issue 起票用 job token | **worker のみ** (job 別・短命) | code repo の `issues:write` **のみ** | 実装 issue の起票、ラベル・コメントの付与 |
+| Fable の credential | **Fable のみ** (claude.ai 側が保持。worker からは触れない) | code repo の `issues:write` **のみ**。state repo・push・merge の権限を持たない | タスク issue の起票 ([ADR 0003](0003-two-layer-task-and-implementation-issues.md) の上位層) |
 | 権威面 (state repo) への書き込み | **worker のみ** | state repo | lease・遷移・予算・heartbeat |
 | Codex の auth (ChatGPT auth または API key) | **worker のみ** | — | Codex SDK の認証 ([ADR 0010](0010-resident-worker-with-codex-python-sdk.md))。Codex thread は VM 上の worker 側の部品であり、Crucible とは別物 |
 | Watchtower (監視 workflow) の token | Actions の workflow | **read + 通知のみ。書き込み権威を持たない** | heartbeat の鮮度読みと `needs-human` 通知 ([ADR 0016](0016-quantum-scoped-fitness-functions.md)) |
@@ -62,8 +67,16 @@ credential を役割で分離する。
   issue 本文はデータとして扱われ、worker が契約スキーマで検証・正規化して起票する — これは credential を
   持たせないことの帰結であって、規約ではない。
 - **worker の job token は操作の種類ごとに分割して発行する** — push 用は `contents:write` のみ、PR 用は
-  `pull_requests:write` のみ。**「両方入りの token を作らない」を発行関数の不変条件とする**。これが本
-  ADR 固有の決定である。
+  `pull_requests:write` のみ、issue 起票用は `issues:write` のみ。**「複数の write を 1 本に相乗りさせ
+  ない」を発行関数の不変条件とする**。これが本 ADR 固有の決定である。実装 issue の起票は worker の仕事
+  なので、`issues:write` を worker が持つこと自体は必要である — 与えないのは Crucible に対してであって、
+  worker に対してではない。
+- **Fable には `issues:write` だけを与え、直接経路を許すが無検査にはしない** — タスク issue の起票を
+  broker 経由に変えることは可能だが、Fable は claude.ai 上のマネージド実行で worker とは別系統に生きて
+  おり、worker 停止中も仕様策定が進めることに価値がある (運命分離)。代わりに **Fable が書く本文も同じ
+  scan 関数を通すことを要件とし**、通過率を測定する ([ADR 0014](0014-add-security-to-ility-priority-order.md)
+  / [ADR 0016](0016-quantum-scoped-fitness-functions.md))。**適用点が worker の外にあるため、これは層 2 の
+  中で最も弱い箇所である**と明記しておく。
 - **push 先の制限を token に期待しない** — installation token は branch を絞れないため、制限は
   [ADR 0015](0015-capability-broker-instead-of-container-credentials.md) の受理検査が表現する。ruleset
   (`codex/**` 以外への push 禁止、force-push 禁止、`.github/workflows/**` および契約スキーマ・ac-verify
@@ -82,11 +95,16 @@ human-only merge を単一の機構に賭けない。3 層を重ね、**どれ�
   第 2・第 3 層が実測で不成立でもこの層は残るため、**これが人間 merge の実質的な根拠である**。ただし
   この層が守るのは Crucible からの経路だけで、**worker 自身の侵害は覆わない**
   ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md) の残余)。
-- **第 2 層 (worker 内の不変条件)**: 上記の token 操作別分割。merge は `contents` と `pull_requests` の
-  両方の permission を要する見込みで、片方しか持たない token では呼べない。**これは GitHub が強制する
-  機構ではなく、worker の token 発行関数が守る不変条件である** — 発行関数にバグがあれば成立しない。
-  加えて、merge を gate する permission の特定自体が Phase 1 の実測項目 (R2 残) であり、前提が確定して
-  いない。[ADR 0004](0004-two-human-approval-gates.md) の Erratum を参照。
+- **第 2 層 (worker 内の不変条件。成立するかどうかが未確定)**: 上記の token 操作別分割。**この層が merge
+  を止められるのは「merge API が `contents` と `pull_requests` の両方の permission を要する」場合に限る**。
+  **その前提は確認できていない** — 公開文書には merge が `Contents: write` のみで通ると読める記述があり、
+  それが正しければ **push 用 token (`contents:write`) だけで merge API を呼べてしまい、第 2 層は merge に
+  対して何の制限にもならない**。merge を gate する permission の特定は Phase 1 の実測項目 (R2 残) であり、
+  **実測で「contents だけで通る」と出たら、この層は merge 制御としては数えない** (操作別分割そのものは
+  最小権限として残す価値があるので、分割はやめない)。
+  加えて、仮に両方必要だったとしても**これは GitHub が強制する機構ではなく、worker の token 発行関数が
+  守る不変条件である** — 発行関数にバグがあれば成立しない。[ADR 0004](0004-two-human-approval-gates.md)
+  の Erratum を参照。
 - **第 3 層 (未実測・load-bearing にしない)**: code repo の ruleset で master の update bypass を人間
   アクターのみに限定する。**ruleset の restrict-update が merge API の呼出 actor に効くかは公式の明文が
   なく、Phase 1 の実測項目 (R3)** である。auto-merge は ruleset が再評価されないという報告があるため
