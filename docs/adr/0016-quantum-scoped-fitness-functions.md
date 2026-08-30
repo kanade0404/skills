@@ -174,9 +174,23 @@ heartbeat 間隔 5min / heartbeat 失効判定 30min / thread 時間上限 45min
 
 - **可用性 (Foreman と運命を共有しないこと)** — **schedule 周期は 15min**。発火の欠測 (間隔 > 2 × 周期
   = 30min) 0 回/週。かつ **Foreman が停止している間に発火すること** [常時 + drill]
-- **検知遅延と権威の不在** — heartbeat 停止から `needs-human` 通知まで ≤ 45min (30min の失効判定 +
-  schedule 周期 1 回分の遅延許容 15min)、token の permission は read + 通知のみ
+  - **実測の発火遅延の分布 (p50 / p95) を常時記録する** [常時 / Actions の run 履歴で、予定時刻と実際の
+    開始時刻の差を取る]。GitHub-hosted の scheduled workflow は混雑時に発火が遅れることが知られており、
+    **遅延はこちらの制御下に無い**。測っておかないと、下の通知目標が外れたときに「監視が壊れた」のか
+    「hosted の遅延が想定を超えた」のかを区別できない。
+  - **再考トリガ**: 発火遅延の **p95 が周期 1 回分 (15min) を恒常的に超えたら**、下の 45min という目標が
+    現実と合っていないので、**self-hosted runner への移行か周期の短縮を再考する**。暫定値と同じく、
+    見直しを時点ではなく状態で引く ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md)
+    の再考トリガと同じ流儀)。
+- **検知遅延と権威の不在** — heartbeat 停止から `needs-human` 通知まで **45min 以内を目標とする**
+  (30min の失効判定 + schedule 周期 1 回分の遅延許容 15min)、token の permission は read + 通知のみ
   [drill + workflow permissions の lint]
+  - **この 45min は保証値ではなく目標値である。** 内訳のうち 30min の失効判定はこちらが決めた値だが、
+    残る 15min は **GitHub-hosted の schedule が定刻に近く発火するという外部要因の仮定**に乗っている。
+    **hosted runner の発火遅延は制御外であり、残余として明記する** — 混雑時に 15min を超える遅延は現実に
+    起こりうる。超過を Watchtower の故障として数えず、上の遅延測定と突き合わせて原因を切り分ける。
+  - **全滅時の回復が遅れることは Foreman の回復可能性の失敗ではない** — 全 worker 停止中の区間は
+    `T_recover` の測定から除外してある (上記 Foreman の回復可能性)。両者を混ぜない。
 
 #### Herald — 特性 1 つ
 

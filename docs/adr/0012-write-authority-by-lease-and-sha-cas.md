@@ -73,10 +73,29 @@ Contents API の **sha-CAS** で行う。
   - `state.json` 本文に人間向けの時刻を持たせてよいが、それは**直前のレスポンスの Date を写した派生値**
     であり、**判定には使わない**。権威と派生をここでも取り違えない。
   - **実行体のローカル時計は判定に使わない。**
+- **lane 内の権威書き込みは単線である (不変条件)** — **1 つの lane に対する権威面への書き込みは、
+  同時に 1 つしか実行しない**。lease の取得 / renew / release も、`intent` / `transition` /
+  `policy_decision` の追記も、すべて **lane ごとの単一の書き込み経路を通して直列化する**。renew は時間
+  駆動だが、**タイマから独立に発行してはならず、同じ経路に載せる**。
+  - **成立する根拠**: 1 lane = 1 issue = 1 thread であり ([ADR 0010](0010-resident-worker-with-codex-python-sdk.md))、
+    worker は 1 プロセスなので、lane ごとの直列化はプロセス内で完結する。分散合意は要らない。
+  - **なぜ要るのか**: 競合検出は **branch tip 単位**である
+    ([ADR 0011](0011-authority-state-in-dedicated-state-repo.md) の実測)。同じ lane branch なら、
+    別のフィールドへの書き込みでも 409 になる。単線でなければ **worker が自分自身と競合する**。
+    [ADR 0011](0011-authority-state-in-dedicated-state-repo.md) が heartbeat を worker 別 branch に
+    置いたのと同じ判断を、lane の内側にも適用する。
+  - **この不変条件が、次の「CAS 敗北 = 喪失」を成立させる**。単線でなければ自己競合と他者の介入が
+    区別できず、下の規範は正当な作業を abort することになる。
+  - **制約**: 直列化点が renew を遅らせてはならない。renew は残 TTL < TTL/2 (= 10min 余裕) で起動する
+    ので、lane の書き込みキューの滞留がその余裕を食い潰さないことが条件である。**キューの滞留時間も
+    有界性の対象**であり、超過は `needs-human`。
 - **renew は時間駆動** — thread の実行中は tick ごとに残 TTL を確認し、**残 TTL < TTL/2 で renew**
-  する。renew を含む任意の CAS 敗北は lease の喪失を意味し、そのとき worker は **self-fence** する
-  (自分の子 thread / コンテナを即 abort して停止)。**規範不等式は「TTL > 失効検知周期 (tick) + abort
-  所要時間」**。TTL は 20min。
+  する。**上の単線の不変条件の下では、CAS 敗北の原因は「他者がこの lane に書いた」以外にありえない**
+  ので、**renew を含む任意の CAS 敗北は lease の喪失を意味する**。そのとき worker は **self-fence** する
+  (自分の子 thread / コンテナを即 abort して停止)。**敗北の原因分類はしない** — 分類のために権威面を
+  読み直せば、その読みが回復時間の不等式に乗ってくるうえ、読んだ時点で状態がまた変わりうる。単線を
+  保つ方が安く、判定も一義になる。**規範不等式は「TTL > 失効検知周期 (tick) + abort 所要時間」**。
+  TTL は 20min。
 - **reap のトリガは scheduler の tick 掃引** — 失効 lease の回収役は「次にその lane の lease を取得
   しようとする worker」ではなく、**毎 tick、全 active lane (≤ 30) を ETag で読み、上の期限判定
   (「サーバ時刻 now − 直近 lease 書き込みの commit 時刻 > TTL」) で失効を検知した worker** である。
@@ -150,8 +169,10 @@ Contents API の **sha-CAS** で行う。
   worker が 1 台以上生存している間だけである。全滅は `heartbeat.json` の鮮度でのみ検出され、**鮮度
   30min 超過を失効と判定**して監視 workflow (Watchtower、
   [ADR 0016](0016-quantum-scoped-fitness-functions.md)) が needs-human を通知する。**判定は 30min だが
-  通知の到達は schedule の遅延分だけ後ろにずれる** — 遅延は監視側の残余であり、通知までの上限は 0016 の
-  fitness function 側で ≤ 45min として測る。監視側に書き込み権威は無く、回復させるのは人間である。
+  通知の到達は schedule の遅延分だけ後ろにずれる** — **この遅延は GitHub-hosted の schedule 発火に依存
+  しており、こちらの制御下に無い**。したがって「通知まで 45min」は**保証ではなく目標**であり、0016 の
+  fitness function は目標として測るとともに、**実測の発火遅延そのものを監視する**
+  ([ADR 0016](0016-quantum-scoped-fitness-functions.md))。監視側に書き込み権威は無く、回復させるのは人間である。
   復旧後の初回 tick 掃引が、失効した全 lane をまとめて回収する。
 - **lease が守らないもの** — renew し続けながら前進しない zombie lane は lease では検出できない。これは
   thread の 45min 上限・未 dispatch の 24h starvation・needs-human の 72h 再通知という別の網が受け持つ。
@@ -246,6 +267,13 @@ Contents API の **sha-CAS** で行う。
   したが、**`worker_id` そのものの一意性は依然として運用規律であって機構ではない** — VM を作り直した
   実行体が同じ id を名乗るのを止めるものは無い。incarnation が守るのは「旧起動を新起動と取り違えない」
   ことまでで、「別のインストールが同じ名を騙らない」ことではない。
+- **lane 内の書き込みを単線にしたことで、lane ごとの直列化点が実装に必要になった**。renew のような時間
+  駆動の書き込みまで同じ経路に載せるので、**タイマが独立に発火する素直な実装ができない**。しかも
+  直列化点は新しい滞留源であり、そこが詰まると renew が遅れて lease を失う — 安全のために入れた機構が、
+  実装を誤れば失効の原因になる。キューの滞留時間に上限を置いて監視するのは、この裏返しのコストである。
+- **単線という前提の上に「CAS 敗北 = 喪失」が乗っている**。将来 lane あたりの並行度を上げたくなったら、
+  この規範ごと作り直しになる (敗北の原因分類が必要になり、読みが増えて回復時間の不等式に効いてくる)。
+  並行性を 3 位に置いた ([ADR 0009](0009-ility-priority-order.md)) 帰結を、ここでも払っている。
 - **incarnation の導入で、fence の正しさが lease と broker の 2 箇所に分かれた**。どちらか片方だけを
   更新すると、通るはずの push が落ちるか、落ちるはずの push が通る。2 箇所が同じ値を見ていることを
   テストで押さえる必要がある。
