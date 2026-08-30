@@ -103,9 +103,9 @@ heartbeat 間隔 5min / heartbeat 失効判定 30min / thread 時間上限 45min
     ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md))。**この 2 つは既定値群に
     未収録のため本 ADR で暫定を置いた**。Phase 1 で確定し、**確定時は同じ既定値群 (Charter の rules) に
     収録する** — ADR 側に数値を残したままにしない。
-  - **reap の 3 つの終了条件 — deadline (2min) 超過・retry budget 枯渇・reap 中の CAS 敗北 — それぞれの
-    `needs-human` 到達率 100%** (復元を中断し、lease は保持したまま倒れること) [drill]。
-    `T_reap ≤ 2min` は照会数の上限だけでは成立せず、この 3 つの fail closed が効いて初めて
+  - **reap の 4 つの終了条件 — deadline (2min) 超過・retry budget 枯渇・個別呼び出しの timeout・reap 中の
+    CAS 敗北 — それぞれの `needs-human` 到達率 100%** (復元を中断し、lease は保持したまま倒れること) [drill]。
+    `T_reap ≤ 2min` は照会数の上限だけでは成立せず、この 4 つの fail closed が効いて初めて
     `T_recover ≤ 23min` が閉じる ([ADR 0012](0012-write-authority-by-lease-and-sha-cas.md))。
     **不等式を主張する以上、終了条件は測定対象である。**
   - **受信中 quota の fail closed 率 100%** — 受信 pack の入力サイズ上限、および受け口プロセスに対する

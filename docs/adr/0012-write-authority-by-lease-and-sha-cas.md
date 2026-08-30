@@ -102,7 +102,7 @@ Contents API の **sha-CAS** で行う。
   個別呼び出しの timeout・reap 中の
   CAS 敗北はいずれも fail closed** — 復元を中断し、lease は保持したまま needs-human に倒す (reap の途中で
   release すると別の worker が同じ状態を踏む)。**takeover の CAS は既に成立している**ので、この経路に
-  入っても lane の権威が宙に浮くことはない。この 3 つの終了条件は、不等式を主張する以上テストで押さえる
+  入っても lane の権威が宙に浮くことはない。この 4 つの終了条件は、不等式を主張する以上テストで押さえる
   対象である。
 - **同一 `worker_id` による期限内の再取得を認める。ただし incarnation で fence する。** 自分名義の lease
   は TTL 満了前でも再取得してよい。順序を固定する: **runtime 記録から自分名義の残存 thread / コンテナを
