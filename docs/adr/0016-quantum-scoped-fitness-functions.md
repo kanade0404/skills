@@ -64,6 +64,14 @@ credential の 3 つが異なるので、「Codex」と一括りにしない —
 
 種別は 2 つ。**常時** = 定常データからの集計。**drill** = fault injection による定期検証。
 
+**閾値のうち運用パラメータは、ADR が個別に発明した数値ではない。** tick 60s / lease TTL 20min /
+heartbeat 間隔 5min / heartbeat 失効判定 30min / thread 時間上限 45min / **同時 thread 3** /
+`needs-human` 滞留 72h / 未 dispatch 24h / active lane ≤ 30 は、いずれも**凍結設計の既定値**
+— **Charter (契約配布物) の rules で宣言され、consumer が上書きできる既定値群** — に由来する。
+本 ADR はそれらを測定対象として引くだけで、値の所有者は rules 側である。**数値を変えるなら rules を
+変え、この表の閾値と規範不等式
+([ADR 0012](0012-write-authority-by-lease-and-sha-cas.md)) を同時に検算する。**
+
 #### Foreman — 特性 3 つ
 
 - **回復可能性** — 障害モードごとに fitness function 3 本。
@@ -79,16 +87,17 @@ credential の 3 つが異なるので、「Codex」と一括りにしない —
     消費した quota** で数える — tick 掃引は全 active lane を毎分読むため発行数は 1,000/hr を超えるが、
     ETag の 304 は core quota を消費しない
     ([ADR 0011](0011-authority-state-in-dedicated-state-repo.md) の実測)。観測は実レスポンスの
-    `x-ratelimit-remaining`。**1,000 という値は暫定である** — GitHub App の installation token の実効
-    上限に対する安全余裕として置いたもので、設計資料に導出は無い。Phase 1 に実測トラフィックから再導出
-    する。
-  - **同時 thread 数 ≤ 5、1 thread の実行時間 ≤ 45min**。thread 時間は
-    [ADR 0012](0012-write-authority-by-lease-and-sha-cas.md) の 45min と同一の制約である。
-    **同時 thread 数 5 は暫定値** — [ADR 0010](0010-resident-worker-with-codex-python-sdk.md) は「同時
-    thread 数と thread 時間に数値の上限を**置けること**」を要求し、Python SDK がその能力を持つことまでは
-    確かめているが、値そのものは決めていない。Phase 1 で確定する。
-  - lane あたりの受理試行回数 ≤ 20 回、bare repo のディスクサイズ ≤ 1 GiB (どちらも暫定値。
-    [ADR 0015](0015-capability-broker-instead-of-container-credentials.md))
+    `x-ratelimit-remaining`。**この 1,000 は「worker 1 台 (同時 1 installation) を主語とする設計時の
+    数値目標」として凍結設計が宣言した値**であり、恣意的な仮置きではない。ただし **GitHub 側の実効上限
+    に対する比としての導出は無い**ため、Phase 1 に実測トラフィックから再導出する。
+  - **同時 thread 数 ≤ 3、1 thread の実行時間 ≤ 45min**。
+    [ADR 0010](0010-resident-worker-with-codex-python-sdk.md) は「同時 thread 数と thread 時間に数値の
+    上限を**置けること**」を要求し、Python SDK がその能力を持つことを確かめた。**値そのものは既定値群が
+    与える** (下記)。
+  - lane あたりの受理試行回数 ≤ 20 回、bare repo のディスクサイズ ≤ 1 GiB
+    ([ADR 0015](0015-capability-broker-instead-of-container-credentials.md))。**この 2 つは既定値群に
+    未収録のため本 ADR で暫定を置いた**。Phase 1 で確定し、**確定時は同じ既定値群 (Charter の rules) に
+    収録する** — ADR 側に数値を残したままにしない。
   - **未 dispatch の lane が 24h を超えて滞留する件数 0**、**`needs-human` の滞留に対する 72h 再通知の
     到達率 100% (通算 3 回まで)** — lease が検出できない停滞を受け持つ別の網が実際に働いていることの
     測定 ([ADR 0012](0012-write-authority-by-lease-and-sha-cas.md))
@@ -194,7 +203,9 @@ Crucible ⊥ Foreman (Crucible の死は正常なイベントで、回復は lan
   ければ drill 種別の fitness function は「書いてあるだけ」に退化する。**測定しない fitness function は
   宣言より悪い** — 測っているつもりになる分だけ悪い。
 - **閾値の数値が根拠を持ち続けるとは限らない**。23min も 45min も quota 1,000/hr も、現在の設計と規模から
-  導いた値である。設計が変われば全部を検算し直す必要があり、
+  導いた値である。**値の所有者が rules 側にあるため、rules を上書きした consumer では本 ADR の閾値が
+  そのままでは成立しない** — 上書きを許した以上、閾値も consumer ごとに再計算される必要がある。設計が
+  変われば全部を検算し直す必要があり、
   [ADR 0012](0012-write-authority-by-lease-and-sha-cas.md) の規範不等式と同じ結合が、閾値の一覧全体に
   広がった。
 - **「全閾値内 = 成功」は厳しすぎる定義になりうる**。1 つの drill が落ちただけで「成功していない」と
