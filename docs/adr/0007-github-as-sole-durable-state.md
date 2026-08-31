@@ -75,3 +75,5 @@ label / comment / git ref である。これらは GitHub Conformist の方針
   増える。
 - 書き込み権威の設計 (lease) は本 ADR に依存する下流の決定であり、-ilities の同じ優先順
   ([ADR 0009](0009-ility-priority-order.md)) を Driver とする。
+- 本 ADR の外部 DB / 外部 KV の却下は条件付きの決定であり、**再考トリガの 3 条件は
+  [ADR 0011](0011-authority-state-in-dedicated-state-repo.md) の Negative に明文化してある**。

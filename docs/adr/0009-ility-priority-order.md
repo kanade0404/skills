@@ -1,6 +1,9 @@
 # -ilities の優先順を 可監査性・回復可能性 > 有界性 > 並行性 > レイテンシ とする
 
 Status: accepted (2026-08-29)
+Amended by [ADR 0014](0014-add-security-to-ility-priority-order.md) (安全性を一覧に追加) および
+[ADR 0016](0016-quantum-scoped-fitness-functions.md) (適用単位を quantum ごとにし、fitness function
+として測定可能にする)。**本 ADR の本文は変更されておらず、現在の -ilities は 3 者を合わせたものである。**
 
 Driver: 本 ADR 自身が下流の全決定の Driver である。用語は [CONTEXT.md](../../CONTEXT.md) に従う。
 
