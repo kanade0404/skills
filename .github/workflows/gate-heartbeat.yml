@@ -38,10 +38,20 @@ jobs:
     runs-on: ubuntu-latest
     env:
       WINDOW_DAYS: ${{ inputs.window_days || '14' }}
-      # 閾値の根拠: merged PR が 1 件だけだと「たまたまテスト差分を含まない変更
-      # だった」可能性が残り誤検知になりやすい。2 件以上 merge されてなお gate
-      # イベントが 0 件なら偶然では説明しづらく、不発を疑うのに十分な件数と判断した。
-      MIN_MERGED_PRS: '2'
+      # 閾値の根拠: PR (merge/close いずれの決着でも) が 1 件だけだと「たまたま
+      # テスト差分を含まない変更だった」可能性が残り誤検知になりやすい。2 件以上
+      # 決着してなお gate イベントが 0 件なら偶然では説明しづらく、不発を疑うのに
+      # 十分な件数と判断した。
+      #
+      # F9: 分母は「merge に成功した PR (merged_prs)」ではなく「決着した PR 全体
+      # (attempted_prs = merged + closed-without-merge)」にする。merged_prs だけを
+      # 分母にすると、CI/レビューが詰まって merge が 0 件の失敗窓 — 最も観測が
+      # 必要な状況 — でこの条件が真にならず、sensor 自体が沈黙してしまう
+      # (merged_prs=0 の時点で `merged_prs >= MIN` が常に偽になるため)。
+      # attempted_prs は既にこのワークフローが loop-metrics.yml 由来の pr_closed
+      # イベント (outcome が merged/closed のどちらでも emit される) から集計できる
+      # 値を使うだけで、新しいイベント種別は追加しない。
+      MIN_ATTEMPTED_PRS: '2'
       LOOP_OPS_REPO: kanade0404/loop-ops
       ISSUE_TITLE: '[gate-heartbeat] test-mutation-gate が沈黙しています'
     steps:
@@ -120,18 +130,31 @@ jobs:
                 and ((.repo // null) == $repo)
               ))) as $win
             | {
-                merged_prs: ($win | map(select(.event=="pr_closed" and .outcome=="merged")) | length),
+                # PR #115 review (CodeRabbit): loop-metrics writes one
+                # pr_closed record per close event, so a PR that is reopened
+                # and closed again (or a re-run of the emitting workflow)
+                # contributes several records for the same PR. Both PR counts
+                # are therefore taken over distinct .pr values — a record
+                # without .pr collapses into a single "unknown" bucket rather
+                # than inflating the denominator that gates the alert.
+                merged_prs: ($win | map(select(.event=="pr_closed" and .outcome=="merged") | .pr) | unique | length),
+                attempted_prs: ($win | map(select(.event=="pr_closed") | .pr) | unique | length),
                 gate_events: ($win | map(select(.event=="agent_run" and .phase=="test-mutation-gate")) | length),
                 gate_blocks: ($win | map(select(.event=="agent_run" and .phase=="test-mutation-gate" and .result_subtype=="block")) | length)
               }
           ')
 
           merged_prs=$(echo "$RESULT" | jq '.merged_prs')
+          attempted_prs=$(echo "$RESULT" | jq '.attempted_prs')
           gate_events=$(echo "$RESULT" | jq '.gate_events')
           gate_blocks=$(echo "$RESULT" | jq '.gate_blocks')
 
           is_alert=false
-          if [ "$merged_prs" -ge "$MIN_MERGED_PRS" ] && [ "$gate_events" -eq 0 ]; then
+          # F9: attempted_prs (merged + closed-without-merge) is the
+          # denominator, not merged_prs alone — a failure window where
+          # nothing merges (merged_prs=0) is exactly the window that most
+          # needs this sensor to still fire.
+          if [ "$attempted_prs" -ge "$MIN_ATTEMPTED_PRS" ] && [ "$gate_events" -eq 0 ]; then
             is_alert=true
           fi
 
@@ -144,10 +167,11 @@ jobs:
             echo "## gate-heartbeat 集計結果"
             echo ""
             echo "- window: 直近 ${WINDOW_DAYS} 日 (対象月: ${CUR_MONTH} + ${PREV_MONTH})"
-            echo "- 閾値: merged_prs >= ${MIN_MERGED_PRS} かつ gate_events == 0 でアラート"
+            echo "- 閾値: attempted_prs >= ${MIN_ATTEMPTED_PRS} かつ gate_events == 0 でアラート"
             echo ""
             echo "| 指標 | 値 |"
             echo "|---|---|"
+            echo "| attempted_prs (merged + closed-without-merge) | ${attempted_prs} |"
             echo "| merged_prs | ${merged_prs} |"
             echo "| gate_events (test-mutation-gate) | ${gate_events} |"
             echo "| gate_blocks | ${gate_blocks} |"
@@ -165,6 +189,7 @@ jobs:
 
           {
             echo "merged_prs=${merged_prs}"
+            echo "attempted_prs=${attempted_prs}"
             echo "gate_events=${gate_events}"
             echo "gate_blocks=${gate_blocks}"
             echo "is_alert=${is_alert}"
@@ -178,6 +203,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           MERGED_PRS: ${{ steps.aggregate.outputs.merged_prs }}
+          ATTEMPTED_PRS: ${{ steps.aggregate.outputs.attempted_prs }}
           GATE_EVENTS: ${{ steps.aggregate.outputs.gate_events }}
           GATE_BLOCKS: ${{ steps.aggregate.outputs.gate_blocks }}
           CUR_MONTH: ${{ steps.aggregate.outputs.cur_month }}
@@ -196,12 +222,16 @@ jobs:
             echo ""
             echo "| 指標 | 値 |"
             echo "|---|---|"
+            echo "| attempted_prs (merged + closed-without-merge) | ${ATTEMPTED_PRS} |"
             echo "| merged_prs | ${MERGED_PRS} |"
             echo "| gate_events (test-mutation-gate) | ${GATE_EVENTS} |"
             echo "| gate_blocks | ${GATE_BLOCKS} |"
             echo ""
-            echo "merged PR が ${MIN_MERGED_PRS} 件以上あるのに、test-mutation-gate の agent_run"
-            echo "イベントが loop-ops (kanade0404/loop-ops) に 1 件も届いていません。"
+            echo "決着した PR (merge 成功 + merge されずに close) が ${MIN_ATTEMPTED_PRS} 件以上"
+            echo "あるのに、test-mutation-gate の agent_run イベントが loop-ops"
+            echo "(kanade0404/loop-ops) に 1 件も届いていません。merged_prs が 0 件でも"
+            echo "attempted_prs だけで閾値を満たしていればアラートします — merge が 0 件の"
+            echo "失敗窓こそ、この sensor が沈黙してはいけない状況だからです。"
             echo ""
             echo "## 考えられる原因"
             echo ""
@@ -212,8 +242,9 @@ jobs:
             echo ""
             echo "## 確認手順"
             echo ""
-            echo "1. 該当期間 (直近 ${WINDOW_DAYS} 日) に merge された PR に、実際にテストファイルの"
-            echo "   diff が含まれているか確認する (\`gh pr list --repo kanade0404/skills --state merged --search \"merged:>=<date>\"\`"
+            echo "1. 該当期間 (直近 ${WINDOW_DAYS} 日) に決着した PR (merge 成功 + merge されずに"
+            echo "   close されたもの) に、実際にテストファイルの diff が含まれているか確認する"
+            echo "   (\`gh pr list --repo kanade0404/skills --state closed --search \"closed:>=<date>\"\`"
             echo "   などで対象 PR を洗い出し、\`gh pr diff <number> --name-only\` でテストファイルの"
             echo "   有無を見る)。テスト変更を含む PR が無ければ gate 不発は正常。"
             echo "2. 開発マシン側の \`.cache/test-mutation-gate/gate-events.jsonl\` を確認し、"

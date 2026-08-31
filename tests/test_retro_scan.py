@@ -241,6 +241,157 @@ class TestSlugCollisionGuard(unittest.TestCase):
             self.assertNotIn(no_cwd, found)
 
 
+class TestTranscriptAttributionVerification(unittest.TestCase):
+    """F10: a PR-scoped scan must confirm the selected transcript(s) actually
+    belong to the PR under review (number/URL or head branch present
+    somewhere in the file) before continuing — a --latest fallback pick can
+    silently be an unrelated session."""
+
+    def _write(self, path: Path, content: str) -> str:
+        path.write_text(content, encoding="utf-8")
+        return str(path)
+
+    def test_noop_when_no_pr_numbers(self) -> None:
+        # Transcript-only scans (no --pr) must not be affected.
+        retro_scan.verify_transcript_attribution(["/does/not/exist.jsonl"], [], {})
+
+    def test_passes_when_pr_number_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            f = self._write(Path(tmp) / "s.jsonl",
+                             '{"text":"opened PR #105 for review"}\n')
+            retro_scan.verify_transcript_attribution([f], [105], {"105": None})
+
+    def test_passes_when_pull_url_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            f = self._write(Path(tmp) / "s.jsonl",
+                             '{"text":"https://github.com/o/r/pull/105"}\n')
+            retro_scan.verify_transcript_attribution([f], [105], {"105": None})
+
+    def test_passes_when_head_branch_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            f = self._write(
+                Path(tmp) / "s.jsonl",
+                '{"text":"git switch -c harness/retro-fixes-f9-f11-f17"}\n')
+            retro_scan.verify_transcript_attribution(
+                [f], [105], {"105": "harness/retro-fixes-f9-f11-f17"})
+
+    def test_passes_when_any_of_multiple_files_matches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            unrelated = self._write(Path(tmp) / "a.jsonl", '{"text":"unrelated"}\n')
+            matching = self._write(Path(tmp) / "b.jsonl", '{"text":"see #105"}\n')
+            retro_scan.verify_transcript_attribution(
+                [unrelated, matching], [105], {"105": None})
+
+    def test_exits_transcript_mismatch_when_nothing_matches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            f = self._write(Path(tmp) / "s.jsonl",
+                             '{"text":"totally unrelated session"}\n')
+            with self.assertRaises(SystemExit) as ctx:
+                retro_scan.verify_transcript_attribution(
+                    [f], [105], {"105": "some-other-branch"})
+            self.assertIn("TRANSCRIPT_MISMATCH", str(ctx.exception.code))
+            self.assertIn("#105", str(ctx.exception.code))
+
+    def test_rejects_longer_pr_number_that_only_shares_a_prefix(self) -> None:
+        # A transcript that mentions #1050 / /pull/1050 must NOT satisfy the
+        # attribution check for PR 105: substring matching let an unrelated
+        # session's transcript pass (PR #115 review, Devin + CodeRabbit).
+        with tempfile.TemporaryDirectory() as tmp:
+            f = self._write(
+                Path(tmp) / "s.jsonl",
+                '{"text":"opened PR #1050 https://github.com/o/r/pull/1050"}\n')
+            with self.assertRaises(SystemExit) as ctx:
+                retro_scan.verify_transcript_attribution(
+                    [f], [105], {"105": None})
+            self.assertIn("TRANSCRIPT_MISMATCH", str(ctx.exception.code))
+
+    def test_accepts_pr_number_followed_by_non_digit(self) -> None:
+        # The boundary is "not another digit" — punctuation, whitespace and
+        # end-of-file all still count as a genuine reference.
+        for text in ('{"text":"#105"}\n',
+                     '{"text":"see #105, then merge"}\n',
+                     '{"text":"https://github.com/o/r/pull/105#issuecomment-1"}\n',
+                     '{"text":"https://github.com/o/r/pull/105"}'):
+            with self.subTest(text=text):
+                with tempfile.TemporaryDirectory() as tmp:
+                    f = self._write(Path(tmp) / "s.jsonl", text)
+                    retro_scan.verify_transcript_attribution(
+                        [f], [105], {"105": None})
+
+    def test_rejects_branch_name_that_is_only_a_prefix_of_another(self) -> None:
+        # PR #115 review (CodeRabbit): a plain substring test accepted
+        # "feature/fixes" as evidence for head branch "feature/fix".
+        with tempfile.TemporaryDirectory() as tmp:
+            f = self._write(Path(tmp) / "s.jsonl",
+                             '{"text":"git switch feature/fixes"}\n')
+            with self.assertRaises(SystemExit) as ctx:
+                retro_scan.verify_transcript_attribution(
+                    [f], [105], {"105": "feature/fix"})
+            self.assertIn("TRANSCRIPT_MISMATCH", str(ctx.exception.code))
+
+    def test_rejects_branch_name_that_is_only_a_suffix_of_another(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            f = self._write(Path(tmp) / "s.jsonl",
+                             '{"text":"git switch hotfix"}\n')
+            with self.assertRaises(SystemExit):
+                retro_scan.verify_transcript_attribution(
+                    [f], [105], {"105": "fix"})
+
+    def test_accepts_branch_name_at_a_ref_boundary(self) -> None:
+        # Quoting, surrounding punctuation, a remote prefix and end-of-line are
+        # all still genuine mentions of the branch.
+        for text in ('{"text":"git switch -c feature/fix"}\n',
+                     '{"text":"pushed origin/feature/fix"}\n',
+                     '{"text":"on feature/fix."}\n',
+                     '{"text":"branch=feature/fix'):
+            with self.subTest(text=text):
+                with tempfile.TemporaryDirectory() as tmp:
+                    f = self._write(Path(tmp) / "s.jsonl", text)
+                    retro_scan.verify_transcript_attribution(
+                        [f], [105], {"105": "feature/fix"})
+
+    def test_rejects_dotted_branch_extensions(self) -> None:
+        # PR #115 review (Devin + CodeRabbit): "." is a legal ref character, so
+        # treating it as a boundary unconditionally let "feature/fix.next" and
+        # "feature.fix" — different branches — count as evidence. A "." only
+        # ends the ref when what follows it is not itself ref-name material.
+        cases = [("feature/fix", '{"text":"switched to feature/fix.next"}\n'),
+                 ("feature", '{"text":"switched to feature.fix"}\n')]
+        for branch, text in cases:
+            with self.subTest(branch=branch):
+                with tempfile.TemporaryDirectory() as tmp:
+                    f = self._write(Path(tmp) / "s.jsonl", text)
+                    with self.assertRaises(SystemExit):
+                        retro_scan.verify_transcript_attribution(
+                            [f], [105], {"105": branch})
+
+    def test_branch_name_is_matched_literally_not_as_regex(self) -> None:
+        # A branch name is free text; regex metacharacters in it must not be
+        # interpreted (". " is not a wildcard).
+        with tempfile.TemporaryDirectory() as tmp:
+            f = self._write(Path(tmp) / "s.jsonl", '{"text":"fix/aXb"}\n')
+            with self.assertRaises(SystemExit):
+                retro_scan.verify_transcript_attribution(
+                    [f], [105], {"105": "fix/a.b"})
+
+    def test_rejects_pr_number_preceded_by_digits(self) -> None:
+        # "#2105" is PR 2105, not PR 105 — the left side needs a boundary too.
+        with tempfile.TemporaryDirectory() as tmp:
+            f = self._write(Path(tmp) / "s.jsonl", '{"text":"see #2105"}\n')
+            with self.assertRaises(SystemExit):
+                retro_scan.verify_transcript_attribution(
+                    [f], [105], {"105": None})
+
+    def test_unreadable_file_is_skipped_not_fatal(self) -> None:
+        # A missing/unreadable file must not itself raise — it's treated like
+        # a non-matching file, and the overall mismatch (if any) still exits
+        # cleanly with TRANSCRIPT_MISMATCH rather than an OSError traceback.
+        with self.assertRaises(SystemExit) as ctx:
+            retro_scan.verify_transcript_attribution(
+                ["/does/not/exist.jsonl"], [105], {"105": None})
+        self.assertIn("TRANSCRIPT_MISMATCH", str(ctx.exception.code))
+
+
 class TestPrScanOrdering(unittest.TestCase):
     """--pr 併用 (非 standalone) 時、transcript 探索の失敗は gh API 呼び出し
     より先に検出する — 引数の誤りで exit する起動が API レート制限を消費
@@ -264,6 +415,67 @@ class TestPrScanOrdering(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 retro_scan.main()
         self.assertEqual(calls, ["discover"])
+
+    def test_mismatched_transcript_exits_before_duckdb_stage(self) -> None:
+        # F10: main() wires --transcript + --pr through
+        # verify_transcript_attribution() before reaching the duckdb import —
+        # a mismatch must abort with TRANSCRIPT_MISMATCH, not silently scan.
+        with tempfile.TemporaryDirectory() as tmp:
+            transcript = Path(tmp) / "session.jsonl"
+            transcript.write_text('{"text":"unrelated session"}\n', encoding="utf-8")
+
+            def fake_scan_prs(pr_numbers, repo_arg):
+                return {"repo": "o/r", "prs": {"105": []},
+                        "branches": {"105": "some-other-branch"}}
+
+            argv = ["retro_scan.py", "--transcript", str(transcript), "--pr", "105"]
+            with mock.patch.object(retro_scan, "scan_prs", fake_scan_prs), \
+                    mock.patch.object(sys, "argv", argv):
+                with self.assertRaises(SystemExit) as ctx:
+                    retro_scan.main()
+            self.assertIn("TRANSCRIPT_MISMATCH", str(ctx.exception.code))
+
+    def test_matching_transcript_passes_verification(self) -> None:
+        # A transcript that does reference the PR must clear verification and
+        # reach the duckdb stage. Evidence is taken from an explicitly injected
+        # duckdb module whose connect() raises a sentinel, plus a spy on
+        # verify_transcript_attribution: the previous version inferred "we got
+        # past verification" from an AttributeError raised by the bundled stub,
+        # but sys.modules.setdefault() does not replace a real duckdb, so that
+        # assertion silently depended on duckdb being absent from the
+        # environment (PR #115 review, CodeRabbit).
+        sentinel = RuntimeError("reached the duckdb stage")
+
+        def boom(*args, **kwargs):
+            raise sentinel
+
+        fake_duckdb = types.ModuleType("duckdb")
+        fake_duckdb.connect = boom
+
+        with tempfile.TemporaryDirectory() as tmp:
+            transcript = Path(tmp) / "session.jsonl"
+            transcript.write_text('{"text":"opened PR #105"}\n', encoding="utf-8")
+
+            def fake_scan_prs(pr_numbers, repo_arg):
+                return {"repo": "o/r", "prs": {"105": []},
+                        "branches": {"105": None}}
+
+            argv = ["retro_scan.py", "--transcript", str(transcript), "--pr", "105"]
+            with mock.patch.object(
+                    retro_scan, "verify_transcript_attribution",
+                    wraps=retro_scan.verify_transcript_attribution) as verify, \
+                    mock.patch.dict(sys.modules, {"duckdb": fake_duckdb}), \
+                    mock.patch.object(retro_scan, "scan_prs", fake_scan_prs), \
+                    mock.patch.object(sys, "argv", argv):
+                with self.assertRaises(RuntimeError) as ctx:
+                    retro_scan.main()
+
+        self.assertIs(ctx.exception, sentinel)
+        verify.assert_called_once()
+        called_files, called_prs, called_branches = verify.call_args.args
+        self.assertEqual([str(transcript)], [str(f) for f in called_files])
+        self.assertEqual([105], list(called_prs))
+        self.assertEqual({"105": None}, called_branches)
 
 
 if __name__ == "__main__":

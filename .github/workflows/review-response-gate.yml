@@ -1,0 +1,218 @@
+# F17 (retro finding): PR #105 で Devin bot の BUG 指摘 4 件が返信 0 のまま
+# マージされた — pr-review-respond skill が起動されなかった/未完走のセッションが
+# あっても、それを検知して止める仕組みが無かった。この workflow は「bot 起因の
+# unresolved review thread に 1 件もリプライが無い」状態を fail させる required
+# check 候補で、pr-review-respond の実行漏れを機械的にブロックする最終防衛線。
+#
+# 判定方針:
+#   - resolved なスレッドは対象外 (対応済みとみなす)。
+#   - bot 起因 (CodeRabbit / Devin / Copilot 等) の unresolved スレッドのうち、
+#     リプライ (root コメント以外のコメント) が 1 件も無いものが 1 件でもあれば
+#     fail する。
+#   - リプライさえあれば内容は問わない — pushback (根拠付き反論で self-resolve
+#     しない、#111 のような意図的残置) も応答として有効。返信の妥当性判定は
+#     pr-review-respond / 人間レビュアーの役割であり、この gate は「無視されて
+#     いないか」だけを機械的に見る。
+#   - bot 判定は GraphQL Actor の __typename == "Bot" を主信号にしつつ、login
+#     パターン (coderabbit* / devin* / devin-ai / copilot* / *[bot] /
+#     github-actions*) も見る — pr-review-respond/pr-monitor の vendor 判定
+#     (skills/pr-review-respond/scripts/fetch_threads.sh) と同じ発想。
+#
+# なぜ actions/checkout が不要か: gh api だけで完結する自己完結設計 (gate-heartbeat.yml
+# と同じ判断) — このリポジトリのコードやスクリプトには依存しない。
+#
+# branch protection への required check 登録は行わない (人間の操作) — この
+# workflow を作るところまでが本 PR のスコープ。required check にするには GitHub
+# の Settings > Branches > Branch protection rules で対象ブランチのルールを開き、
+# "Require status checks to pass before merging" に `review-response-gate` を
+# 追加する (このジョブの `name:` と一致させてある)。
+name: review-response-gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  # 注: GitHub のクラシック repository webhook には thread の resolve/unresolve
+  # を配信する `pull_request_review_thread` イベントがあるが、GitHub Actions の
+  # `on:` トリガーとしてはサポートされていない (2026-08 時点。actionlint も
+  # 未知イベントとして拒否する)。そのため「UI 上で resolve しただけ」の変化は
+  # このワークフローを即座には再起動しない — 次の push (synchronize) か新規
+  # レビューコメントで再評価される。required check として運用する場合、この
+  # ラグは許容する前提 (merge 前に最新の再評価が走っていることは
+  # branch protection 側の「最新コミットに対する green」要求で担保される)。
+  #
+  # ただし「最後の 1 件を resolve して閉じた」直後は、新しい push も新しい
+  # レビューコメントも発生しないまま fail が残りうる (PR #115 review, Devin)。
+  # その場合の再走は、この check を作った run 自体を再実行する:
+  #   gh run rerun <run-id>          # または PR の Checks タブの "Re-run jobs"
+  # 元の pull_request イベントの payload ごと再生されるため、PR に紐づいた
+  # 同じ check run が更新される。workflow_dispatch は使わない — dispatch した
+  # run は PR の status check rollup に載らず、required check の fail を
+  # 解消できないため (PR #115 review, CodeRabbit)。
+
+# 同一 PR に対して synchronize とレビューコメント系イベントが重なると run が
+# 多重に走り、古い run が後から完了して新しい評価結果を上書きしうる
+# (PR #115 review, CodeRabbit)。PR 単位で直列化し、古い run は打ち切る。
+concurrency:
+  group: review-response-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  gate:
+    name: review-response-gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail on unresolved bot review threads with zero replies
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # このジョブは checkout しない (gh api だけで完結する設計) ため、
+          # runner の workspace は git リポジトリではない。`gh repo view` は
+          # 引数も GH_REPO も無いとカレントディレクトリの git remote から
+          # リポジトリを解決するので、そこで
+          # `fatal: not a git repository` で落ちる (PR #115 review,
+          # CodeRabbit — 実際にこの PR の初回実行がこれで fail した)。
+          # owner/name は Actions が必ず提供する github.repository から取る。
+          REPO: ${{ github.repository }}
+        run: |
+          # shellcheck disable=SC2016
+          # (jq programs below use jq's own `$var` / `\(...)` interpolation,
+          # not shell expansion — this directive suppresses shellcheck's false
+          # positive on single-quoted `$l` inside the jq filter.)
+          set -euo pipefail
+
+          export NO_COLOR=1
+          export CLICOLOR_FORCE=0
+          unset GH_FORCE_TTY 2>/dev/null || true
+          export GH_PAGER=cat
+
+          if [ -z "${PR_NUMBER:-}" ] || [ "$PR_NUMBER" = "null" ]; then
+            echo "::error::could not determine PR number from event payload"
+            exit 1
+          fi
+
+          if [ -z "${REPO:-}" ] || [ "${REPO#*/}" = "$REPO" ]; then
+            echo "::error::REPO must be owner/name (got '${REPO:-}')"
+            exit 1
+          fi
+          owner="${REPO%%/*}"
+          name="${REPO##*/}"
+
+          # Full cursor-paginated fetch of review threads. comments(first: 100)
+          # is enough to decide "has any reply" (root + >=1 more) without
+          # needing per-thread comment pagination — a thread with >100
+          # comments trivially already has replies.
+          threads_json='[]'
+          cursor=""
+          while :; do
+            args=(-f owner="$owner" -f name="$name" -F number="$PR_NUMBER")
+            if [ -n "$cursor" ]; then
+              args+=(-f cursor="$cursor")
+            fi
+            # shellcheck disable=SC2016
+            # The GraphQL document below uses GraphQL's own $owner/$name/
+            # $number/$cursor variable syntax inside a single-quoted string —
+            # deliberately not shell-expanded (values are bound via the -f/-F
+            # flags above).
+            resp=$(gh api graphql "${args[@]}" -f query='
+              query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+                repository(owner: $owner, name: $name) {
+                  pullRequest(number: $number) {
+                    reviewThreads(first: 50, after: $cursor) {
+                      pageInfo { hasNextPage endCursor }
+                      nodes {
+                        id
+                        isResolved
+                        path
+                        comments(first: 100) {
+                          pageInfo { hasNextPage }
+                          nodes {
+                            databaseId
+                            url
+                            author { login __typename }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }')
+            pr_node=$(jq -c '.data.repository.pullRequest' <<<"$resp")
+            if [ "$pr_node" = "null" ]; then
+              echo "::error::PR #$PR_NUMBER not found in $owner/$name"
+              exit 1
+            fi
+            threads_json=$(jq -c --argjson r "$resp" \
+              '. + $r.data.repository.pullRequest.reviewThreads.nodes' <<<"$threads_json")
+            hasNext=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$resp")
+            cursor=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // empty' <<<"$resp")
+            [ "$hasNext" = "true" ] || break
+          done
+
+          # Bot detection mirrors skills/pr-review-respond/scripts/fetch_threads.sh's
+          # vendor() convention (login prefix/substring), plus the GraphQL Actor
+          # __typename == "Bot" signal as the primary check.
+          #
+          # PR #115 review (Devin): "has a second comment" is too weak as the
+          # response test — a reviewer bot's own follow-up (or another review
+          # bot chiming in) cleared the gate while the finding stayed
+          # unanswered by the PR side. A reply only counts when it comes from
+          # the PR side: a human, or the author's own automation
+          # (github-actions[bot] / claude[bot], which is how a headless
+          # pr-review-respond run posts). Review bots (CodeRabbit / Devin /
+          # Copilot, and any other Bot actor) do not count as responders.
+          failing=$(jq -c '
+            def is_bot(a):
+              (a.__typename == "Bot")
+              or ((a.login // "" | ascii_downcase) as $l
+                  | ($l | endswith("[bot]"))
+                    or ($l | startswith("coderabbit"))
+                    or ($l | startswith("devin")) or ($l | contains("devin-ai"))
+                    or ($l | startswith("copilot")) or ($l | contains("copilot-pull-request-reviewer"))
+                    or ($l | startswith("github-actions")));
+            def is_author_agent(a):
+              (a.login // "" | ascii_downcase) as $l
+              | ($l | startswith("github-actions")) or ($l | startswith("claude"));
+            def is_responder(a): (is_bot(a) | not) or is_author_agent(a);
+            [ .[]
+              | select(.isResolved == false)
+              | select((.comments.nodes | length) > 0)
+              | select(is_bot(.comments.nodes[0].author))
+              | select([.comments.nodes[1:][] | select(is_responder(.author))] | length == 0)
+              | {
+                  path: (.path // "(no path)"),
+                  author: (.comments.nodes[0].author.login // "(unknown)"),
+                  url: .comments.nodes[0].url
+                }
+            ]
+          ' <<<"$threads_json")
+
+          count=$(jq 'length' <<<"$failing")
+
+          {
+            echo "## review-response-gate"
+            echo ""
+            echo "bot 起因の unresolved review thread のうち、リプライが 1 件も無いもの: ${count} 件"
+            echo ""
+            if [ "$count" -gt 0 ]; then
+              echo "| author | path | url |"
+              echo "|---|---|---|"
+              jq -r '.[] | "| \(.author) | \(.path) | \(.url) |"' <<<"$failing"
+            else
+              echo "OK: bot 指摘で未応答のまま放置されているスレッドはありません。"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$count" -gt 0 ]; then
+            echo "::error::${count} unresolved bot review thread(s) have zero replies — respond (fix, defer, or reasoned pushback) before merging. See the job summary for the list, or run pr-review-respond."
+            exit 1
+          fi
+
+          echo "OK: no unresolved bot review thread is unanswered."
