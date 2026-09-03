@@ -21,9 +21,13 @@
 1 エントリ = 1 行 (改行なし):
 
 ```json
-{"id":"IMP-0001","created":"2026-09-10","source":"agent-feedback","evidence":["https://github.com/kanade0404/skills/pull/123#issuecomment-1","session_01ABC"],"target_skill":"ci-self-heal","finding":"3 連続失敗の停止条件が「同一エラー」限定と読まれ、別エラーで再試行が続いた","finding_class":"stop-condition","lever":"skill-edit","status":"merged","pr":"https://github.com/kanade0404/skills/pull/130","before":{"ci_fix_iterations":6},"after":{"ci_fix_iterations":3},"recurrence":2,"notes":""}
+{"id":"IMP-20260910-4ce564","created":"2026-09-10","source":"agent-feedback","evidence":["https://github.com/kanade0404/skills/pull/123#issuecomment-1","session_01ABC"],"target_skill":"ci-self-heal","finding":"3 連続失敗の停止条件が「同一エラー」限定と読まれ、別エラーで再試行が続いた","finding_class":"stop-condition","lever":"skill-edit","status":"merged","pr":"https://github.com/kanade0404/skills/pull/130","before":{"ci_fix_iterations":6},"after":{"ci_fix_iterations":3},"recurrence":2,"notes":""}
 ```
 
+- `id`: `IMP-<作成日 YYYYMMDD>-<sha1(target_skill + 改行 + 再発クラスキー) の先頭 6 桁>`。
+  台帳の既存行を読まずに決まるので、複数の finding を別ブランチで並行に処理しても
+  採番が衝突しない (連番だと枝ごとに同じ番号を採る)。同じ日・同じ skill・同じクラスの
+  2 度目の登録は同じ id になり、`add` が重複として拒否する
 - `source`: `retro` / `session-retro` / `agent-feedback` / `trigger-eval`
 - `finding_class`: 再発クラスキー (省略可)。空なら finding 本文の正規化で代用するが、
   それが吸収するのは表記揺れだけ。同じ問題の再発だと判断したら `add --class <key>` で
@@ -39,12 +43,15 @@
 編集は同梱スクリプト経由で行う (`id` の採番と `recurrence` の計算がスクリプト側にある):
 
 ```bash
+uv run python3 skills/skill-improver/scripts/ledger.py list --status pr_open
 uv run python3 skills/skill-improver/scripts/ledger.py report
 uv run python3 skills/skill-improver/scripts/ledger.py check-target <skill>
 ```
 
-`report` は skill 別の再発回数と before→after の delta を出し、after が before より
-悪化したエントリを **revert candidate** として並べる。悪化を見つけたら改善を重ねる前に
+`list` は status で絞ってエントリを並べる (改善ループの各回は、まだ `pr_open` のまま
+残っているエントリの突き合わせから始まる)。`report` は skill 別の再発回数・再発クラス
+キーと before→after の delta を出し、**merge 済み**のエントリのうち after が before より
+悪化したものを **revert candidate** として並べる。悪化を見つけたら改善を重ねる前に
 revert PR を提案する。
 
 ## メタスキルは対象外

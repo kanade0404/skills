@@ -141,6 +141,22 @@ class TestRevertCandidates(unittest.TestCase):
             ledger.is_revert_candidate({"before": {"trigger_f1": 0.7}, "after": {}})
         )
 
+    def test_only_merged_entries_are_reported_as_revert_candidates(self) -> None:
+        regressed = {"before": {"trigger_f1": 0.9}, "after": {"trigger_f1": 0.7}}
+        entries = [
+            {"id": "IMP-20260903-aaaaaa", "status": "merged", **regressed},
+            # 既に取り消した / 却下した差分を毎回 revert 候補に出し続けない
+            {"id": "IMP-20260903-bbbbbb", "status": "reverted", **regressed},
+            {"id": "IMP-20260903-cccccc", "status": "rejected", **regressed},
+            {"id": "IMP-20260903-dddddd", "status": "pr_open", **regressed},
+        ]
+        report = ledger.build_report(entries)
+        self.assertEqual(
+            [item["id"] for item in report["revert_candidates"]], ["IMP-20260903-aaaaaa"]
+        )
+        # delta 自体は status を問わず出す (観測結果は隠さない)
+        self.assertEqual(len(report["deltas"]), 4)
+
 
 class TestRecurrence(unittest.TestCase):
     def test_same_skill_and_finding_class_increments(self) -> None:
@@ -189,11 +205,20 @@ class TestRecurrence(unittest.TestCase):
             1,
         )
 
-    def test_next_id_is_sequential(self) -> None:
-        self.assertEqual(ledger.next_id([]), "IMP-0001")
-        self.assertEqual(
-            ledger.next_id([{"id": "IMP-0001"}, {"id": "IMP-0007"}]), "IMP-0008"
-        )
+    def test_derive_id_is_content_addressed(self) -> None:
+        # 台帳の既存行に依存しない = 別ブランチで並行に採番しても衝突しない
+        first = ledger.derive_id("tdd", "stop-condition", "2026-09-03")
+        self.assertEqual(first, ledger.derive_id("tdd", "stop-condition", "2026-09-03"))
+        self.assertIsNotNone(ledger.ID_RE.match(first))
+        self.assertTrue(first.startswith("IMP-20260903-"))
+        # 材料が 1 つでも違えば別 id
+        self.assertNotEqual(first, ledger.derive_id("commit", "stop-condition", "2026-09-03"))
+        self.assertNotEqual(first, ledger.derive_id("tdd", "other-class", "2026-09-03"))
+        self.assertNotEqual(first, ledger.derive_id("tdd", "stop-condition", "2026-09-10"))
+
+    def test_derive_id_rejects_malformed_created(self) -> None:
+        with self.assertRaises(ValueError):
+            ledger.derive_id("tdd", "c", "2026/09/03")
 
     def test_summary_recounts_recurrence_and_uses_stored_only_as_tiebreak(self) -> None:
         entries = [
@@ -206,8 +231,6 @@ class TestRecurrence(unittest.TestCase):
         pruned = [{"target_skill": "tdd", "finding": "f", "recurrence": 5}]
         self.assertEqual(ledger.recurrence_summary(pruned)["tdd"]["max_recurrence"], 5)
 
-    def test_next_id_ignores_malformed_ids(self) -> None:
-        self.assertEqual(ledger.next_id([{"id": "junk"}, {"id": "IMP-0003"}]), "IMP-0004")
 
 
 class TestParseMetric(unittest.TestCase):
@@ -226,6 +249,12 @@ class TestParseMetric(unittest.TestCase):
     def test_missing_value_rejected(self) -> None:
         with self.assertRaises(ValueError):
             ledger.parse_metric("review_cycles")
+
+    def test_non_finite_rejected(self) -> None:
+        # float() は通すが、台帳に入ると delta 比較が全て False に倒れて悪化を見逃す
+        for raw in ("nan", "NaN", "inf", "-inf", "Infinity"):
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                ledger.parse_metric(f"trigger_f1={raw}")
 
 
 class TestNewEntryShape(unittest.TestCase):
@@ -285,6 +314,10 @@ class TestCliRoundTrip(unittest.TestCase):
     def entries(self) -> list[dict]:
         return ledger.load_entries(self.ledger_path)
 
+    def only_id(self) -> str:
+        """台帳の先頭エントリの id (内容由来なのでテスト側で決め打ちしない)。"""
+        return str(self.entries()[0]["id"])
+
     def test_add_link_metrics_report(self) -> None:
         code, out = run(
             self.base(
@@ -306,31 +339,39 @@ class TestCliRoundTrip(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("classification: ok", out)
         entry = self.entries()[0]
-        self.assertEqual(entry["id"], "IMP-0001")
+        entry_id = entry["id"]
+        self.assertEqual(
+            entry_id,
+            ledger.derive_id("tdd", ledger.finding_class("再実行手順が曖昧"), "2026-09-03"),
+        )
         self.assertEqual(entry["status"], "proposed")
         self.assertEqual(entry["recurrence"], 1)
 
         self.assertEqual(
-            run(self.base("link-pr", "--id", "IMP-0001", "--pr", "https://x/1"))[0], 0
+            run(self.base("link-pr", "--id", entry_id, "--pr", "https://x/1"))[0], 0
         )
         self.assertEqual(self.entries()[0]["status"], "pr_open")
 
         run(
             self.base(
-                "record-metrics", "--id", "IMP-0001", "--phase", "before",
+                "record-metrics", "--id", entry_id, "--phase", "before",
                 "--metric", "trigger_f1=0.70",
             )
         )
         run(
             self.base(
-                "record-metrics", "--id", "IMP-0001", "--phase", "after",
+                "record-metrics", "--id", entry_id, "--phase", "after",
                 "--metric", "trigger_f1=0.60",
             )
         )
+        # revert candidate は merged のものだけ — pr_open のうちは並ばない
         code, out = run(self.base("report"))
         self.assertEqual(code, 0)
-        self.assertIn("IMP-0001", out)
+        self.assertIn(entry_id, out)
         self.assertIn("worse", out)
+        self.assertEqual(run(self.base("report", "--fail-on-revert"))[0], ledger.EXIT_OK)
+
+        run(self.base("set-status", "--id", entry_id, "--status", "merged"))
 
         code, _ = run(self.base("report", "--fail-on-revert"))
         self.assertEqual(code, ledger.EXIT_FAIL)
@@ -383,10 +424,11 @@ class TestCliRoundTrip(unittest.TestCase):
             )
         )
         # 除外は add だけでなく全書き込み経路で効く (後から台帳を進められない)
+        entry_id = self.only_id()
         for argv in (
-            ["set-status", "--id", "IMP-0001", "--status", "pr_open"],
-            ["link-pr", "--id", "IMP-0001", "--pr", "https://x/1"],
-            ["record-metrics", "--id", "IMP-0001", "--phase", "before",
+            ["set-status", "--id", entry_id, "--status", "pr_open"],
+            ["link-pr", "--id", entry_id, "--pr", "https://x/1"],
+            ["record-metrics", "--id", entry_id, "--phase", "before",
              "--metric", "trigger_f1=0.7"],
         ):
             with self.subTest(argv=argv[0]):
@@ -408,7 +450,7 @@ class TestCliRoundTrip(unittest.TestCase):
         for status in ("excluded_meta", "rejected"):
             with self.subTest(status=status):
                 code, _ = run(
-                    self.base("set-status", "--id", "IMP-0001", "--status", status)
+                    self.base("set-status", "--id", self.only_id(), "--status", status)
                 )
                 self.assertEqual(code, ledger.EXIT_OK)
                 self.assertEqual(self.entries()[0]["status"], status)
@@ -422,7 +464,7 @@ class TestCliRoundTrip(unittest.TestCase):
         )
         code, _ = run(
             self.base(
-                "link-pr", "--id", "IMP-0001", "--pr", "https://x/1", "--keep-status"
+                "link-pr", "--id", self.only_id(), "--pr", "https://x/1", "--keep-status"
             )
         )
         self.assertEqual(code, 0)
@@ -445,12 +487,16 @@ class TestCliRoundTrip(unittest.TestCase):
         self.assertEqual(list(report["per_skill"]), ["tdd"])
 
     def test_add_class_key_groups_differently_worded_findings(self) -> None:
-        for finding in ("停止条件が曖昧で再試行が続いた", "別エラーでも再試行が止まらない"):
+        # 再発は別の実行日に起きる (同日・同クラスの再登録は重複として弾かれる)
+        for created, finding in (
+            ("2026-09-03", "停止条件が曖昧で再試行が続いた"),
+            ("2026-09-10", "別エラーでも再試行が止まらない"),
+        ):
             run(
                 self.base(
                     "add", "--source", "retro", "--target", "tdd",
                     "--finding", finding, "--lever", "skill-edit",
-                    "--class", "stop-condition",
+                    "--class", "stop-condition", "--created", created,
                 )
             )
         entries = self.entries()
@@ -479,14 +525,99 @@ class TestCliRoundTrip(unittest.TestCase):
         self.assertEqual(self.entries()[0]["target_skill"], "nope")
 
     def test_recurrence_increments_across_adds(self) -> None:
-        for _ in range(2):
+        for created in ("2026-09-03", "2026-09-10"):
             run(
                 self.base(
                     "add", "--source", "retro", "--target", "tdd",
                     "--finding", "再実行手順が曖昧", "--lever", "skill-edit",
+                    "--created", created,
                 )
             )
         self.assertEqual([e["recurrence"] for e in self.entries()], [1, 2])
+
+    def test_same_day_same_class_readd_is_refused_as_duplicate(self) -> None:
+        argv = [
+            "add", "--source", "retro", "--target", "tdd",
+            "--finding", "再実行手順が曖昧", "--lever", "skill-edit",
+            "--created", "2026-09-03",
+        ]
+        self.assertEqual(run(self.base(*argv))[0], 0)
+        # id は内容由来なので 2 度目は同じ id になる。重複を通すと後続の
+        # set-status / link-pr が「最初に一致した行」に当たって別 finding を書き換える
+        self.assertEqual(run(self.base(*argv))[0], ledger.EXIT_FAIL)
+        self.assertEqual(len(self.entries()), 1)
+
+    def test_manual_id_must_match_format_and_be_unique(self) -> None:
+        base_argv = [
+            "add", "--source", "retro", "--target", "tdd",
+            "--finding", "f", "--lever", "skill-edit",
+        ]
+        self.assertEqual(
+            run(self.base(*base_argv, "--id", "IMP-1"))[0], ledger.EXIT_FAIL
+        )
+        self.assertEqual(self.entries(), [])
+        self.assertEqual(
+            run(self.base(*base_argv, "--id", "IMP-20260903-abc123"))[0], 0
+        )
+        self.assertEqual(
+            run(self.base(*base_argv, "--id", "IMP-20260903-abc123", "--class", "other"))[0],
+            ledger.EXIT_FAIL,
+        )
+        self.assertEqual(len(self.entries()), 1)
+
+    def test_list_filters_by_status(self) -> None:
+        for target, status in (("tdd", "pr_open"), ("commit", "merged")):
+            run(
+                self.base(
+                    "add", "--source", "retro", "--target", target,
+                    "--finding", "f", "--lever", "skill-edit",
+                    "--status", status, "--allow-unknown-target",
+                )
+            )
+        code, out = run(self.base("list", "--status", "pr_open", "--json"))
+        self.assertEqual(code, 0)
+        listed = json.loads(out)
+        self.assertEqual([e["target_skill"] for e in listed], ["tdd"])
+        code, out = run(self.base("list"))
+        self.assertEqual(code, 0)
+        self.assertIn("pr_open", out)
+        self.assertIn("merged", out)
+
+    def test_report_lists_class_keys_with_counts(self) -> None:
+        for created in ("2026-09-03", "2026-09-10"):
+            run(
+                self.base(
+                    "add", "--source", "retro", "--target", "tdd",
+                    "--finding", "f", "--lever", "skill-edit",
+                    "--class", "stop-condition", "--created", created,
+                )
+            )
+        code, out = run(self.base("report", "--skill", "tdd"))
+        self.assertEqual(code, 0)
+        # クラスキーが読めないと add --class に渡す既存キーを選べない
+        self.assertIn("class stop-condition: 2", out)
+
+    def test_skills_root_defaults_to_ledger_repository(self) -> None:
+        # --ledger で別リポジトリを指したら、skill の実在確認もそちらで行う
+        with tempfile.TemporaryDirectory() as other:
+            other_ledger = Path(other) / "improvements" / "ledger.jsonl"
+            code, _ = run(
+                [
+                    "--ledger", str(other_ledger),
+                    "add", "--source", "retro", "--target", "tdd",
+                    "--finding", "f", "--lever", "skill-edit",
+                ]
+            )
+            # cwd 側 (self.root) には tdd があるが、台帳側のリポジトリには無い
+            self.assertEqual(code, ledger.EXIT_FAIL)
+            code, _ = run(
+                [
+                    "--ledger", str(other_ledger), "--skills-root", str(self.root),
+                    "add", "--source", "retro", "--target", "tdd",
+                    "--finding", "f", "--lever", "skill-edit",
+                ]
+            )
+            self.assertEqual(code, ledger.EXIT_OK)
 
     def test_set_status_and_missing_id(self) -> None:
         run(
@@ -496,11 +627,14 @@ class TestCliRoundTrip(unittest.TestCase):
             )
         )
         self.assertEqual(
-            run(self.base("set-status", "--id", "IMP-0001", "--status", "merged"))[0], 0
+            run(self.base("set-status", "--id", self.only_id(), "--status", "merged"))[0],
+            0,
         )
         self.assertEqual(self.entries()[0]["status"], "merged")
         self.assertEqual(
-            run(self.base("set-status", "--id", "IMP-9999", "--status", "merged"))[0],
+            run(
+                self.base("set-status", "--id", "IMP-20260101-abcdef", "--status", "merged")
+            )[0],
             ledger.EXIT_FAIL,
         )
 

@@ -12,7 +12,7 @@ consumer 側が `rulesync fetch --features skills` で持っていくのは skil
 
 | field | 型 | 内容 |
 |---|---|---|
-| `id` | string | `IMP-0001` 形式。`ledger.py add` が連番を採番する |
+| `id` | string | `IMP-<YYYYMMDD>-<hash>` 形式 (例: `IMP-20260910-4ce564`)。`ledger.py add` が **内容から** 決める — 作成日 + `sha1(target_skill + "\n" + 再発クラスキー)` の先頭 6 桁 |
 | `created` | string | `YYYY-MM-DD` (UTC) |
 | `source` | enum | `retro` / `session-retro` / `agent-feedback` / `trigger-eval` |
 | `evidence` | string[] | 証跡。PR / issue の URL、session id、`skills/x/evals/...` のようなファイルパス |
@@ -38,12 +38,30 @@ NFKC + casefold し、空白と記号を落としたものをクラスキーに�
 同じキーを渡して束ねる。
 
 指標は**取れたものだけ書く**。観測できなかった値を 0 で埋めると、after 比較で
-偽の「改善」が出る。
+偽の「改善」が出る。`nan` / `inf` は数値に見えても比較が全て False に倒れ、悪化を
+黙って見逃すため `record-metrics` が受け付けない。
+
+## id が内容由来である理由
+
+`add` は台帳の既存行を読まずに id を決める: `IMP-<作成日 YYYYMMDD>-<sha1(target_skill
++ 改行 + 再発クラスキー) の先頭 6 桁>`。連番にすると、1 実行で複数 finding を処理する
+ときに枝ごとの `add` が「自分の見た台帳の最大値 + 1」を採り、台帳行が PR ごとに
+append される以上必ず衝突する。内容由来なら、どの枝で採番しても同じ finding には
+同じ id が付く。
+
+その裏返しとして、**同じ日・同じ skill・同じクラスの 2 度目の `add` は同じ id になり、
+重複として拒否される** (別 finding なら `--class` で別クラスキーを付ける)。`--id` を
+手で渡す場合も形式検査と重複検査を通る — id は `set-status` / `link-pr` /
+`record-metrics` の宛先そのもので、重複を許すと更新が「最初に一致した行」に当たって
+別の finding を書き換える。
+
+再発は日をまたいで起きるため、`recurrence` の計算 (同一 skill × 同一クラス) は
+id の一意性と両立する。
 
 ### 例 (1 行に収める。ここでは可読性のため折り返している)
 
 ```json
-{"id":"IMP-0001","created":"2026-09-10","source":"agent-feedback",
+{"id":"IMP-20260910-4ce564","created":"2026-09-10","source":"agent-feedback",
  "evidence":["https://github.com/kanade0404/skills/pull/123#issuecomment-1",
              "session_01ABC"],
  "target_skill":"ci-self-heal","finding":"3 連続失敗の停止条件が「同一エラー」に
@@ -60,13 +78,20 @@ stdlib のみ。`uv run python3 skills/skill-improver/scripts/ledger.py <sub>` (
 仮想環境も要らない)。台帳のパスは `--ledger` で上書きでき、既定は cwd から上方向に
 `.git` を探して見つけた repo root の `improvements/ledger.jsonl`。
 
+target skill の実在確認は**台帳と同じリポジトリ**で行う: `--ledger` を渡したときは
+その 2 つ上 (`<repo>/improvements/ledger.jsonl` 規約) を root とみなす。渡さなければ
+cwd から見た repo root。規約外の場所に台帳を置くときは `--skills-root <path>` で
+明示する。cwd 固定にすると、別リポジトリの台帳を触りながら skill 名の検査だけ手元の
+カタログで行い、存在しない skill を「既知」と判定してしまう。
+
 | サブコマンド | 用途 |
 |---|---|
-| `add --source --target --finding --lever [--class] [--evidence ...] [--status] [--notes] [--id] [--created]` | finding を 1 件記録。`recurrence` と `id` を自動採番。`--class` は再発クラスキーの明示。対象がメタスキルなら `--status` を無視して `excluded_meta` で記録し、**exit 2** を返す |
+| `add --source --target --finding --lever [--class] [--evidence ...] [--status] [--notes] [--id] [--created]` | finding を 1 件記録。`recurrence` を自動計算し、`id` を内容から決める。`--class` は再発クラスキーの明示。`--id` は形式 (`IMP-YYYYMMDD-xxxxxx`) と重複を検査する。対象がメタスキルなら `--status` を無視して `excluded_meta` で記録し、**exit 2** を返す |
 | `set-status --id --status [--notes]` | status を更新 |
 | `link-pr --id --pr [--keep-status]` | PR URL を紐付け、既定で `status=pr_open` にする |
-| `record-metrics --id --phase before\|after --metric KEY=VALUE [--metric ...]` | 指標を記録。両相が揃うと delta を表示する |
-| `report [--skill] [--json] [--fail-on-revert]` | skill 別の件数・再発回数・status 内訳、before→after の delta、**revert candidate** を出力 |
+| `record-metrics --id --phase before\|after --metric KEY=VALUE [--metric ...]` | 指標を記録。両相が揃うと delta を表示する。非有限値 (`nan` / `inf`) は拒否 |
+| `list [--status ...] [--skill] [--json]` | エントリを status で絞って列挙。Step 0 の突き合わせ (`--status pr_open`) の起点 |
+| `report [--skill] [--json] [--fail-on-revert]` | skill 別の件数・**再発クラスキーとその件数**・status 内訳、before→after の delta、**revert candidate** を出力 |
 | `check-target <skill>` | 改善対象にしてよいかの判定 |
 
 ### exit code 契約
@@ -96,20 +121,24 @@ argparse は usage エラーでも 2 を返すため、呼出側は stdout 1 行
 
 ```bash
 LEDGER="uv run python3 skills/skill-improver/scripts/ledger.py"
+$LEDGER list --status pr_open --json                   # Step 0: 未決着の PR を突き合わせる
 $LEDGER check-target ci-self-heal                      # exit 2 ならここで終了
 $LEDGER add --source agent-feedback --target ci-self-heal --lever skill-edit \
   --finding "..." --evidence "https://.../pull/123#issuecomment-1"
-$LEDGER record-metrics --id IMP-0001 --phase before --metric ci_fix_iterations=6
-$LEDGER link-pr --id IMP-0001 --pr https://.../pull/130
-$LEDGER set-status --id IMP-0001 --status merged
-$LEDGER record-metrics --id IMP-0001 --phase after --metric ci_fix_iterations=3
+$LEDGER record-metrics --id IMP-20260910-4ce564 --phase before --metric ci_fix_iterations=6
+$LEDGER link-pr --id IMP-20260910-4ce564 --pr https://.../pull/130
+$LEDGER set-status --id IMP-20260910-4ce564 --status merged
+$LEDGER record-metrics --id IMP-20260910-4ce564 --phase after --metric ci_fix_iterations=3
 $LEDGER report                                         # 再発と revert candidate を確認
 ```
 
 ## revert candidate の扱い
 
 `report` は before / after 双方に値がある指標を比較し、1 つでも悪化していれば
-その エントリを revert candidate として並べる。悪化を見つけたら、追加の改善を重ねる
+その エントリを revert candidate として並べる。**対象は `status: merged` のものだけ** —
+`rejected` / `reverted` は既に取り消し済みで、並べ続けると毎回無効な revert を要求する
+ことになる (delta 自体は status を問わず表示する。観測結果は隠さない)。
+悪化を見つけたら、追加の改善を重ねる
 前に **その差分の revert PR を提案する** (`retro` の roll-back 規律と同じ)。revert したら
 `set-status --status reverted` にして、同じ finding が次に来たときに `recurrence` が
 「1 度失敗している」ことを伝えるようにする。

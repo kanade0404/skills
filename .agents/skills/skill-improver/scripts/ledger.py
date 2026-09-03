@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import hashlib
 import json
+import math
 import os
 import re
 import sys
@@ -74,7 +76,12 @@ EXIT_OK = 0
 EXIT_FAIL = 1
 EXIT_META = 2
 
-ID_RE = re.compile(r"^IMP-(\d{4,})$")
+#: id は「作成日 + (target_skill, 再発クラス) の要約」から決まる内容由来の値。
+#: 連番にすると、同じ週に複数 finding を処理する実行で「台帳を読んで次番号を決める」
+#: 経路が枝ごとに並走し、default branch を見ていない枝が同じ番号を採ってしまう
+#: (1 finding = 1 PR で台帳行も PR ごとに append されるため、採番は必ず衝突する)。
+ID_RE = re.compile(r"^IMP-(\d{8})-([0-9a-f]{6})$")
+CREATED_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 # --- pure functions (単体テスト対象) --------------------------------------
@@ -201,14 +208,21 @@ def recurrence_for(
     return prior + 1
 
 
-def next_id(entries: Sequence[dict[str, Any]]) -> str:
-    """既存 id の最大値 + 1 を IMP-NNNN 形式で返す (純関数)。"""
-    highest = 0
-    for entry in entries:
-        match = ID_RE.match(str(entry.get("id", "")))
-        if match:
-            highest = max(highest, int(match.group(1)))
-    return f"IMP-{highest + 1:04d}"
+def derive_id(target_skill: str, class_key: str, created: str) -> str:
+    """内容由来の id `IMP-<YYYYMMDD>-<sha1 先頭 6 桁>` を返す (純関数)。
+
+    材料は作成日と `target_skill` + 改行 + 再発クラスキーだけ。台帳の既存行を
+    読まないので、複数の finding を別ブランチで並行に処理しても採番が競合しない
+    (連番だと、それぞれの枝が「自分の見た台帳の最大値 + 1」を採って必ず衝突する)。
+    同じ日・同じ skill・同じクラスなら同じ id になる — それは同一 finding の
+    二重登録であり、`add` が重複として弾く。
+    """
+    if not CREATED_RE.match(created):
+        raise ValueError(f"created は YYYY-MM-DD 形式で指定する: {created!r}")
+    digest = hashlib.sha1(  # noqa: S324 - 衝突耐性ではなく短い安定 id が目的
+        f"{target_skill}\n{class_key}".encode()
+    ).hexdigest()[:6]
+    return f"IMP-{created.replace('-', '')}-{digest}"
 
 
 def recurrence_summary(entries: Sequence[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -279,9 +293,14 @@ def parse_metric(pair: str) -> tuple[str, float | int]:
     if re.fullmatch(r"[+-]?\d+", raw):
         return key, int(raw)
     try:
-        return key, float(raw)
+        value = float(raw)
     except ValueError as exc:
         raise ValueError(f"metric {key} の値が数値でない: {raw!r}") from exc
+    # float() は "nan" / "inf" / "-Infinity" も通す。台帳に入ると delta が nan / inf に
+    # なり、比較が全て False に倒れて悪化を見逃す (revert candidate の検出が壊れる)。
+    if not math.isfinite(value):
+        raise ValueError(f"metric {key} の値が有限数でない: {raw!r}")
+    return key, value
 
 
 def parse_metrics(pairs: Iterable[str]) -> dict[str, float | int]:
@@ -317,6 +336,7 @@ def discover_skills(root: Path) -> set[str] | None:
 
 
 def load_entries(path: Path) -> list[dict[str, Any]]:
+    """台帳ファイルを読み、1 行 1 エントリの list にする (壊れた行は例外)。"""
     if not path.is_file():
         return []
     entries: list[dict[str, Any]] = []
@@ -337,6 +357,7 @@ def load_entries(path: Path) -> list[dict[str, Any]]:
 
 
 def save_entries(path: Path, entries: Sequence[dict[str, Any]]) -> None:
+    """台帳を丸ごと書き直す (同一ディレクトリの一時ファイル経由で原子的に差し替える)。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     body = "".join(
         json.dumps(entry, ensure_ascii=False, sort_keys=False) + "\n" for entry in entries
@@ -353,6 +374,7 @@ def save_entries(path: Path, entries: Sequence[dict[str, Any]]) -> None:
 
 
 def find_entry(entries: Sequence[dict[str, Any]], entry_id: str) -> dict[str, Any]:
+    """id でエントリを引く。無ければ ValueError (黙って作り直さない)。"""
     for entry in entries:
         if entry.get("id") == entry_id:
             return entry
@@ -360,12 +382,30 @@ def find_entry(entries: Sequence[dict[str, Any]], entry_id: str) -> dict[str, An
 
 
 def ledger_path(args: argparse.Namespace) -> Path:
+    """使う台帳のパスを決める (--ledger 優先、既定は repo root の規約パス)。"""
     if args.ledger:
         return Path(args.ledger)
     return find_repo_root() / LEDGER_RELPATH
 
 
+def skills_root(args: argparse.Namespace) -> Path:
+    """target skill を探す起点を返す。
+
+    `--ledger` で別リポジトリの台帳を指したのに skill の実在確認だけ cwd の
+    チェックアウトで行うと、別カタログの skill 名で「既知」と判定してしまう。
+    台帳は `<repo>/improvements/ledger.jsonl` に置く規約なので、その 2 つ上を
+    対象リポジトリの root とみなす。規約から外れた場所を使うときは
+    `--skills-root` で明示する。
+    """
+    if getattr(args, "skills_root", None):
+        return Path(args.skills_root)
+    if args.ledger:
+        return Path(args.ledger).resolve().parent.parent
+    return find_repo_root()
+
+
 def today() -> str:
+    """今日の日付を UTC の YYYY-MM-DD で返す (実行環境の TZ に依存させない)。"""
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
 
 
@@ -404,9 +444,10 @@ def guard_meta(entry: dict[str, Any], new_status: str | None = None) -> int | No
 
 
 def cmd_add(args: argparse.Namespace) -> int:
+    """finding を 1 件記録する (メタスキル除外・id の形式/重複検査を通す)。"""
     path = ledger_path(args)
     entries = load_entries(path)
-    root = find_repo_root()
+    root = skills_root(args)
     classification = classify_target(args.target, discover_skills(root))
 
     status = args.status
@@ -422,9 +463,30 @@ def cmd_add(args: argparse.Namespace) -> int:
         )
         return EXIT_FAIL
 
+    created = args.created or today()
+    class_key = args.finding_class.strip() or finding_class(args.finding)
+    entry_id = args.id.strip() if args.id else derive_id(args.target, class_key, created)
+    # id は find_entry / link-pr / set-status の宛先そのもの。形式違反や重複を
+    # 通すと、後続の更新が「最初に一致した行」に当たって別 finding を書き換える。
+    if not ID_RE.match(entry_id):
+        print(
+            f"error: id {entry_id!r} が形式に合わない (IMP-YYYYMMDD-xxxxxx、"
+            "末尾は 16 進 6 桁)",
+            file=sys.stderr,
+        )
+        return EXIT_FAIL
+    if any(entry.get("id") == entry_id for entry in entries):
+        print(
+            f"error: id {entry_id} は台帳に既にある。同じ日・同じ skill・同じ"
+            " finding クラスの二重登録なら記録は不要 — 既存エントリを更新すること"
+            " (別 finding なら --class で別クラスキーを付けるか --id で明示する)",
+            file=sys.stderr,
+        )
+        return EXIT_FAIL
+
     entry = new_entry(
-        entry_id=args.id or next_id(entries),
-        created=args.created or today(),
+        entry_id=entry_id,
+        created=created,
         source=args.source,
         evidence=args.evidence,
         target_skill=args.target,
@@ -452,6 +514,7 @@ def cmd_add(args: argparse.Namespace) -> int:
 
 
 def cmd_set_status(args: argparse.Namespace) -> int:
+    """エントリの status を更新する (メタスキルは記録/却下への更新だけ通す)。"""
     path = ledger_path(args)
     entries = load_entries(path)
     entry = find_entry(entries, args.id)
@@ -467,6 +530,7 @@ def cmd_set_status(args: argparse.Namespace) -> int:
 
 
 def cmd_link_pr(args: argparse.Namespace) -> int:
+    """エントリに PR URL を紐付ける (既定で status を pr_open にする)。"""
     path = ledger_path(args)
     entries = load_entries(path)
     entry = find_entry(entries, args.id)
@@ -482,6 +546,7 @@ def cmd_link_pr(args: argparse.Namespace) -> int:
 
 
 def cmd_record_metrics(args: argparse.Namespace) -> int:
+    """before / after の指標を記録し、両相が揃った指標の delta を表示する。"""
     path = ledger_path(args)
     entries = load_entries(path)
     entry = find_entry(entries, args.id)
@@ -527,12 +592,15 @@ def build_report(entries: Sequence[dict[str, Any]]) -> dict[str, Any]:
                 "worse": worse_metrics(entry),
             }
             for entry in entries
-            if is_revert_candidate(entry)
+            # merge されたものだけが revert しうる。rejected / reverted まで並べると、
+            # 既に取り消した差分の revert を毎回要求し続けることになる。
+            if entry.get("status") == "merged" and is_revert_candidate(entry)
         ],
     }
 
 
 def cmd_report(args: argparse.Namespace) -> int:
+    """再発クラス・指標の delta・revert candidate を人間向け / JSON で出力する。"""
     path = ledger_path(args)
     entries = load_entries(path)
     if args.skill:
@@ -556,6 +624,11 @@ def cmd_report(args: argparse.Namespace) -> int:
                 f"  {skill}: entries={bucket['entries']}"
                 f" max_recurrence={bucket['max_recurrence']} [{statuses}]"
             )
+            # クラスキーを出さないと、再発ゲート (SKILL.md Step 2) で
+            # `add --class <key>` に渡す既存キーが読み取れず、言い換えのたびに
+            # 別クラスへ分裂して recurrence が伸びなくなる。
+            for key, count in sorted(bucket["classes"].items()):
+                print(f"    class {key}: {count}")
         print()
         print("## Metric deltas (before -> after)")
         if not report["deltas"]:
@@ -582,8 +655,38 @@ def cmd_report(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_list(args: argparse.Namespace) -> int:
+    """台帳のエントリを status で絞って並べる (Step 0 の reconcile 用)。
+
+    `report` は集計しか出さないため、「まだ pr_open のまま残っている PR はどれか」を
+    機械的に取り出せない。実行ごとの突き合わせはこのサブコマンドを起点にする。
+    """
+    path = ledger_path(args)
+    entries = load_entries(path)
+    if args.status:
+        wanted = set(args.status)
+        entries = [e for e in entries if str(e.get("status")) in wanted]
+    if args.skill:
+        entries = [e for e in entries if e.get("target_skill") == args.skill]
+
+    if args.json:
+        print(json.dumps(entries, ensure_ascii=False, indent=2))
+        return EXIT_OK
+
+    if not entries:
+        print("  (該当なし)")
+        return EXIT_OK
+    for entry in entries:
+        print(
+            f"  {entry.get('id')} {entry.get('status')} {entry.get('target_skill')}"
+            f" pr={entry.get('pr')} created={entry.get('created')}"
+        )
+    return EXIT_OK
+
+
 def cmd_check_target(args: argparse.Namespace) -> int:
-    root = find_repo_root()
+    """skill を改善対象にしてよいかだけを判定する (台帳は書かない)。"""
+    root = skills_root(args)
     classification = classify_target(args.skill, discover_skills(root))
     print(f"classification: {classification}")
     if classification == "excluded_meta":
@@ -610,6 +713,7 @@ def cmd_check_target(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """サブコマンドを持つ CLI パーサを組み立てる。"""
     parser = argparse.ArgumentParser(
         prog="ledger.py",
         description="skill-improver の改善台帳 (improvements/ledger.jsonl) を操作する",
@@ -617,6 +721,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--ledger",
         help="台帳のパス (既定: <repo root>/improvements/ledger.jsonl)",
+    )
+    parser.add_argument(
+        "--skills-root",
+        dest="skills_root",
+        help=(
+            "target skill を探すリポジトリ root"
+            " (既定: --ledger の 2 つ上、--ledger 省略時は cwd から見た repo root)"
+        ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -644,7 +756,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add.add_argument("--status", default="proposed", choices=STATUSES)
     add.add_argument("--notes", default="")
-    add.add_argument("--id", help="id を明示する (既定: 連番)")
+    add.add_argument(
+        "--id",
+        help=(
+            "id を明示する (既定: IMP-<YYYYMMDD>-<target_skill+クラスの sha1 先頭 6 桁>)。"
+            "形式違反と重複は拒否する"
+        ),
+    )
     add.add_argument("--created", help="作成日 YYYY-MM-DD (既定: 今日 UTC)")
     add.add_argument(
         "--allow-unknown-target",
@@ -688,6 +806,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     report.set_defaults(func=cmd_report)
 
+    listing = sub.add_parser("list", help="エントリを status で絞って並べる")
+    listing.add_argument(
+        "--status",
+        action="append",
+        default=[],
+        choices=STATUSES,
+        help="この status のエントリだけ (繰り返し可、既定: 全件)",
+    )
+    listing.add_argument("--skill", help="対象 skill で絞る")
+    listing.add_argument("--json", action="store_true")
+    listing.set_defaults(func=cmd_list)
+
     check = sub.add_parser("check-target", help="改善対象にしてよい skill かを判定する")
     check.add_argument("skill")
     check.set_defaults(func=cmd_check_target)
@@ -696,6 +826,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """CLI エントリポイント。ValueError は exit 1 のエラー出力に落とす。"""
     args = build_parser().parse_args(argv)
     try:
         return int(args.func(args))

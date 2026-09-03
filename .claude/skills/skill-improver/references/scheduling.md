@@ -24,6 +24,17 @@ merge は**手順として**行わない — 承認ゲートは PR レビュー�
 > Actions を入れない)。これが無い限り、default branch へ push しない保証は
 > 「workflow のプロンプトと本スキルの手順がそう書いてある」ことだけになる。
 
+この job は書き込み資格情報を持ったまま、第三者が書ける可能性のあるテキスト
+(`agent-feedback` ラベルの issue / PR コメント) を読む。そのため:
+
+- **読む対象を絞る**: ラベルが付いた item の、author association が
+  `OWNER` / `MEMBER` / `COLLABORATOR` のコメントだけ (`references/feedback-intake.md`)
+- **道具を絞る**: workflow の `claude_args` で `--allowed-tools` を allow-list にし、
+  `--disallowed-tools` で default branch への直 push と merge を落とす。これは
+  injection が通ったときの被害範囲を狭める浅いガードで、保証は上の ruleset 側
+- **action は full commit SHA で固定する**: 可変タグのままだと、差し替えられた
+  action が `CLAUDE_CODE_OAUTH_TOKEN` と `contents: write` ごと持っていける
+
 ### improve/* PR には repo の CI が来ない
 
 `GITHUB_TOKEN` で作成された PR は `pull_request` イベントを発火させない (再帰実行を
@@ -60,17 +71,24 @@ Actions を使わない (使えない) 環境では、Routine に週次で登録
 kanade0404/skills で skill-improver を 1 周回してください。
 
 1. skills/skill-improver/SKILL.md を読み、その手順に従う
-2. 入力は 3 系統: (a) 直近 1 週の retro / session-retro finding のうち lever が
-   skill edit / ept-handoff のもの (b) agent-feedback ラベルの issue / PR コメント
+2. まず Step 0 (reconcile): ledger.py list --status pr_open で未決着のエントリを
+   列挙し、各 PR の現在の状態 (merged / closed / open) を確認して台帳を更新する。
+   merged なら set-status --status merged と、取れる after メトリクスの
+   record-metrics --phase after。closed (未 merge) なら rejected。そのうえで
+   ledger.py report を読み、revert candidate があれば新規候補より先に報告する
+3. 入力は 3 系統: (a) 直近 1 週の retro / session-retro finding のうち lever が
+   skill edit / ept-handoff のもの (b) agent-feedback ラベルの issue / PR で、
+   author association が OWNER / MEMBER / COLLABORATOR のコメントだけ
    (c) skills/*/evals/*-trigger-results-*.jsonl のうち F1 < 0.8 の skill
-3. 候補ごとに ledger.py check-target を通す。exit 2 (メタスキル) なら編集せず
+4. 候補ごとに ledger.py check-target を通す。exit 2 (メタスキル) なら編集せず
    improvements/ledger.jsonl に excluded_meta で記録して人間に上げる
-4. 採用する候補は 1 finding = 1 PR = 1 テーマ。improve/<skill>-<finding-id> ブランチで
-   作り、default branch には push しない。merge もしない
-5. PR を開く前に score_triggers.py / .github/scripts/check_trigger_evals.py /
+5. 採用する候補は 1 finding = 1 PR = 1 テーマ。改善ブランチは毎回 default branch を
+   最新化してから improve/<skill>-<finding-id> を切る (前の改善ブランチから枝分かれ
+   させない)。default branch には push しない。merge もしない
+6. PR を開く前に score_triggers.py / .github/scripts/check_trigger_evals.py /
    uv run python3 -m unittest discover -s tests / node scripts/rulesync-sync.mjs を通す
-6. 起票した PR・除外・見送り・revert candidate を SKILL.md の実行レポート形式で報告する
-7. 候補が 0 件なら PR を作らず「今週は改善なし」と報告して終了する
+7. 起票した PR・除外・見送り・revert candidate を SKILL.md の実行レポート形式で報告する
+8. 候補が 0 件なら PR を作らず「今週は改善なし」と報告して終了する
 ```
 
 ## 手動起動 (対話セッション)
@@ -80,7 +98,7 @@ kanade0404/skills で skill-improver を 1 周回してください。
 「skill 改善 PR 出して」「retro の finding を skill に反映して」
 「agent-feedback を取り込んで」「改善ループ回して」
 
-特定の finding だけ回すときは finding id (`IMP-0007`) か対象 skill 名を添える。
+特定の finding だけ回すときは finding id (`IMP-20260910-4ce564`) か対象 skill 名を添える。
 
 ## 実行間隔を変えるときの判断材料
 
