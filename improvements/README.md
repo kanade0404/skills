@@ -49,7 +49,8 @@ uv run python3 skills/skill-improver/scripts/ledger.py check-target <skill>
 ```
 
 `list` は status で絞ってエントリを並べる (改善ループの各回は、まだ `pr_open` のまま
-残っているエントリの突き合わせから始まる)。`report` は skill 別の再発回数・再発クラス
+残っているエントリと、`--missing-after` = merged なのに after 指標が空のエントリの
+突き合わせから始まる)。`report` は skill 別の再発回数・再発クラス
 キーと before→after の delta を出し、**merge 済み**のエントリのうち after が before より
 悪化したものを **revert candidate** として並べる。悪化を見つけたら改善を重ねる前に
 revert PR を提案する。

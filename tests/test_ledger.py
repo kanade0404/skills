@@ -596,6 +596,45 @@ class TestCliRoundTrip(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(self.entries()[0]["target_skill"], "tdd")
 
+    def test_list_missing_after_and_report_section(self) -> None:
+        # after を取り損ねた merged は delta にも revert candidate にも出ない。
+        # 名指ししないと「効果が測られないまま完了扱い」で静かに消える
+        run(
+            self.base(
+                "add", "--source", "retro", "--target", "tdd",
+                "--finding", "f", "--lever", "skill-edit", "--created", "2026-09-03",
+            )
+        )
+        entry_id = self.only_id()
+        run(self.base("set-status", "--id", entry_id, "--status", "merged"))
+
+        code, out = run(self.base("list", "--missing-after", "--json"))
+        self.assertEqual(code, 0)
+        self.assertEqual([e["id"] for e in json.loads(out)], [entry_id])
+        code, out = run(self.base("report"))
+        self.assertIn("## Merged without after metrics (1)", out)
+
+        run(
+            self.base(
+                "record-metrics", "--id", entry_id, "--phase", "after",
+                "--metric", "trigger_f1=0.9",
+            )
+        )
+        self.assertEqual(json.loads(run(self.base("list", "--missing-after", "--json"))[1]), [])
+        self.assertIn("## Merged without after metrics (0)", run(self.base("report"))[1])
+
+    def test_write_commands_take_the_ledger_lock(self) -> None:
+        # read-modify-write の全体を囲えていないと、重なった実行が互いの更新を消す
+        for created in ("2026-09-03", "2026-09-10"):
+            run(
+                self.base(
+                    "add", "--source", "retro", "--target", "tdd",
+                    "--finding", "f", "--lever", "skill-edit", "--created", created,
+                )
+            )
+        self.assertEqual(len(self.entries()), 2)
+        self.assertTrue(self.ledger_path.with_name("ledger.jsonl.lock").is_file())
+
     def test_list_filters_by_status(self) -> None:
         for target, status in (("tdd", "pr_open"), ("commit", "merged")):
             run(

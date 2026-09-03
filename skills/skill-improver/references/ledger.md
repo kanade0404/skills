@@ -11,10 +11,11 @@ consumer 側が `rulesync fetch --features skills` で持っていくのは skil
 ## 台帳の書き込みは PR を通る
 
 `ledger.py` の書き込みはファイルを丸ごと書き直す (一時ファイル + `os.replace`) ため、
-1 回の書き込みが途中で壊れることは無い。一方で「読んで書く」の粒度でのロックは持って
-いない — それを支えているのは **書き込みが直列化されていること**である: workflow は
-`concurrency: skill-improver` で 1 実行ずつしか走らず、手動実行を跨いだ競合は git が
-受け止める (台帳への追記は必ずブランチ + PR 経由で default branch に入るので、
+1 回の書き込みが途中で壊れることは無い。「読んで書く」の区間は `<ledger>.lock` に対する
+`flock` (advisory lock) で囲ってあり、重なった実行が互いの更新を上書きで消すことも
+無い (`fcntl` の無い環境では素通しに落ちる)。実行そのものの直列化はさらに 2 段構えで、
+workflow は `concurrency: skill-improver` で 1 実行ずつしか走らず、実行を跨いだ競合は
+git が受け止める (台帳への追記は必ずブランチ + PR 経由で default branch に入るので、
 衝突する追記は merge conflict として人間の目の前に出る)。
 
 その帰結として、**台帳の更新が次の実行から見えるのは PR が merge された後**である。
@@ -103,8 +104,8 @@ cwd から見た repo root。規約外の場所に台帳を置くときは `--sk
 | `set-status --id --status [--notes]` | status を更新 |
 | `link-pr --id --pr [--keep-status]` | PR URL を紐付け、既定で `status=pr_open` にする |
 | `record-metrics --id --phase before\|after --metric KEY=VALUE [--metric ...]` | 指標を記録。両相が揃うと delta を表示する。非有限値 (`nan` / `inf`) は拒否 |
-| `list [--status ...] [--skill] [--json]` | エントリを status で絞って列挙。Step 0 の突き合わせ (`--status pr_open`) の起点 |
-| `report [--skill] [--json] [--fail-on-revert]` | skill 別の件数・**再発クラスキーとその件数**・status 内訳、before→after の delta、**revert candidate** を出力 |
+| `list [--status ...] [--skill] [--missing-after] [--json]` | エントリを絞って列挙。Step 0 の突き合わせは `--status pr_open` と `--missing-after` (merged なのに `after` が空) の 2 本を起点にする |
+| `report [--skill] [--json] [--fail-on-revert]` | skill 別の件数・**再発クラスキーとその件数**・status 内訳、before→after の delta、**merged without after metrics**、**revert candidate** を出力 |
 | `check-target <skill>` | 改善対象にしてよいかの判定 |
 
 ### exit code 契約

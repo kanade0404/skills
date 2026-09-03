@@ -19,10 +19,26 @@ merge は**手順として**行わない — 承認ゲートは PR レビュー�
 ただし `contents: write` は improve/* と default branch を区別できない。**手順は
 約束であって強制ではない**ので、実効的な保証は default branch 側の設定に置く:
 
-> **推奨セットアップ**: default branch に branch ruleset を作り、`GITHUB_TOKEN` /
+> **必須セットアップ**: default branch に branch ruleset を作り、`GITHUB_TOKEN` /
 > GitHub Actions からの push を拒否する (Rulesets → Restrict updates、bypass list に
 > Actions を入れない)。これが無い限り、default branch へ push しない保証は
 > 「workflow のプロンプトと本スキルの手順がそう書いてある」ことだけになる。
+
+これは**推奨ではなく前提条件**として workflow が検査する (fail-closed)。agent を起動する
+前のステップが `gh api repos/{owner}/{repo}/rulesets` を読み、default branch
+(`~DEFAULT_BRANCH` または `refs/heads/<default>`) を対象とする ruleset のうち
+
+- `enforcement` が `active`
+- `pull_request` または `update` のルールを持つ
+- `bypass_actors` に `Integration` (= Actions / GitHub App) を含まない
+
+ものが 1 つも無ければ、そこで `exit 1` して agent を走らせません。**現在この
+リポジトリには該当する ruleset が無いため、この workflow は ruleset を作るまで
+起動しません** (PR の Follow-ups に挙げてあるとおり、repo 設定の変更はコード PR の
+スコープ外)。
+
+より強い分離が要るなら、PR 作成の資格情報を GitHub App トークン / PAT に替えて
+workflow の `GITHUB_TOKEN` から `contents: write` を落とす経路もあります (任意)。
 
 この job は書き込み資格情報を持ったまま、第三者が書ける可能性のあるテキスト
 (`agent-feedback` ラベルの issue / PR コメント) を読む。そのため:
@@ -37,10 +53,11 @@ merge は**手順として**行わない — 承認ゲートは PR レビュー�
 
 ### improve/* PR には repo の CI が来ない — だから検証してから起票する
 
-**`GITHUB_TOKEN` 起点のイベントは `pull_request` ワークフローの run を作らない**
-(`workflow_dispatch` / `repository_dispatch` を除く、GitHub の再帰実行防止仕様)。
-そのため trigger-evals / rulesync drift / unittest の各 workflow は improve/* PR では
-回らず、レビュアーには「チェックが 1 つも無い PR」が見える。
+**`GITHUB_TOKEN` が作成・更新した PR の `pull_request` run (`opened` / `synchronize` /
+`reopened`) は approval-required 状態で作成され、write 権限者が「Approve workflows to
+run」を押すまで走らない** ([GITHUB_TOKEN のドキュメント](https://docs.github.com/en/actions/concepts/security/github_token))。
+そのため trigger-evals / rulesync drift / unittest の結果は、人間が承認するまで
+レビュアーに見えない。workflow 内の事前検証は、その承認前に結果を見せるための代替である。
 
 そこで **workflow モードでは PR を作るのは agent ではない**。agent は改善ブランチを
 push し、環境変数 `MANIFEST` のファイルに 1 行 1 JSON
@@ -57,8 +74,8 @@ CI runner は `trigger-evals.yml` と同じく `python3` を直接呼ぶ (`uv` �
 生成は Step 5 の前段として別に実行する。
 
 (任意) PR 作成の資格情報を `GITHUB_TOKEN` ではなく GitHub App のトークンか PAT に
-差し替えれば、通常どおり `pull_request` イベントが発火して repo の CI がそのまま
-効くようになる。その場合も「検証してから起票する」順序は変えない。
+差し替えれば、承認を挟まずに `pull_request` の run が走る。その場合も
+「検証してから起票する」順序は変えない。
 
 `concurrency: skill-improver` で直列化しているのは、同時実行が同じ
 `improve/<skill>-<finding-id>` ブランチを取り合うのを防ぐため。
@@ -98,7 +115,9 @@ kanade0404/skills で skill-improver を 1 周回してください。
 2. まず Step 0 (reconcile): ledger.py list --status pr_open で未決着のエントリを
    列挙し、各 PR の現在の状態 (merged / closed / open) を確認して台帳を更新する。
    merged なら set-status --status merged と、取れる after メトリクスの
-   record-metrics --phase after。closed (未 merge) なら rejected。更新は
+   record-metrics --phase after。closed (未 merge) なら rejected。あわせて
+   ledger.py list --missing-after も列挙し、after を取り損ねた merged エントリを
+   拾い直す (放置すると効果が測られないまま静かに消える)。更新は
    improve/ledger-reconcile-<YYYYMMDD> ブランチに commit し、
    "chore(ledger): reconcile <date>" として PR を出す (default branch には push
    しない)。そのうえで ledger.py report を読み、revert candidate があれば
@@ -124,7 +143,7 @@ kanade0404/skills で skill-improver を 1 周回してください。
 7. PR を作ったら ledger.py link-pr で紐付け、その差分を同じブランチに commit して
    push する (紐付けを commit しないと次回の Step 0 が突き合わせる相手を失う)
 8. 起票した PR・除外・見送り・revert candidate を SKILL.md の実行レポート形式で報告する
-8. 候補が 0 件なら PR を作らず「今週は改善なし」と報告して終了する
+9. 候補が 0 件なら PR を作らず「今週は改善なし」と報告して終了する
 ```
 
 ## 手動起動 (対話セッション)

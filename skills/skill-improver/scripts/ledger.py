@@ -22,6 +22,7 @@ exit code 契約 (相互排他):
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as _dt
 import hashlib
 import json
@@ -31,7 +32,12 @@ import re
 import sys
 import unicodedata
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Iterator, Sequence
+
+try:  # POSIX のみ。Windows では advisory lock を諦めて no-op に落とす
+    import fcntl
+except ImportError:  # pragma: no cover - POSIX 以外でのみ通る
+    fcntl = None  # type: ignore[assignment]
 
 # --- 定数 (schema) -------------------------------------------------------
 
@@ -396,6 +402,43 @@ def save_entries(path: Path, entries: Sequence[dict[str, Any]]) -> None:
         raise
 
 
+@contextlib.contextmanager
+def ledger_lock(path: Path) -> Iterator[None]:
+    """台帳の read-modify-write 全体を排他する (advisory lock)。
+
+    `save_entries` の `os.replace` が守るのは「壊れたファイルを残さない」ことだけで、
+    読んでから書くまでの間に別プロセスが書いた更新は上書きで消える。workflow 実行
+    どうしは Actions の `concurrency` グループが直列化するが、手元で 2 つ走らせた
+    ときはそれが効かないので、ここで `<ledger>.lock` を掴む。
+    `fcntl` の無い環境では諦めて素通しする (壊すより、守れない環境で動く方を採る)。
+    """
+    if fcntl is None:  # pragma: no cover - POSIX 以外でのみ通る
+        yield
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(f"{path.name}.lock")
+    with lock_path.open("a+") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def missing_after(entries: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """merged なのに after 指標が 1 つも無いエントリを返す (純関数)。
+
+    after が取れないまま merged にすると、そのエントリは `report` の delta にも
+    revert candidate にも現れず、突き合わせ済みという理由で `pr_open` の列挙からも
+    外れる — 改善の効果が測られないまま静かに消える唯一の経路なので、明示的に拾う。
+    """
+    return [
+        entry
+        for entry in entries
+        if entry.get("status") == "merged" and not (entry.get("after") or {})
+    ]
+
+
 def find_entry(entries: Sequence[dict[str, Any]], entry_id: str) -> dict[str, Any]:
     """id でエントリを引く。無ければ ValueError (黙って作り直さない)。"""
     for entry in entries:
@@ -620,6 +663,16 @@ def build_report(entries: Sequence[dict[str, Any]]) -> dict[str, Any]:
             # 既に取り消した差分の revert を毎回要求し続けることになる。
             if entry.get("status") == "merged" and is_revert_candidate(entry)
         ],
+        # after を取り損ねた merged は delta にも revert candidate にも出ない。
+        # ここで名指ししないと「効果が測られないまま完了扱い」で静かに消える。
+        "merged_without_after": [
+            {
+                "id": entry.get("id"),
+                "target_skill": entry.get("target_skill"),
+                "pr": entry.get("pr"),
+            }
+            for entry in missing_after(entries)
+        ],
     }
 
 
@@ -665,6 +718,14 @@ def cmd_report(args: argparse.Namespace) -> int:
                     f" {row['verdict']}"
                 )
         print()
+        print(
+            f"## Merged without after metrics ({len(report['merged_without_after'])})"
+        )
+        if not report["merged_without_after"]:
+            print("  (なし)")
+        for item in report["merged_without_after"]:
+            print(f"  {item['id']} {item['target_skill']} (pr={item['pr']})")
+        print()
         print("## Revert candidates")
         if not report["revert_candidates"]:
             print("  (なし)")
@@ -687,6 +748,8 @@ def cmd_list(args: argparse.Namespace) -> int:
     """
     path = ledger_path(args)
     entries = load_entries(path)
+    if args.missing_after:
+        entries = missing_after(entries)
     if args.status:
         wanted = set(args.status)
         entries = [e for e in entries if str(e.get("status")) in wanted]
@@ -802,19 +865,19 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="skill ディレクトリで解決できない target でも記録する",
     )
-    add.set_defaults(func=cmd_add)
+    add.set_defaults(func=cmd_add, locks=True)
 
     set_status = sub.add_parser("set-status", help="status を更新する")
     set_status.add_argument("--id", required=True)
     set_status.add_argument("--status", required=True, choices=STATUSES)
     set_status.add_argument("--notes", default="")
-    set_status.set_defaults(func=cmd_set_status)
+    set_status.set_defaults(func=cmd_set_status, locks=True)
 
     link = sub.add_parser("link-pr", help="PR URL を紐付ける (既定で status=pr_open)")
     link.add_argument("--id", required=True)
     link.add_argument("--pr", required=True)
     link.add_argument("--keep-status", action="store_true", help="status を変えない")
-    link.set_defaults(func=cmd_link_pr)
+    link.set_defaults(func=cmd_link_pr, locks=True)
 
     metrics = sub.add_parser("record-metrics", help="before / after の指標を記録する")
     metrics.add_argument("--id", required=True)
@@ -827,7 +890,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="KEY=VALUE",
         help=f"記録する指標 (繰り返し可)。KEY: {', '.join(METRIC_KEYS)}",
     )
-    metrics.set_defaults(func=cmd_record_metrics)
+    metrics.set_defaults(func=cmd_record_metrics, locks=True)
 
     report = sub.add_parser("report", help="再発回数と before->after の delta を集計する")
     report.add_argument("--skill", help="対象 skill で絞る")
@@ -848,6 +911,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="この status のエントリだけ (繰り返し可、既定: 全件)",
     )
     listing.add_argument("--skill", help="対象 skill で絞る")
+    listing.add_argument(
+        "--missing-after",
+        dest="missing_after",
+        action="store_true",
+        help="merged なのに after 指標が 1 つも無いエントリだけ (Step 0 の取りこぼし回収)",
+    )
     listing.add_argument("--json", action="store_true")
     listing.set_defaults(func=cmd_list)
 
@@ -859,9 +928,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """CLI エントリポイント。ValueError は exit 1 のエラー出力に落とす。"""
+    """CLI エントリポイント。ValueError は exit 1 のエラー出力に落とす。
+
+    書き込み系サブコマンドは read-modify-write の全体を advisory lock で囲む
+    (個々の cmd_* を触らずに済むよう、dispatch の外側で 1 か所だけ掴む)。
+    """
     args = build_parser().parse_args(argv)
     try:
+        if getattr(args, "locks", False):
+            with ledger_lock(ledger_path(args)):
+                return int(args.func(args))
         return int(args.func(args))
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
