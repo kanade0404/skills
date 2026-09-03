@@ -141,6 +141,7 @@ cwd から見た repo root。規約外の場所に台帳を置くときは `--sk
 | `record-metrics --id --phase before\|after --metric KEY=VALUE [--metric ...]` | 指標を記録。両相が揃うと delta を表示する。非有限値 (`nan` / `inf`) は拒否 |
 | `list [--status ...] [--skill] [--missing-after] [--json]` | エントリを絞って列挙。Step 0 の突き合わせは `--status pr_open` と `--missing-after` (merged なのに `after` が空) の 2 本を起点にする |
 | `report [--skill] [--json] [--fail-on-revert]` | skill 別の件数・**再発クラスキーとその件数**・status 内訳、before→after の delta、**merged without after metrics**、**revert candidate** を出力 |
+| `verify-diff --head <file> [--base <file>] --mode candidate\|reconcile [--ledger-id ID]` | ブランチの台帳差分が許された変更だけかを検査する (workflow の `verify` job 用) |
 | `check-target <skill>` | 改善対象にしてよいかの判定 |
 
 ### exit code 契約
@@ -181,6 +182,22 @@ $LEDGER set-status --id IMP-20260910-4ce5643613 --status merged
 $LEDGER record-metrics --id IMP-20260910-4ce5643613 --phase after --metric ci_fix_iterations=3
 $LEDGER report                                         # 再発と revert candidate を確認
 ```
+
+## ブランチの台帳差分を検査する (`verify-diff`)
+
+workflow の allow-list は `improvements/ledger.jsonl` を**ファイル単位**で許す。
+それだけだと「自分の 1 行を足すついでに、他の行 (別 skill の `merged` 記録など) を
+書き換える」経路が残るので、**行の粒度でも検査する**。判定は id をキーにした
+added / removed / modified の 3 分類で行い、モードごとに許す形が違う:
+
+| モード | 許す差分 |
+|---|---|
+| `candidate` (改善ブランチ) | **追加 1 行だけ**。削除・既存行の変更は不可。追加行は `--ledger-id` と一致する id を持ち、`status` が `proposed`、`pr` が `null` であること |
+| `reconcile` (突き合わせブランチ) | 削除は不可。既存行で変えてよいのは `status` / `pr` / `after` / `notes` だけで、`status` の遷移は `pr_open → merged`\|`rejected`、`merged → reverted`、`proposed` (pr 未設定) `→ pr_open`\|`rejected` (修復経路) のみ。追加行があれば `proposed` の形であること |
+
+`verify` job は **base (default branch) 側の `ledger.py`** でこの検査を実行する —
+候補ブランチのコピーを使ったら検査にならないため。違反があれば内容を並べて
+exit 1 し、そのブランチは PR にならない。
 
 ## revert candidate の扱い
 

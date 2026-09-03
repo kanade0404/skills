@@ -285,9 +285,11 @@ agent が書くのは manifest の 1 行 1 JSON まで:
 
 **ブランチの差分は allow-list で制限される**。`skills/<target_skill>/**`、`.claude/skills/<target_skill>/**`、`.agents/skills/<target_skill>/**`、`improvements/ledger.jsonl` 以外を含むブランチは検査を実行する前に落とす (reconcile ブランチは `improvements/ledger.jsonl` のみ)。
 
+**台帳は行の粒度でも検査される**。パスの allow-list は `improvements/ledger.jsonl` をファイル単位で許すので、1 行足すついでに他の行を書き換える余地が残る。`verify` は base 側の `ledger.py verify-diff` で、改善ブランチには「自分の 1 行の追加だけ」(id が manifest の `ledger_id` と一致し、`proposed` / `pr == null`)、reconcile ブランチには「`status` / `pr` / `after` / `notes` を許された遷移で進めるだけ」を要求する (`references/ledger.md`)。
+
 検証に落ちたブランチは PR にならず、失敗したコマンドと共に job summary に出て job が赤になる。ブランチは調査用に残る。PR を作った後で `link-pr` の commit / push に失敗した場合は、**まず台帳に「閉じた」事実を記録してから PR を閉じる** — 先に close だけすると「PR は closed、台帳は `proposed` / `pr == null`」というどちらからも辿れない状態が残るため。台帳への記録 (`link-pr` + `set-status --status rejected --notes`) が push できたときだけ `gh pr close` し、記録に失敗したら **PR は open のまま**残して次回の Step 0 の修復対象にする。
 
-workflow は **専用の GitHub App としてしか動かない**。`GITHUB_TOKEN` は ruleset の bypass actor になれず、`improve/**` への push を絞る ruleset を作れば workflow 自身の push が止まり、作らなければ検証と起票の間に第三者が push できる窓が残る — どちらも成立しないため、この経路は用意していない。App の secrets (`SKILL_IMPROVER_APP_ID` / `SKILL_IMPROVER_APP_PRIVATE_KEY`)、default branch の ruleset、`improve/**` の ruleset (bypass はその App 1 件だけ) が揃うまで preflight が `exit 1` する (セットアップは `references/scheduling.md`)。App として走るので `improve/*` PR の `pull_request` run も承認を挟まずに走るが、この「検証してから起票」の順序は変えない。
+workflow は **専用の GitHub App としてしか動かない**。`GITHUB_TOKEN` は ruleset の bypass actor になれず、`improve/**` への push を絞る ruleset を作れば workflow 自身の push が止まり、作らなければ検証と起票の間に第三者が push できる窓が残る — どちらも成立しないため、この経路は用意していない。App の secrets (`SKILL_IMPROVER_APP_ID` / `SKILL_IMPROVER_APP_PRIVATE_KEY`)、default branch の ruleset、`improve/**` の ruleset (bypass はその App 1 件だけ) が揃うまで preflight が `exit 1` する。App に要る権限は **Contents: read/write**、**Pull requests: read/write**、**Issues: read**、**Administration: write** — 最後の 1 つは ruleset の `bypass_actors` が write 権限のある呼び出しにしか返らないためで、これが無いと bypass の検査が素通りする (セットアップは `references/scheduling.md`)。App として走るので `improve/*` PR の `pull_request` run も承認を挟まずに走るが、この「検証してから起票」の順序は変えない。
 
 PR 本文は下記フォーマット固定。作成後、**紐付けを同じブランチの 2 つ目の commit として載せる** — ここで commit せずローカルに置いたままだと、`pr` も `status` もどの PR にも入らず、次回の Step 0 が突き合わせる相手を失う (台帳が実行の中だけで完結して消える):
 

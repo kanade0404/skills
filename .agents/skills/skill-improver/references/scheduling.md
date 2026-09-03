@@ -61,11 +61,18 @@ run」を押すまで走らない** ([GITHUB_TOKEN のドキュメント](https:
 そのため trigger-evals / rulesync drift / unittest の結果は、人間が承認するまで
 レビュアーに見えない。workflow 内の事前検証は、その承認前に結果を見せるための代替である。
 
-そこで **workflow モードでは PR を作るのは agent ではない**。agent は改善ブランチを
-push し、環境変数 `MANIFEST` のファイルに 1 行 1 JSON
-(`{"branch":..., "title":..., "body_file":..., "ledger_id":...}`) を追記するところまで。
-**`head_sha` は agent が書かない** — push を行う trusted step が、実際に push した
-ref から計算して manifest に足す。`gh pr create` は allow-list から外してある。
+そこで **workflow モードでは agent は push も PR 起票もしない**。責務は 3 段に分かれる:
+
+1. **agent (`improve` job)** — 改善ブランチを切って**ローカルに commit**し、環境変数
+   `MANIFEST` のファイルに 1 行 1 JSON
+   (`{"branch":..., "title":..., "body_file":..., "ledger_id":...}`) を追記する。
+   持っているのは読み取り専用トークンだけで、`gh pr create` も allow-list の外
+2. **trusted push step (`improve` job、agent の実行後)** — 書き込みトークンを発行し、
+   manifest の `branch` を検証してローカル ref を push する。**`head_sha` はここで
+   実際に push した ref から計算して manifest に書き足す** (agent の申告値は使わない)
+3. **`verify` → `publish`** — `verify` が manifest の値・台帳差分・パスの allow-list を
+   検査し、その SHA でテストを回す。通ったものだけ `publish` が `gh pr create` し、
+   `link-pr` を commit / push する
 
 ### job の分割 (権限の分離)
 
@@ -76,7 +83,7 @@ ref から計算して manifest に足す。`gh pr create` は allow-list から
 | job | 権限 | 役割 |
 |---|---|---|
 | `improve` | `contents: write` / `issues: read` | ruleset の preflight、agent 実行、ブランチ push、manifest を artifact に上げる |
-| `verify` | `contents: read` のみ (`persist-credentials: false`、`GH_TOKEN` もシークレットも渡さない) | manifest の値の検証、allow-list diff ゲート、ブランチ上で `unittest` / `check_trigger_evals.py` / `rulesync-sync.mjs --check` |
+| `verify` | `contents: read` のみ (`persist-credentials: false`、`GH_TOKEN` もシークレットも渡さない) | manifest の値の検証、パスの allow-list ゲート、**台帳差分のゲート (`ledger.py verify-diff`)**、ブランチ上で `unittest` / `check_trigger_evals.py` / `rulesync-sync.mjs --check` |
 | `publish` | `contents: write` / `pull-requests: write` | 通ったブランチの `gh pr create`、`link-pr` の commit / push、失敗時の補償 |
 
 `verify` は `fetch-depth: 0` の checkout で全 remote head をローカルに取り込むため、
@@ -84,7 +91,13 @@ job 中に追加のネットワークアクセス (= 資格情報) が要らな�
 持つが**ブランチのコードを実行しない** — `ledger.py` は checkout 前に default branch 側の
 コピーを `$RUNNER_TEMP` へ退避して、そちらを使う。
 
-**allow-list diff ゲート**: `verify` はブランチの中身を実行する前に
+**台帳差分のゲート**: パスの allow-list は `improvements/ledger.jsonl` を**ファイル
+単位**で許すため、行の粒度でも検査する。`verify` は base 側の `ledger.py` (候補
+ブランチのコピーではない) で `verify-diff` を実行し、改善ブランチには「自分の 1 行の
+追加だけ」、突き合わせブランチには「決着した行の `status` / `pr` / `after` / `notes`
+を許された遷移で進めるだけ」を要求する (詳細は `references/ledger.md`)。
+
+**パスの allow-list ゲート**: `verify` はブランチの中身を実行する前に
 `git diff --name-only origin/<default>...origin/<branch>` を取り、
 `skills/<target_skill>/**` / `.claude/skills/<target_skill>/**` /
 `.agents/skills/<target_skill>/**` / `improvements/ledger.jsonl` の範囲に収まっているかを
@@ -143,7 +156,8 @@ CI runner は `trigger-evals.yml` と同じく `python3` を直接呼ぶ (`uv` �
 **前提条件 (すべて揃うまで workflow は起動しない)**:
 
 1. GitHub App を作る。権限は **Contents: read/write**、**Pull requests: read/write**、
-   **Issues: read** (`agent-feedback` ラベルの issue とそのコメントを読むため)
+   **Issues: read** (`agent-feedback` ラベルの issue とそのコメントを読むため)、
+   **Administration: write** (ruleset の `bypass_actors` を読むため — 後述)
 2. その App をこのリポジトリにインストールする
 3. App ID と private key を repo secrets に置く
    (`SKILL_IMPROVER_APP_ID` / `SKILL_IMPROVER_APP_PRIVATE_KEY`)
@@ -166,8 +180,23 @@ prompt injection が通ったときに書き込み権限ごと持っていかれ
 
 | トークン | 権限 | 使う場所 |
 |---|---|---|
-| read | `contents: read` / `issues: read` / `pull-requests: read` | `improve` の checkout、preflight、**agent の `GH_TOKEN`** |
+| read | `contents: read` / `issues: read` / `pull-requests: read` | `improve` の checkout、**agent の `GH_TOKEN`** |
+| preflight | `administration: write` | ruleset の preflight step **だけ** |
 | write | `contents: write` / `pull-requests: write` | agent の実行**後**の push step、`publish` job |
+
+**preflight トークンが `administration: write` を要る理由**: GitHub は ruleset の
+`bypass_actors` を **その ruleset への write 権限を持つ呼び出しにしか返さない**
+([REST API endpoints for rules](https://docs.github.com/en/rest/repos/rules))。
+読み取り権限だけで引くとこの項目がそもそも応答に無く、`(.bypass_actors // [])` の
+ような書き方では「bypass が無い」と読めてしまう (**fail-open**)。そこで preflight は
+専用トークンで引き、**キーの有無そのものを先に確かめて**、無ければ権限不足として
+`exit 1` する。
+
+このトークンの扱い: 発行するのは agent より前の trusted step で、**渡し先は
+preflight step の `GH_TOKEN` だけ**。checkout にも agent にも渡らない
+(`persist-credentials: false` なので `.git/config` にも入らない) し、用途も
+ruleset の GET に限られる。`administration` を要求するのはこの 1 本だけで、
+read / write の 2 本は従来どおり。
 
 さらに `improve` の checkout は `persist-credentials: false` にしてある。
 `.git/config` に資格情報を残さないので、agent が git 設定を読んでトークンを

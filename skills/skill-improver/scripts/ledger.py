@@ -646,6 +646,151 @@ def cmd_record_metrics(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+#: reconcile ブランチが台帳の既存行に対して変えてよいフィールド。
+#: これ以外 (finding / target_skill / lever / evidence / recurrence 等) が動いていたら、
+#: 突き合わせに見せかけた履歴の書き換えである。
+RECONCILE_MUTABLE_FIELDS: frozenset[str] = frozenset({"status", "pr", "after", "notes"})
+
+#: 突き合わせで許す status 遷移。それ以外は人間の判断を要する。
+#: proposed (pr 未設定) からの 2 つは、PR 起票後に link-pr が落ちた場合の修復経路。
+ALLOWED_STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
+    "pr_open": frozenset({"merged", "rejected"}),
+    "merged": frozenset({"reverted"}),
+    "proposed": frozenset({"pr_open", "rejected"}),
+}
+
+
+def index_by_id(entries: Sequence[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """id をキーにしたインデックスを返す (純関数)。重複 id は最初の行を採る。"""
+    indexed: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        key = str(entry.get("id", ""))
+        indexed.setdefault(key, entry)
+    return indexed
+
+
+def diff_ledgers(
+    base: Sequence[dict[str, Any]], head: Sequence[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[tuple[dict, dict]]]:
+    """base → head の (added, removed, modified) を id 基準で返す (純関数)。"""
+    base_idx = index_by_id(base)
+    head_idx = index_by_id(head)
+    added = [e for k, e in head_idx.items() if k not in base_idx]
+    removed = [e for k, e in base_idx.items() if k not in head_idx]
+    modified = [
+        (base_idx[k], head_idx[k])
+        for k in head_idx
+        if k in base_idx and base_idx[k] != head_idx[k]
+    ]
+    return added, removed, modified
+
+
+def _proposed_entry_problems(entry: dict[str, Any], label: str) -> list[str]:
+    """新規追加行が「これから PR にする finding」の形をしているかを検査する。"""
+    problems: list[str] = []
+    entry_id = str(entry.get("id", ""))
+    if not ID_RE.match(entry_id):
+        problems.append(f"{label}: id が形式に合わない ({entry_id!r})")
+    if entry.get("status") != "proposed":
+        problems.append(f"{label}: status が proposed でない ({entry.get('status')!r})")
+    if entry.get("pr") is not None:
+        problems.append(f"{label}: pr が設定されている ({entry.get('pr')!r})")
+    return problems
+
+
+def check_candidate_diff(
+    base: Sequence[dict[str, Any]],
+    head: Sequence[dict[str, Any]],
+    ledger_id: str,
+) -> list[str]:
+    """改善ブランチの台帳差分を検査する (純関数)。
+
+    改善ブランチが触ってよいのは **自分の finding 1 行の追加だけ**。パスの
+    allow-list は `improvements/ledger.jsonl` 全体を許してしまうので、行の粒度でも
+    見ないと、1 行足すついでに他の行 (別 skill の merged 記録など) を書き換えられる。
+    """
+    added, removed, modified = diff_ledgers(base, head)
+    problems: list[str] = []
+    if removed:
+        problems.append(
+            f"既存の行が消えている ({', '.join(str(e.get('id')) for e in removed)})"
+        )
+    if modified:
+        problems.append(
+            f"既存の行が書き換わっている ({', '.join(str(b.get('id')) for b, _ in modified)})"
+        )
+    if len(added) != 1:
+        problems.append(f"追加行はちょうど 1 行でなければならない (実際: {len(added)})")
+        return problems
+    entry = added[0]
+    problems.extend(_proposed_entry_problems(entry, "追加行"))
+    if str(entry.get("id", "")) != ledger_id:
+        problems.append(
+            f"追加行の id が manifest の ledger_id と一致しない"
+            f" ({entry.get('id')!r} != {ledger_id!r})"
+        )
+    return problems
+
+
+def check_reconcile_diff(
+    base: Sequence[dict[str, Any]], head: Sequence[dict[str, Any]]
+) -> list[str]:
+    """突き合わせブランチの台帳差分を検査する (純関数)。
+
+    許すのは「決着した PR の status / pr / after / notes を進める」ことだけ。
+    finding 本文や target_skill が動いていたら、それは突き合わせではない。
+    """
+    added, removed, modified = diff_ledgers(base, head)
+    problems: list[str] = []
+    if removed:
+        problems.append(
+            f"既存の行が消えている ({', '.join(str(e.get('id')) for e in removed)})"
+        )
+    for before, after in modified:
+        entry_id = str(before.get("id"))
+        changed = {
+            key
+            for key in set(before) | set(after)
+            if before.get(key) != after.get(key)
+        }
+        illegal = sorted(changed - RECONCILE_MUTABLE_FIELDS)
+        if illegal:
+            problems.append(f"{entry_id}: 変更してはいけない項目 ({', '.join(illegal)})")
+        old_status = str(before.get("status", ""))
+        new_status = str(after.get("status", ""))
+        if old_status != new_status:
+            allowed = ALLOWED_STATUS_TRANSITIONS.get(old_status, frozenset())
+            if old_status == "proposed" and before.get("pr") is not None:
+                allowed = frozenset()
+            if new_status not in allowed:
+                problems.append(
+                    f"{entry_id}: 許されない status 遷移 ({old_status} -> {new_status})"
+                )
+    for entry in added:
+        problems.extend(_proposed_entry_problems(entry, f"追加行 {entry.get('id')}"))
+    return problems
+
+
+def cmd_verify_diff(args: argparse.Namespace) -> int:
+    """base と head の台帳を突き合わせ、ブランチが許された変更だけをしているか見る。"""
+    base = load_entries(Path(args.base)) if args.base else []
+    head = load_entries(Path(args.head))
+    if args.mode == "candidate":
+        if not args.ledger_id:
+            print("error: --mode candidate には --ledger-id が要る", file=sys.stderr)
+            return EXIT_FAIL
+        problems = check_candidate_diff(base, head, args.ledger_id)
+    else:
+        problems = check_reconcile_diff(base, head)
+    if problems:
+        print(f"verify-diff: {len(problems)} 件の違反")
+        for problem in problems:
+            print(f"  - {problem}", file=sys.stderr)
+        return EXIT_FAIL
+    print("verify-diff: ok")
+    return EXIT_OK
+
+
 def build_report(entries: Sequence[dict[str, Any]]) -> dict[str, Any]:
     """report の素データを組み立てる (純関数)。"""
     return {
@@ -943,6 +1088,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     listing.add_argument("--json", action="store_true")
     listing.set_defaults(func=cmd_list)
+
+    verify_diff = sub.add_parser(
+        "verify-diff",
+        help="ブランチの台帳差分が許された変更だけかを検査する (workflow の verify job 用)",
+    )
+    verify_diff.add_argument("--base", help="base (default branch) 側の台帳ファイル")
+    verify_diff.add_argument("--head", required=True, help="ブランチ側の台帳ファイル")
+    verify_diff.add_argument(
+        "--mode",
+        required=True,
+        choices=("candidate", "reconcile"),
+        help="candidate: 改善ブランチ (1 行追加のみ) / reconcile: 突き合わせブランチ",
+    )
+    verify_diff.add_argument(
+        "--ledger-id",
+        dest="ledger_id",
+        default="",
+        help="candidate モードで追加行に期待する id",
+    )
+    verify_diff.set_defaults(func=cmd_verify_diff)
 
     check = sub.add_parser("check-target", help="改善対象にしてよい skill かを判定する")
     check.add_argument("skill")

@@ -790,6 +790,154 @@ def backticked_names(text: str) -> set[str]:
     return set(re.findall(r"`([a-z][a-z0-9-]*)`", text))
 
 
+class TestVerifyDiff(unittest.TestCase):
+    """ブランチが台帳に対して許された変更だけをしているかの検査 (純関数)。
+
+    パスの allow-list は improvements/ledger.jsonl 全体を許すので、行の粒度で
+    見ないと「1 行足すついでに他の行を書き換える」経路が残る。
+    """
+
+    def entry(self, entry_id: str, **overrides: object) -> dict:
+        base = {
+            "id": entry_id,
+            "created": "2026-09-03",
+            "source": "retro",
+            "evidence": [],
+            "target_skill": "tdd",
+            "finding": "f",
+            "finding_class": "",
+            "lever": "skill-edit",
+            "status": "proposed",
+            "pr": None,
+            "before": {},
+            "after": {},
+            "recurrence": 1,
+            "notes": "",
+        }
+        base.update(overrides)
+        return base
+
+    # --- candidate ---------------------------------------------------
+    def test_candidate_single_addition_is_ok(self) -> None:
+        new_id = "IMP-20260903-aaaaaaaaaa"
+        base = [self.entry("IMP-20260801-bbbbbbbbbb", status="merged")]
+        head = base + [self.entry(new_id)]
+        self.assertEqual(ledger.check_candidate_diff(base, head, new_id), [])
+
+    def test_candidate_rejects_touching_other_rows(self) -> None:
+        other = self.entry("IMP-20260801-bbbbbbbbbb", status="merged")
+        new_id = "IMP-20260903-aaaaaaaaaa"
+        base = [other]
+        tampered = dict(other, finding="書き換えた")
+        head = [tampered, self.entry(new_id)]
+        problems = ledger.check_candidate_diff(base, head, new_id)
+        self.assertTrue(any("書き換わっている" in p for p in problems), problems)
+
+    def test_candidate_rejects_removed_rows(self) -> None:
+        new_id = "IMP-20260903-aaaaaaaaaa"
+        base = [self.entry("IMP-20260801-bbbbbbbbbb", status="merged")]
+        head = [self.entry(new_id)]
+        problems = ledger.check_candidate_diff(base, head, new_id)
+        self.assertTrue(any("消えている" in p for p in problems), problems)
+
+    def test_candidate_rejects_two_additions(self) -> None:
+        new_id = "IMP-20260903-aaaaaaaaaa"
+        head = [self.entry(new_id), self.entry("IMP-20260903-cccccccccc")]
+        problems = ledger.check_candidate_diff([], head, new_id)
+        self.assertTrue(any("ちょうど 1 行" in p for p in problems), problems)
+
+    def test_candidate_rejects_mismatched_id_or_shape(self) -> None:
+        new_id = "IMP-20260903-aaaaaaaaaa"
+        # manifest の ledger_id と違う行を足す
+        problems = ledger.check_candidate_diff(
+            [], [self.entry("IMP-20260903-cccccccccc")], new_id
+        )
+        self.assertTrue(any("一致しない" in p for p in problems), problems)
+        # 最初から pr_open / pr 付きで足すのも通さない
+        problems = ledger.check_candidate_diff(
+            [], [self.entry(new_id, status="pr_open", pr="https://x/1")], new_id
+        )
+        self.assertTrue(any("status" in p for p in problems), problems)
+        self.assertTrue(any("pr が設定" in p for p in problems), problems)
+
+    # --- reconcile ---------------------------------------------------
+    def test_reconcile_allows_settling_transitions(self) -> None:
+        base = [
+            self.entry("IMP-20260801-bbbbbbbbbb", status="pr_open", pr="https://x/1"),
+            self.entry("IMP-20260701-dddddddddd", status="merged", pr="https://x/2"),
+        ]
+        head = [
+            dict(
+                base[0],
+                status="merged",
+                after={"trigger_f1": 0.9},
+                notes="reconciled",
+            ),
+            dict(base[1], status="reverted"),
+        ]
+        self.assertEqual(ledger.check_reconcile_diff(base, head), [])
+
+    def test_reconcile_allows_the_repair_case(self) -> None:
+        # PR 起票後に link-pr が落ちた行を pr_open へ進める
+        base = [self.entry("IMP-20260903-aaaaaaaaaa")]
+        head = [dict(base[0], status="pr_open", pr="https://x/1")]
+        self.assertEqual(ledger.check_reconcile_diff(base, head), [])
+
+    def test_reconcile_rejects_illegal_field_and_transition(self) -> None:
+        base = [self.entry("IMP-20260801-bbbbbbbbbb", status="pr_open", pr="https://x/1")]
+        head = [dict(base[0], finding="書き換えた", target_skill="commit")]
+        problems = ledger.check_reconcile_diff(base, head)
+        self.assertTrue(any("変更してはいけない項目" in p for p in problems), problems)
+
+        head2 = [dict(base[0], status="reverted")]
+        problems = ledger.check_reconcile_diff(base, head2)
+        self.assertTrue(any("許されない status 遷移" in p for p in problems), problems)
+
+    def test_reconcile_rejects_removals_and_bad_additions(self) -> None:
+        base = [self.entry("IMP-20260801-bbbbbbbbbb", status="merged")]
+        self.assertTrue(
+            any("消えている" in p for p in ledger.check_reconcile_diff(base, []))
+        )
+        head = base + [self.entry("IMP-20260903-aaaaaaaaaa", status="merged")]
+        problems = ledger.check_reconcile_diff(base, head)
+        self.assertTrue(any("status が proposed でない" in p for p in problems), problems)
+
+    # --- CLI ---------------------------------------------------------
+    def test_cli_reports_violations_with_exit_code(self) -> None:
+        new_id = "IMP-20260903-aaaaaaaaaa"
+        with tempfile.TemporaryDirectory() as tmp:
+            base_path = Path(tmp) / "base.jsonl"
+            head_path = Path(tmp) / "head.jsonl"
+            ledger.save_entries(base_path, [])
+            ledger.save_entries(head_path, [self.entry(new_id)])
+            code, out = run(
+                [
+                    "verify-diff", "--base", str(base_path), "--head", str(head_path),
+                    "--mode", "candidate", "--ledger-id", new_id,
+                ]
+            )
+            self.assertEqual(code, ledger.EXIT_OK)
+            self.assertIn("verify-diff: ok", out)
+
+            ledger.save_entries(head_path, [self.entry("IMP-20260903-cccccccccc")])
+            code, _ = run(
+                [
+                    "verify-diff", "--base", str(base_path), "--head", str(head_path),
+                    "--mode", "candidate", "--ledger-id", new_id,
+                ]
+            )
+            self.assertEqual(code, ledger.EXIT_FAIL)
+
+    def test_cli_candidate_requires_ledger_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            head_path = Path(tmp) / "head.jsonl"
+            ledger.save_entries(head_path, [])
+            code, _ = run(
+                ["verify-diff", "--head", str(head_path), "--mode", "candidate"]
+            )
+            self.assertEqual(code, ledger.EXIT_FAIL)
+
+
 class TestDocumentedMetaList(unittest.TestCase):
     """除外リストは script と ドキュメント 2 か所で一致していなければならない。
 

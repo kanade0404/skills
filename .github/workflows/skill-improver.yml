@@ -128,26 +128,56 @@ jobs:
         with:
           node-version: "24"
 
+      # ruleset の bypass_actors は **ruleset への write 権限がある呼び出しにしか
+      # 返らない** (返らないと (.bypass_actors // []) が空配列に化けて、
+      # 「Integration の bypass が無い」検査が素通りする = fail-open)。そのため
+      # preflight 専用に administration: write のトークンを別途発行する。
+      # このトークンは preflight step の GH_TOKEN にしか渡さない — agent にも
+      # checkout にも渡らないので、.git/config 経由で持ち出される経路が無い。
+      # administration を要求するのはこのトークンだけ。
+      - name: Mint a preflight App token
+        id: preflight-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ secrets.SKILL_IMPROVER_APP_ID }}
+          private-key: ${{ secrets.SKILL_IMPROVER_APP_PRIVATE_KEY }}
+          permission-administration: write
+
       # Iron Law「default branch には push しない」を手順の約束のままにしない。
       # contents: write は improve/* と default branch を区別できないので、保証は
       # default branch の ruleset 側に置く — それが**無い状態では走らせない**
       # (fail-closed)。ここで落ちたら ruleset を作ってから再実行する。
       - name: Require an active default-branch ruleset
         env:
-          GH_TOKEN: ${{ steps.read-token.outputs.token }}
+          GH_TOKEN: ${{ steps.preflight-token.outputs.token }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           APP_ID: ${{ secrets.SKILL_IMPROVER_APP_ID }}
         run: |
           set -euo pipefail
+
+          # bypass_actors が返っていない応答は「bypass 無し」と読んではいけない
+          # (fail-open になる)。キーの有無そのものを先に確かめて落とす。
+          require_bypass_field() {
+            if ! printf '%s' "$1" | jq -e 'has("bypass_actors")' > /dev/null; then
+              echo "::error::ruleset の応答に bypass_actors が無い。この App に" \
+                   "Administration: write が付いていないと GitHub はこの項目を返さず、" \
+                   "bypass の検査が素通りする (fail-open)。App の権限を見直すこと" \
+                   "— skills/skill-improver/references/scheduling.md"
+              exit 1
+            fi
+          }
+
           found=0
           for id in $(gh api "repos/$GITHUB_REPOSITORY/rulesets" --paginate --jq '.[].id'); do
-            if gh api "repos/$GITHUB_REPOSITORY/rulesets/$id" | jq -e \
+            ruleset="$(gh api "repos/$GITHUB_REPOSITORY/rulesets/$id")"
+            require_bypass_field "$ruleset"
+            if printf '%s' "$ruleset" | jq -e \
                  --arg ref "refs/heads/$DEFAULT_BRANCH" '
                    .enforcement == "active"
                    and ((.conditions.ref_name.include // [])
                         | any(. == "~DEFAULT_BRANCH" or . == $ref))
                    and ((.rules // []) | any(.type == "pull_request" or .type == "update"))
-                   and (((.bypass_actors // []) | any(.actor_type == "Integration")) | not)
+                   and ((.bypass_actors | any(.actor_type == "Integration")) | not)
                  ' > /dev/null; then
               echo "default branch is protected by ruleset $id"
               found=1
@@ -168,14 +198,16 @@ jobs:
           # 残さないため。
           improve_found=0
           for id in $(gh api "repos/$GITHUB_REPOSITORY/rulesets" --paginate --jq '.[].id'); do
-            if gh api "repos/$GITHUB_REPOSITORY/rulesets/$id" | jq -e \
+            ruleset="$(gh api "repos/$GITHUB_REPOSITORY/rulesets/$id")"
+            require_bypass_field "$ruleset"
+            if printf '%s' "$ruleset" | jq -e \
                  --argjson app_id "${APP_ID:-0}" '
                    .enforcement == "active"
                    and ((.conditions.ref_name.include // [])
                         | any(. == "refs/heads/improve/**"))
                    and ((.rules // []) | any(.type == "update"))
-                   and ((.bypass_actors // []) | length == 1)
-                   and ((.bypass_actors // [])
+                   and (.bypass_actors | length == 1)
+                   and (.bypass_actors
                         | any(.actor_type == "Integration"
                               and .actor_id == $app_id
                               and .bypass_mode == "always"))
@@ -353,6 +385,7 @@ jobs:
       MANIFEST: ${{ runner.temp }}/skill-improver/prs.jsonl
       BODIES: ${{ runner.temp }}/skill-improver/bodies
       PASSED: ${{ runner.temp }}/skill-improver/passed.jsonl
+      TRUSTED_LEDGER: ${{ runner.temp }}/trusted-ledger.py
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
@@ -376,6 +409,11 @@ jobs:
         with:
           name: skill-improver-manifest
           path: ${{ env.WORKDIR }}
+
+      # 候補ブランチを checkout する前に、base (default branch) 側の ledger.py を
+      # 退避する。台帳差分の検査に候補ブランチ側のスクリプトを使ったら検査にならない。
+      - name: Stage the trusted ledger script
+        run: cp skills/skill-improver/scripts/ledger.py "$TRUSTED_LEDGER"
 
       - name: Verify each improvement branch
         id: verify
@@ -487,6 +525,27 @@ jobs:
             rm -f "$changed"
             if [ -n "$bad" ]; then
               reject "allow-list 外の変更を含む (\`$bad\`)"; continue
+            fi
+
+            # --- 台帳の「行」の粒度でも見る -------------------------------------
+            # パスの allow-list は improvements/ledger.jsonl 全体を許すので、
+            # 1 行足すついでに他の行 (別 skill の merged 記録など) を書き換えられる。
+            # 検査には base 側の ledger.py を使う (候補ブランチのコピーは信用しない)。
+            base_ledger="$(mktemp)"; head_ledger="$(mktemp)"
+            git show "origin/$DEFAULT_BRANCH:improvements/ledger.jsonl" > "$base_ledger" 2>/dev/null || : > "$base_ledger"
+            git show "$head_sha:improvements/ledger.jsonl" > "$head_ledger" 2>/dev/null || : > "$head_ledger"
+            if [ -n "$ledger_id" ]; then
+              diff_ok=0
+              python3 "$TRUSTED_LEDGER" verify-diff --base "$base_ledger" \
+                --head "$head_ledger" --mode candidate --ledger-id "$ledger_id" && diff_ok=1
+            else
+              diff_ok=0
+              python3 "$TRUSTED_LEDGER" verify-diff --base "$base_ledger" \
+                --head "$head_ledger" --mode reconcile && diff_ok=1
+            fi
+            rm -f "$base_ledger" "$head_ledger"
+            if [ "$diff_ok" -ne 1 ]; then
+              reject "台帳の差分が許された範囲を超えている (verify-diff)"; continue
             fi
 
             # --- ここで初めてブランチの中身を実行する (資格情報の無い job) ---
