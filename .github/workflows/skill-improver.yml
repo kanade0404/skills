@@ -995,6 +995,7 @@ jobs:
     env:
       WORKDIR: ${{ runner.temp }}/skill-improver
       MANIFEST: ${{ runner.temp }}/skill-improver/prs.jsonl
+      PR_INDEX: ${{ runner.temp }}/skill-improver/pr-index.json
       BODIES: ${{ runner.temp }}/skill-improver/bodies
       TRUSTED_LEDGER: ${{ runner.temp }}/trusted-ledger.py
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
