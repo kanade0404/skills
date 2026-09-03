@@ -310,28 +310,35 @@ commit SHA のような不変 ref を渡すことはできず、PR は常に「�
 `concurrency` (`group: skill-improver` / `cancel-in-progress: false`) が同じ App の
 run 同士の重なりも塞ぐ。したがって公開中にブランチが動いたということは、**App の鍵で
 手動 push した運用者がいる**ことをほぼ意味する。`publish` はその 1 ケースを前提に、
-次の順で補償する (各段は job summary に記録され、**どの段もトークンやシークレットを
-出力しない** — 扱うのは PR の URL と 2 つの SHA だけ):
+**復旧 → 台帳 → close** の順で補償する (各段は job summary に記録され、**どの段も
+トークンやシークレットを出力しない** — 扱うのは PR の URL と SHA だけ):
 
-1. **台帳に `rejected` を記録する** — `link-pr --keep-status` +
-   `set-status --status rejected --notes "PR head moved after verification in <run>"`
-   を候補ブランチに commit / push する。**記録できなくても 2 以降は行う** (この経路
-   だけは「辿れない台帳行」より「未検証 commit を指した open PR」の方が高くつく)
-2. **`gh pr close` を最大 3 回、5 秒 / 10 秒の backoff で試す** — 一過性の API
-   エラーで未検証の PR が open のまま残るのを防ぐ。`gh pr close` は既に閉じている
-   PR には成功を返すので、再試行しても二重には閉じない
-3. **まだ open なら、ブランチの側を検証済みの内容に戻す** —
+1. **まずブランチの側を検証済みの内容に戻す** —
    `git push --force-with-lease=refs/heads/<branch>:<観測した SHA> origin <head_sha>:refs/heads/<branch>`。
    書き戻す先は **この workflow 自身が作った `improve/*` ブランチだけ**で、lease を
-   「たったいま観測した先端」に張るので、**その後さらに動いていれば push は失敗し、
-   知らない commit を握り潰さない**。戻したら `headRefOid` を読み直し、`head_sha` と
-   一致したなら (= open な PR が検証済みの中身を指す状態に戻ったなら) **もう一度だけ
-   `gh pr close` を試す** — 台帳は 1 で `rejected` にしてあるので、最終状態を台帳と
-   一致させるため
-4. **それでも open かつ未検証の commit を指したままなら**、PR URL・観測した SHA・
-   検証済み SHA・ブランチ名を job summary の「手動対応が必要 (unverified PR left
-   open)」見出しに書き出す。加えて (1〜3 の成否に関わらず) `head_moved` を立てて
-   run を赤で終える
+   「起票直後に観測した先端」に張るので、**その後さらに動いていれば push は失敗し、
+   知らない commit を握り潰さない**。lease が弾かれたときだけ `git ls-remote` で
+   remote の先端を **1 度だけ**読み直し、新しい値で **1 度だけ**再試行する (動かし
+   続ける相手を無限に追いかけて force push を繰り返さないため)
+2. **戻せたときだけ、台帳に `rejected` を記録する** — `link-pr --keep-status` +
+   `set-status --status rejected --notes "PR head moved after verification in <run>"`
+   を `head_sha` の上に 1 commit 積み、**通常の fast-forward で push する** (1 で
+   remote は `head_sha` に戻っているので force は要らない)。1 が失敗したなら remote は
+   未検証 commit を指したままで、そこへ安全に載せる方法が無いので **台帳 push ごと
+   飛ばす** — その旨を summary に出し、台帳が `proposed` のまま残っても次回の Step 0 が
+   head branch の全状態検索で決着させる
+3. **`gh pr close` を最大 3 回、5 秒 / 10 秒の backoff で試す** — 一過性の API
+   エラーで未検証の PR が open のまま残るのを防ぐ。`gh pr close` は既に閉じている
+   PR には成功を返すので、再試行しても二重には閉じない
+4. **それでも open で、かつ `headRefOid` が `head_sha` でも 2 で積んだ先端でもない
+   なら**、PR URL・観測した SHA・補償後の SHA・検証済み SHA・ブランチ名を job summary の
+   「手動対応が必要 (unverified PR left open)」見出しに書き出す。加えて (1〜3 の成否に
+   関わらず) `head_moved` を立てて run を赤で終える
+
+**台帳 commit を先に push してはいけない** — それ自体が remote の先端を動かすので、
+起票直後に観測した SHA に張った lease が必ず弾かれ、1 の復旧が毎回失敗する。逆に
+2 の push は自分で動かした先端なので、4 の判定では `head_sha` と並べて**受け入れる側**に
+置く (自分の台帳 commit を「head が動いた」と読み違えないため)。
 
 **それでも窓は残る**。`git ls-remote` / `gh pr create` / `gh pr view` は 3 つの別々の
 API 呼び出しで、その隙間を GitHub 側で原子化する手段は無い。**PR head に SHA や tag の
@@ -349,10 +356,11 @@ ruleset と `concurrency` で「動かせる者」を App 1 件に絞り、動�
 job summary に修復対象として記録する (次回の Step 0 が head branch
 `improve/<skill>-<id>` の PR を**全状態で**引いて回収する)。
 
-**head の不一致だけは順序が逆**: 記録できなくても PR を閉じる。open のまま残すことは
-*検証していない commit を指した PR* をレビュー面に晒すことであり、辿れない台帳行より
-高くつく。台帳が `proposed` のまま残っても、Step 0 の全状態検索がその closed PR を
-見つけて `rejected` として決着させられる (`references/ledger.md`)。
+**head の不一致だけは順序が違う**: 台帳より先にブランチの復旧をやる。PR head は必ず
+可変な branch なので、**中身を検証済みに戻せていれば close が落ちても未検証 commit を
+レビュー面に晒さずに済む**からで、逆に台帳を先に push すると lease が壊れて復旧の道が
+閉じる。台帳が `proposed` のまま残っても、Step 0 の全状態検索がその PR を見つけて
+`rejected` として決着させられる (`references/ledger.md`)。
 
 CI runner は `trigger-evals.yml` と同じく `python3` を直接呼ぶ (`uv` が無い runner
 前提) — ローカル / agent 実行 (Step 5 やこの下の Route 2) では `uv run python3` を使う。
@@ -385,9 +393,14 @@ CI runner は `trigger-evals.yml` と同じく `python3` を直接呼ぶ (`uv` �
 5. `improve/**` の ruleset を作る (`refs/heads/improve/**` / enforcement=active /
    `update` ルール / **bypass はその App 1 件だけ**、bypass mode は
    **「Always allow」** — `pull_request` モードでは直接 push を通せない)
+6. **どちらの ruleset も `conditions.ref_name.exclude` を空にする** — GitHub は
+   `exclude` に一致した ref に ruleset を適用しないので、`include` だけ合っていても
+   `exclude` が対象を覆っていれば**何も強制されない ruleset が preflight を通ってしまう**。
+   preflight は両方の条件で `exclude` が空であることも検査する
 
-preflight は 3 と 5 を機械的に検査し (`actor_id` が `SKILL_IMPROVER_APP_ID` と一致し、
-`bypass_mode` が `always` で、`bypass_actors` がちょうど 1 件であることまで)、欠けて
+preflight は 3・5・6 を機械的に検査し (`actor_id` が `SKILL_IMPROVER_APP_ID` と一致し、
+`bypass_mode` が `always` で、`bypass_actors` がちょうど 1 件、`ref_name.exclude` が
+空であることまで)、欠けて
 いれば agent を起動せずに `exit 1` する。4 と 5 は repo 設定の変更なのでコード側では
 作れない。
 

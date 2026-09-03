@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 GATE = REPO_ROOT / ".github" / "workflows" / "review-response-gate.yml"
 HEARTBEAT = REPO_ROOT / ".github" / "workflows" / "gate-heartbeat.yml"
+SKILL_IMPROVER = REPO_ROOT / ".github" / "workflows" / "skill-improver.yml"
 
 
 def extract_jq(path: pathlib.Path, start_marker: str) -> str:
@@ -52,6 +53,16 @@ def run_jq(program: str, *args: str, stdin: str = "") -> str:
     if proc.returncode != 0:
         raise AssertionError(f"jq failed: {proc.stderr}")
     return proc.stdout
+
+
+def jq_accepts(program: str, *args: str, stdin: str = "") -> bool:
+    """Run a `jq -e` predicate the way the workflow does: the exit status is
+    the whole answer, so a false result is not an error."""
+    proc = subprocess.run(["jq", "-e", *args, program], input=stdin,
+                          capture_output=True, text=True)
+    if proc.returncode not in (0, 1):
+        raise AssertionError(f"jq failed: {proc.stderr}")
+    return proc.returncode == 0
 
 
 def bot(login: str) -> dict:
@@ -211,6 +222,120 @@ class GateHeartbeatMetricsTest(unittest.TestCase):
         result = self.metrics(events)
         self.assertEqual(2, result["gate_events"])
         self.assertEqual(1, result["gate_blocks"])
+
+
+class SkillImproverRulesetPreflightTest(unittest.TestCase):
+    """What the `skill-improver` preflight accepts as a protecting ruleset.
+
+    A ruleset does not apply to a ref that `conditions.ref_name.exclude`
+    matches, so checking `include` alone lets a ruleset that enforces nothing
+    on the target ref pass the gate (CodeRabbit finding on PR #138).
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.default_program = extract_jq(
+            SKILL_IMPROVER, '--arg ref "refs/heads/$DEFAULT_BRANCH"')
+        cls.improve_program = extract_jq(
+            SKILL_IMPROVER, '--argjson app_id "${APP_ID:-0}"')
+
+    def accepts_default(self, ruleset: dict) -> bool:
+        return jq_accepts(self.default_program, "--arg", "ref",
+                          "refs/heads/main", stdin=json.dumps(ruleset))
+
+    def accepts_improve(self, ruleset: dict) -> bool:
+        return jq_accepts(self.improve_program, "--argjson", "app_id", "42",
+                          stdin=json.dumps(ruleset))
+
+    @staticmethod
+    def default_ruleset(**overrides) -> dict:
+        ruleset = {
+            "enforcement": "active",
+            "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"],
+                                        "exclude": []}},
+            "rules": [{"type": "pull_request"}],
+            "bypass_actors": [],
+        }
+        ruleset.update(overrides)
+        return ruleset
+
+    @staticmethod
+    def improve_ruleset(**overrides) -> dict:
+        ruleset = {
+            "enforcement": "active",
+            "conditions": {"ref_name": {"include": ["refs/heads/improve/**"],
+                                        "exclude": []}},
+            "rules": [{"type": "update"}],
+            "bypass_actors": [{"actor_type": "Integration", "actor_id": 42,
+                               "bypass_mode": "always"}],
+        }
+        ruleset.update(overrides)
+        return ruleset
+
+    def test_default_ruleset_without_exclude_is_accepted(self) -> None:
+        self.assertTrue(self.accepts_default(self.default_ruleset()))
+
+    def test_default_ruleset_with_any_exclude_is_rejected(self) -> None:
+        # The exclude need not name the default branch: an entry at all means
+        # the ruleset may not apply, and the preflight cannot tell which refs
+        # a fnmatch pattern covers.
+        for exclude in (["refs/heads/main"], ["refs/heads/unrelated/**"]):
+            with self.subTest(exclude=exclude):
+                conditions = {"ref_name": {"include": ["~DEFAULT_BRANCH"],
+                                           "exclude": exclude}}
+                self.assertFalse(self.accepts_default(
+                    self.default_ruleset(conditions=conditions)))
+
+    def test_default_ruleset_with_missing_exclude_key_is_accepted(self) -> None:
+        conditions = {"ref_name": {"include": ["~DEFAULT_BRANCH"]}}
+        self.assertTrue(self.accepts_default(
+            self.default_ruleset(conditions=conditions)))
+
+    def test_default_ruleset_still_needs_the_other_conditions(self) -> None:
+        self.assertFalse(self.accepts_default(
+            self.default_ruleset(enforcement="evaluate")))
+        self.assertFalse(self.accepts_default(self.default_ruleset(rules=[])))
+        self.assertFalse(self.accepts_default(self.default_ruleset(
+            bypass_actors=[{"actor_type": "Integration", "actor_id": 42,
+                            "bypass_mode": "always"}])))
+
+    def test_improve_ruleset_without_exclude_is_accepted(self) -> None:
+        self.assertTrue(self.accepts_improve(self.improve_ruleset()))
+
+    def test_improve_ruleset_with_any_exclude_is_rejected(self) -> None:
+        conditions = {"ref_name": {"include": ["refs/heads/improve/**"],
+                                   "exclude": ["refs/heads/improve/**"]}}
+        self.assertFalse(self.accepts_improve(
+            self.improve_ruleset(conditions=conditions)))
+
+    def test_improve_ruleset_still_needs_the_single_app_bypass(self) -> None:
+        self.assertFalse(self.accepts_improve(self.improve_ruleset(
+            bypass_actors=[{"actor_type": "Integration", "actor_id": 43,
+                            "bypass_mode": "always"}])))
+        self.assertFalse(self.accepts_improve(self.improve_ruleset(
+            bypass_actors=[{"actor_type": "Integration", "actor_id": 42,
+                            "bypass_mode": "pull_request"}])))
+        self.assertFalse(self.accepts_improve(self.improve_ruleset(
+            bypass_actors=[{"actor_type": "Integration", "actor_id": 42,
+                            "bypass_mode": "always"},
+                           {"actor_type": "RepositoryRole", "actor_id": 5,
+                            "bypass_mode": "always"}])))
+
+
+class SkillImproverLedgerInvocationTest(unittest.TestCase):
+    """`--ledger` is a top-level option of `ledger.py`, not a subcommand one.
+
+    argparse exits 2 on `ledger.py link-pr --ledger <path> ...`, so putting the
+    flag after the subcommand makes every publish-job ledger write fail
+    silently inside its `&&` chain.
+    """
+
+    def test_ledger_flag_precedes_the_subcommand(self) -> None:
+        text = SKILL_IMPROVER.read_text(encoding="utf-8")
+        self.assertNotIn("link-pr --ledger", text)
+        self.assertNotIn("set-status --ledger", text)
+        self.assertIn('"$TRUSTED_LEDGER" --ledger improvements/ledger.jsonl',
+                      text)
 
 
 if __name__ == "__main__":
