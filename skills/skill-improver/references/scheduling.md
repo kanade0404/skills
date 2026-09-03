@@ -12,9 +12,10 @@
 `CLAUDE_CODE_OAUTH_TOKEN` を使う)。`workflow_dispatch` から手動起動もでき、
 `focus` 入力で skill 名 / finding id / issue URL に絞れる。
 
-権限は `contents: write` (改善ブランチの push) / `pull-requests: write` (PR 起票) /
-`issues: read` (`agent-feedback` ラベルの読み取り) まで。default branch への push と
-merge は**手順として**行わない — 承認ゲートは PR レビューに置く。
+権限は job ごとに分けてあり、最大でも `contents: write` (改善ブランチの push) /
+`pull-requests: write` (PR 起票) / `issues: read` (`agent-feedback` ラベルの読み取り)
+まで (内訳は下の「job の分割」)。default branch への push と merge は**手順として**
+行わない — 承認ゲートは PR レビューに置く。
 
 ただし `contents: write` は improve/* と default branch を区別できない。**手順は
 約束であって強制ではない**ので、実効的な保証は default branch 側の設定に置く:
@@ -61,12 +62,46 @@ run」を押すまで走らない** ([GITHUB_TOKEN のドキュメント](https:
 
 そこで **workflow モードでは PR を作るのは agent ではない**。agent は改善ブランチを
 push し、環境変数 `MANIFEST` のファイルに 1 行 1 JSON
-(`{"branch":..., "title":..., "body_file":...}`) を追記するところまで。`gh pr create` は
-allow-list から外してある。後続ステップがブランチごとに checkout して
-`python3 -m unittest discover tests` /
-`python3 .github/scripts/check_trigger_evals.py` / `node scripts/rulesync-sync.mjs --check`
-を実行し、**通ったブランチにだけ** `gh pr create` する。落ちたブランチは PR にならず、
-失敗したコマンドが job summary に出て job が赤になる (ブランチは調査用に残る)。
+(`{"branch":..., "title":..., "body_file":..., "ledger_id":...}`) を追記するところまで。
+`gh pr create` は allow-list から外してある。
+
+### job の分割 (権限の分離)
+
+候補ブランチの中身は agent が書いたコードであり、そのまま書き込み資格情報のある場所で
+実行すると、テストや検査スクリプトを書き換えたブランチが資格情報に手を伸ばせる。
+そのため job を 3 つに割り、**ブランチを実行する job から資格情報を外す**:
+
+| job | 権限 | 役割 |
+|---|---|---|
+| `improve` | `contents: write` / `issues: read` | ruleset の preflight、agent 実行、ブランチ push、manifest を artifact に上げる |
+| `verify` | `contents: read` のみ (`persist-credentials: false`、`GH_TOKEN` もシークレットも渡さない) | manifest の値の検証、allow-list diff ゲート、ブランチ上で `unittest` / `check_trigger_evals.py` / `rulesync-sync.mjs --check` |
+| `publish` | `contents: write` / `pull-requests: write` | 通ったブランチの `gh pr create`、`link-pr` の commit / push、失敗時の補償 |
+
+`verify` は `fetch-depth: 0` の checkout で全 remote head をローカルに取り込むため、
+job 中に追加のネットワークアクセス (= 資格情報) が要らない。`publish` は書き込み権限を
+持つが**ブランチのコードを実行しない** — `ledger.py` は checkout 前に default branch 側の
+コピーを `$RUNNER_TEMP` へ退避して、そちらを使う。
+
+**allow-list diff ゲート**: `verify` はブランチの中身を実行する前に
+`git diff --name-only origin/<default>...origin/<branch>` を取り、
+`skills/<target_skill>/**` / `.claude/skills/<target_skill>/**` /
+`.agents/skills/<target_skill>/**` / `improvements/ledger.jsonl` の範囲に収まっているかを
+確かめる (reconcile ブランチは `improvements/ledger.jsonl` のみ)。外れるパスが 1 つでも
+あればそのブランチは実行せず、PR にもしない。
+
+**manifest の値は agent が書いたデータ**として扱い、特権的に使う前に検証する:
+`branch` は `^improve/[A-Za-z0-9._-]+$` で origin に実在すること、`body_file` は
+`bodies/` 直下の通常ファイル (symlink・`..`・別ディレクトリは不可) であること、
+`ledger_id` は `^IMP-[0-9]{8}-[0-9a-f]{10}$` かつそのブランチの台帳に `proposed` /
+`pr == null` の行として実在すること。`publish` は artifact 経由で受け取った値を
+自分でもう一度検証する。落ちた行は PR にならず job summary に出て job が赤になる
+(ブランチは調査用に残る)。
+
+**PR 起票後に `link-pr` が落ちた場合の補償**: 台帳から辿れない PR をレビュー待ちに
+残さないため、`publish` はその PR を `gh pr close` して閉じる。補償自体が失敗したら
+その旨も job summary に出し、次回の Step 0 が「`proposed` かつ `pr == null` の行に
+対応する open PR」を修復対象として拾う。
+
 CI runner は `trigger-evals.yml` と同じく `python3` を直接呼ぶ (`uv` が無い runner
 前提) — ローカル / agent 実行 (Step 5 やこの下の Route 2) では `uv run python3` を使う。
 
@@ -124,10 +159,13 @@ kanade0404/skills で skill-improver を 1 周回してください。
    新規候補より先に報告する
 2.5. open な improve/* PR (gh pr list --state open --search 'head:improve/') の
    head ブランチにある improvements/ledger.jsonl も
-   ledger.py list --ledger <tmp> で読む。target_skill と finding クラスが一致する
-   行は pending 扱いで新規候補から外し、実行レポートの「既存 PR あり (skip)」に
-   PR URL を並べる (未 merge の PR の台帳行は default branch にまだ無いので、
-   これをしないと翌週に同じ finding で二重に PR を出す)
+   ledger.py list --ledger <tmp> で読む。pending と数えるのは status が pr_open の
+   行と、proposed かつ pr が null の行だけ (head ブランチの台帳は default branch の
+   履歴を含むので、merged / rejected / reverted の行まで数えると本物の再発を
+   握り潰す)。pending の行と target_skill + finding クラスが一致する候補は新規
+   起票せず、実行レポートの「既存 PR あり (skip)」に PR URL を並べる。
+   proposed かつ pr が null のまま open PR がある行は pending ではなく修復対象で、
+   そのブランチで link-pr を実行して commit / push する
 3. 入力は 3 系統: (a) 直近 1 週の retro / session-retro finding のうち lever が
    skill edit / ept-handoff のもの (台帳には ept として保存される)
    (b) agent-feedback ラベルの issue / PR で、author association が

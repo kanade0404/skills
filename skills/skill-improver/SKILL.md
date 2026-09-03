@@ -127,12 +127,21 @@ gh api "repos/<owner>/<repo>/contents/improvements/ledger.jsonl?ref=<headRefName
 $LEDGER list --ledger "$tmp/<headRefName>.jsonl" --json
 ```
 
-こうして集めた行のうち **`target_skill` と finding クラスキーが一致するもの**は pending 扱いにする:
+**「その台帳に載っている」だけでは pending にしない**。head ブランチの台帳は default branch の履歴を丸ごと引き継いでいるので、過去に `merged` / `rejected` / `reverted` になった行もそこに並ぶ。それらまで数えると、**同じ skill で本当に再発した finding を「対応済み」と誤認して握り潰す**。pending と数えるのは次の 2 つだけ:
+
+| 行の状態 | 意味 |
+|---|---|
+| `status == "pr_open"` | その PR が現に開いている |
+| `status == "proposed"` かつ `pr == null` | この実行で `add` したが、まだ PR に紐付いていない |
+
+必要なら `pr` の URL を open PR の一覧と突き合わせて裏を取る。そのうえで **`target_skill` と finding クラスキーが一致するもの**を pending 扱いにする:
 
 - 新規候補から除外する (`add` もしない)
 - 実行レポートの「既存 PR あり (skip)」節に、候補と対応する PR URL を並べる
 
 同じ finding を追い直したい場合 (前の PR がレビューで方針変更になった等) は、その PR を閉じてから次の実行に回す — open な PR と競合する差分を並行して出さない。
+
+**`proposed` かつ `pr == null` のまま open PR がある行は、pending ではなく修復対象**。PR 起票の後に `link-pr` の commit / push が落ちるとこの形で残る (workflow は PR を閉じて補償するが、その補償自体が失敗した場合に残りうる)。新しい候補として拾い直さず、そのブランチで `link-pr` → commit → push を実行して紐付けを完成させる。
 
 ### Step 1 — 収集と分類 (main が実行)
 
@@ -238,16 +247,28 @@ description を触ったら `evals/<skill>-trigger-results-<日付>.jsonl` を�
 
 | モード | 検証を走らせるのは | PR を作るのは |
 |---|---|---|
-| **workflow** (`.github/workflows/skill-improver.yml`) | post-agent ステップ (ブランチごとに checkout して Step 5 の検査を実行) | 同ステップ。検証が通ったブランチにだけ `gh pr create` |
+| **workflow** (`.github/workflows/skill-improver.yml`) | `verify` job (資格情報を持たない。ブランチごとに checkout して Step 5 の検査を実行) | `publish` job。検証が通ったブランチにだけ `gh pr create` |
 | **手動 / Routine** (対話セッション) | 自分 (Step 5 をそのまま実行) | 自分。Step 5 が全て通ってから |
 
-workflow モードでは `gh pr create` が使えない。改善ブランチを push したら、環境変数 `MANIFEST` のファイルに 1 行 1 JSON で追記して終わる (本文はファイルに書き出し、その絶対パスを渡す):
+workflow モードは job を 3 つに割ってある。**候補ブランチの中身を実行するのは `verify` job だけで、その job は資格情報を持たない** (`contents: read` / `persist-credentials: false` / `GH_TOKEN` なし) — ブランチがテストや検査スクリプトを書き換えていても、奪える資格情報がそこに無いようにするため。書き込み権限を持つ `publish` job はブランチのコードを実行しない (`ledger.py` は default branch 側のコピーを使う)。
+
+| job | 権限 | 役割 |
+|---|---|---|
+| `improve` | `contents: write` / `issues: read` | ruleset の preflight、agent 実行、ブランチ push、manifest の artifact 化 |
+| `verify` | `contents: read` のみ | manifest の検証、allow-list diff ゲート、ブランチ上での Step 5 の検査 |
+| `publish` | `contents: write` / `pull-requests: write` | 通ったブランチの `gh pr create`、`link-pr` の commit / push、失敗時の補償 |
+
+workflow モードでは `gh pr create` が使えない。改善ブランチを push したら、環境変数 `MANIFEST` のファイルに 1 行 1 JSON で追記して終わる:
 
 ```json
-{"branch": "improve/<skill>-<finding-id>", "title": "<PR title>", "body_file": "<絶対パス>"}
+{"branch": "improve/<skill>-<finding-id>", "title": "<PR title>", "body_file": "<BODIES 直下のパス>", "ledger_id": "<IMP-...>"}
 ```
 
-検証に落ちたブランチは PR にならず、失敗したコマンドと共に job summary に出て job が赤になる。ブランチは調査用に残る。
+**PR 本文は環境変数 `BODIES` のディレクトリ直下にだけ書き出す**。後段はそのディレクトリ配下の通常ファイルしか読まず、symlink・`..`・別ディレクトリを指したエントリは検証で落ちる (任意のファイルを PR 本文に載せてトークンを漏らす経路を塞ぐため)。`branch` は `^improve/[A-Za-z0-9._-]+$`、`ledger_id` は `^IMP-[0-9]{8}-[0-9a-f]{10}$` に合致し、かつそのブランチの台帳に `proposed` / `pr == null` の行として実在することまで検査される。
+
+**ブランチの差分は allow-list で制限される**。`skills/<target_skill>/**`、`.claude/skills/<target_skill>/**`、`.agents/skills/<target_skill>/**`、`improvements/ledger.jsonl` 以外を含むブランチは検査を実行する前に落とす (reconcile ブランチは `improvements/ledger.jsonl` のみ)。
+
+検証に落ちたブランチは PR にならず、失敗したコマンドと共に job summary に出て job が赤になる。ブランチは調査用に残る。PR を作った後で `link-pr` の commit / push に失敗した場合は、**その PR を自動的に閉じて補償する** (台帳から辿れない PR をレビュー待ちに残さない) — 補償自体が失敗したら job summary にその旨を出し、次回の Step 0 が修復対象として拾う。
 
 (任意) PR 作成の資格情報を GitHub App トークン / PAT に替えれば、承認を挟まずに `pull_request` の run が走る。その場合もこの「検証してから起票」の順序は変えない。
 

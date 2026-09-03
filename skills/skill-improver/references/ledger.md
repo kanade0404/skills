@@ -32,9 +32,24 @@ gh api "repos/<owner>/<repo>/contents/improvements/ledger.jsonl?ref=<branch>" \
 uv run python3 skills/skill-improver/scripts/ledger.py list --ledger "$tmp/<branch>.jsonl" --json
 ```
 
-そこに `target_skill` × finding クラスが一致する行があれば、その finding は
+ただし **head ブランチの台帳は default branch の履歴を丸ごと含む**。そこに載っている
+という理由だけで pending 扱いにすると、過去に `merged` / `rejected` / `reverted` に
+なった行が「対応済み」として効いてしまい、同じ skill で本当に再発した finding を
+握り潰す。pending と数えるのは次の 2 つだけ:
+
+| 行の状態 | 意味 |
+|---|---|
+| `status == "pr_open"` | その PR が現に開いている |
+| `status == "proposed"` かつ `pr == null` | `add` 済みだが、まだ PR に紐付いていない |
+
+この条件を満たす行と `target_skill` × finding クラスが一致する finding は
 **処理済み (pending)** であり、新規候補にしない。これをしないと、レビュー待ちの
 PR がある間じゅう同じ finding で PR を出し続ける。
+
+`proposed` かつ `pr == null` の行に対応する open PR がある場合は、pending ではなく
+**修復対象**である: PR 起票の後に `link-pr` の commit / push が落ちるとこの形で残る。
+新しい候補として拾い直さず、そのブランチで `link-pr` → commit → push を実行して
+紐付けを完成させる。
 
 ## エントリのフィールド
 
