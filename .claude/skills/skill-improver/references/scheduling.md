@@ -35,22 +35,30 @@ merge は**手順として**行わない — 承認ゲートは PR レビュー�
 - **action は full commit SHA で固定する**: 可変タグのままだと、差し替えられた
   action が `CLAUDE_CODE_OAUTH_TOKEN` と `contents: write` ごと持っていける
 
-### improve/* PR には repo の CI が来ない
+### improve/* PR には repo の CI が来ない — だから検証してから起票する
 
-`GITHUB_TOKEN` で作成された PR は `pull_request` イベントを発火させない (再帰実行を
-防ぐ GitHub の仕様)。そのため trigger-evals / rulesync drift / unittest の各 workflow は
-improve/* PR では回らず、レビュアーには「チェックが 1 つも無い PR」が見える。
+**`GITHUB_TOKEN` 起点のイベントは `pull_request` ワークフローの run を作らない**
+(`workflow_dispatch` / `repository_dispatch` を除く、GitHub の再帰実行防止仕様)。
+そのため trigger-evals / rulesync drift / unittest の各 workflow は improve/* PR では
+回らず、レビュアーには「チェックが 1 つも無い PR」が見える。
 
-対策として workflow には agent 実行の後段に検証ステップを置き、agent が残した
-ブランチのまま `python3 -m unittest discover tests` /
+そこで **workflow モードでは PR を作るのは agent ではない**。agent は改善ブランチを
+push し、環境変数 `MANIFEST` のファイルに 1 行 1 JSON
+(`{"branch":..., "title":..., "body_file":...}`) を追記するところまで。`gh pr create` は
+allow-list から外してある。後続ステップがブランチごとに checkout して
+`python3 -m unittest discover tests` /
 `python3 .github/scripts/check_trigger_evals.py` / `node scripts/rulesync-sync.mjs --check`
-を実行して、赤なら job を落とす。PR 本文の Checks 欄にはその結果を書く。CI runner は
-`trigger-evals.yml` と同じく `python3` を直接呼ぶ (`uv` が無い runner 前提) — ローカル /
-agent 実行 (Step 5 やこの下の Route 2) では `uv run python3` を使う。
+を実行し、**通ったブランチにだけ** `gh pr create` する。落ちたブランチは PR にならず、
+失敗したコマンドが job summary に出て job が赤になる (ブランチは調査用に残る)。
+CI runner は `trigger-evals.yml` と同じく `python3` を直接呼ぶ (`uv` が無い runner
+前提) — ローカル / agent 実行 (Step 5 やこの下の Route 2) では `uv run python3` を使う。
+
+`rulesync-sync.mjs` は引数なしだと生成物を**書き込む**。検証に使うのは `--check` の方で、
+生成は Step 5 の前段として別に実行する。
 
 (任意) PR 作成の資格情報を `GITHUB_TOKEN` ではなく GitHub App のトークンか PAT に
 差し替えれば、通常どおり `pull_request` イベントが発火して repo の CI がそのまま
-効くようになる。その場合も上記の検証ステップは重複するだけで害はない。
+効くようになる。その場合も「検証してから起票する」順序は変えない。
 
 `concurrency: skill-improver` で直列化しているのは、同時実行が同じ
 `improve/<skill>-<finding-id>` ブランチを取り合うのを防ぐため。
@@ -77,16 +85,23 @@ kanade0404/skills で skill-improver を 1 周回してください。
    record-metrics --phase after。closed (未 merge) なら rejected。そのうえで
    ledger.py report を読み、revert candidate があれば新規候補より先に報告する
 3. 入力は 3 系統: (a) 直近 1 週の retro / session-retro finding のうち lever が
-   skill edit / ept-handoff のもの (b) agent-feedback ラベルの issue / PR で、
-   author association が OWNER / MEMBER / COLLABORATOR のコメントだけ
+   skill edit / ept-handoff のもの (台帳には ept として保存される)
+   (b) agent-feedback ラベルの issue / PR で、author association が
+   OWNER / MEMBER / COLLABORATOR のコメントだけ。取得は
+   `gh issue list --label agent-feedback --state all --limit 200` /
+   `gh pr list --label agent-feedback --state all --limit 200`
+   (既定の open / 30 件では closed の feedback と 31 件目以降が落ちる)
    (c) skills/*/evals/*-trigger-results-*.jsonl のうち F1 < 0.8 の skill
 4. 候補ごとに ledger.py check-target を通す。exit 2 (メタスキル) なら編集せず
    improvements/ledger.jsonl に excluded_meta で記録して人間に上げる
 5. 採用する候補は 1 finding = 1 PR = 1 テーマ。改善ブランチは毎回 default branch を
    最新化してから improve/<skill>-<finding-id> を切る (前の改善ブランチから枝分かれ
    させない)。default branch には push しない。merge もしない
-6. PR を開く前に score_triggers.py / .github/scripts/check_trigger_evals.py /
-   uv run python3 -m unittest discover -s tests / node scripts/rulesync-sync.mjs を通す
+6. skill のソースを触ったら node scripts/rulesync-sync.mjs で生成物を再生成し、
+   そのうえで PR を開く前に score_triggers.py / .github/scripts/check_trigger_evals.py /
+   uv run python3 -m unittest discover -s tests / node scripts/rulesync-sync.mjs --check
+   を通す (検証に使うのは --check。引数なしは生成物を書き込むので検証にならない)。
+   Routine は workflow の外なので、検証も PR 起票も自分で行う
 7. 起票した PR・除外・見送り・revert candidate を SKILL.md の実行レポート形式で報告する
 8. 候補が 0 件なら PR を作らず「今週は改善なし」と報告して終了する
 ```

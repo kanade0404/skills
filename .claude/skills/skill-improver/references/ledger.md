@@ -19,7 +19,7 @@ consumer 側が `rulesync fetch --features skills` で持っていくのは skil
 | `target_skill` | string | 改善対象の skill 名 |
 | `finding` | string | **1 文**。長い説明は PR 本文に書く |
 | `finding_class` | string | 再発クラスキー。空なら finding 本文の正規化で代用する。agent が「同じ問題の再発」と判断したときに `add --class <key>` で明示する |
-| `lever` | enum | `skill-edit` / `ept` / `trigger` |
+| `lever` | enum | `skill-edit` / `ept` / `trigger`。上流 (`retro` / `session-retro`) の呼び名 `ept-handoff` も `add --lever` で受け付け、`ept` に正規化して保存する |
 | `status` | enum | `proposed` / `pr_open` / `merged` / `rejected` / `excluded_meta` / `reverted` |
 | `pr` | string \| null | PR URL |
 | `before` / `after` | object | 指標。キーは全て省略可: `trigger_f1` / `ci_fix_iterations` / `review_cycles` / `escalations` |
@@ -110,9 +110,10 @@ argparse は usage エラーでも 2 を返すため、呼出側は stdout 1 行
 探す (配布元カタログ形式と consumer 生成先の両方で動かすため)。どれも無い環境では
 `unresolved` で **exit 1** — 「見つからない = 対象外」と黙って扱わず fail-closed にする。
 
-メタスキル判定は skill 名を `Path(...).name` に落として casefold してから行うため、
-`Retro` や `skills/retro` のような書き方でも除外される (`--allow-unknown-target` でも
-外れない)。除外は `add` だけでなく `set-status` / `link-pr` / `record-metrics` にも
+skill 名は `Path(...).name` に落として casefold した形で比較し、**その正規化した名前で
+台帳に保存する**。メタスキル判定も既知判定も同じ正規化を通るので、`Retro` /
+`skills/retro` のような書き方でも除外され (`--allow-unknown-target` でも外れない)、
+`skills/tdd` と `tdd` が別クラスに割れて recurrence を数え損ねることもない。除外は `add` だけでなく `set-status` / `link-pr` / `record-metrics` にも
 かかる — 入口ひとつでしか効かないガードは、後から台帳を進めるだけで迂回できるため。
 メタスキルのエントリに許すのは `status` を `excluded_meta` / `rejected` にする更新
 だけ (記録と却下は除外と矛盾しない)。

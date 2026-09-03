@@ -70,8 +70,8 @@ description: >
 
 | source | 取り方 | 採用条件 |
 |---|---|---|
-| `retro` / `session-retro` | 直近の retro 出力 (承認済み or 承認待ち) | lever が **skill edit** または **ept-handoff** のものだけ。hook / settings / rule / issue lever は対象外 (人間 or 別スキルの領分) |
-| `agent-feedback` | `gh issue list --label agent-feedback` / `gh pr list --label agent-feedback` とそのコメント | 「何を期待していたか」と「なぜか」が読み取れるコメント。詳細は `references/feedback-intake.md` |
+| `retro` / `session-retro` | 直近の retro 出力 (承認済み or 承認待ち) | lever が **skill edit** または **ept-handoff** のものだけ。hook / settings / rule / issue lever は対象外 (人間 or 別スキルの領分)。台帳の語彙は `skill-edit` / `ept` / `trigger` で、`--lever ept-handoff` は別名として受け付け `ept` で保存される |
+| `agent-feedback` | `gh issue list --label agent-feedback --state all --limit 200` / `gh pr list --label agent-feedback --state all --limit 200` とそのコメント | 「何を期待していたか」と「なぜか」が読み取れるコメント。詳細は `references/feedback-intake.md` |
 | `trigger-eval` | `skills/*/evals/*-trigger-results-*.jsonl` の最新 + 対応する `*-trigger.json` を `skills/skill-builder/scripts/score_triggers.py` で採点 | F1 < 0.8 |
 
 **人間フィードバックが一次信号**。同じ週に複数系統から finding が出たら、`agent-feedback` > retro finding > trigger-eval の順に優先する — 人間が明示的に「期待と違った」と書いた事象は、機械指標より情報量が多い。
@@ -183,20 +183,43 @@ git switch -c improve/<skill>-<finding-id>
 
 ### Step 5 — 検証
 
-PR を開く前に、順に通す:
+skill のソースを触ったら、まず**生成物を再生成する** (これは検証ではなく生成 — `.claude/` `.agents/` `.codex/` を書き換える):
+
+```bash
+node scripts/rulesync-sync.mjs                                                    # 生成 (rulesync-sync)
+```
+
+そのうえで、PR を開く前に**検証だけ**を順に通す。検証コマンドは作業ツリーを書き換えないものに限る — 引数なしの `rulesync-sync.mjs` は生成物を書き込むため、これを「検証」に使うと drift を検査したつもりで drift を消してしまう:
 
 ```bash
 uv run python3 skills/skill-builder/scripts/score_triggers.py --cases ... --preds ...   # 触った skill
 uv run python3 .github/scripts/check_trigger_evals.py                                    # trigger-evals CI と同じ検査
 uv run python3 -m unittest discover -s tests
-node scripts/rulesync-sync.mjs                                                    # 生成物の追随 (rulesync-sync)
+node scripts/rulesync-sync.mjs --check                                            # 生成物の drift 検査 (書き込まない)
 ```
 
 description を触ったら `evals/<skill>-trigger-results-<日付>.jsonl` を更新する (CI は入力が変わったのに予測が古いと "Stale trigger predictions" で落ちる)。生成物の再生成手順と drift 検証は `skills/rulesync-sync/SKILL.md` が canonical。**known-failures 台帳 (`.github/trigger-evals-known-failures.json`) に追記して赤を消さない** — それは指標ハックであり、改善ループの計測そのものを壊す。
 
 ### Step 6 — PR を起票し、台帳に紐付ける
 
-`GITHUB_TOKEN` で作成された PR は `pull_request` イベントを発火させないため、**この PR ではリポジトリの CI が回らない**。Step 5 の検査は workflow の post-agent ステップ (`.github/workflows/skill-improver.yml`) でも同じ内容が実行され、赤なら job が落ちる。PR 本文の Checks 欄には「workflow 内で実行した結果」を書く — レビュアーが緑のチェックの不在を「未検証」と読み違えないようにするため。
+**`GITHUB_TOKEN` 起点のイベントは `pull_request` ワークフローの run を作らない** (`workflow_dispatch` / `repository_dispatch` を除く、GitHub の再帰実行防止仕様)。つまり improve/* PR には repo の CI (trigger-evals / rulesync drift / unittest) が付かない。だから **PR は「検証が通ってから」作る** — 未検証の PR を先に開くと、チェックの無い PR が「レビュー待ち」として残り、緑が無いことを人間が「まだ回っていないだけ」と読んでしまう。
+
+起票の担い手は実行モードで変わる:
+
+| モード | 検証を走らせるのは | PR を作るのは |
+|---|---|---|
+| **workflow** (`.github/workflows/skill-improver.yml`) | post-agent ステップ (ブランチごとに checkout して Step 5 の検査を実行) | 同ステップ。検証が通ったブランチにだけ `gh pr create` |
+| **手動 / Routine** (対話セッション) | 自分 (Step 5 をそのまま実行) | 自分。Step 5 が全て通ってから |
+
+workflow モードでは `gh pr create` が使えない。改善ブランチを push したら、環境変数 `MANIFEST` のファイルに 1 行 1 JSON で追記して終わる (本文はファイルに書き出し、その絶対パスを渡す):
+
+```json
+{"branch": "improve/<skill>-<finding-id>", "title": "<PR title>", "body_file": "<絶対パス>"}
+```
+
+検証に落ちたブランチは PR にならず、失敗したコマンドと共に job summary に出て job が赤になる。ブランチは調査用に残る。
+
+(任意) PR 作成の資格情報を GitHub App トークン / PAT に替えれば `pull_request` の run が普通に発火する。その場合もこの「検証してから起票」の順序は変えない。
 
 PR 本文は下記フォーマット固定。作成後:
 
@@ -233,10 +256,11 @@ uv run python3 skills/skill-improver/scripts/ledger.py link-pr --id <IMP-YYYYMMD
 ## Ledger
 `improvements/ledger.jsonl` の `<IMP-YYYYMMDD-xxxxxx>` (recurrence: <n>)
 
-## Checks (workflow 内で実行済み — `GITHUB_TOKEN` 作成の PR では repo の CI が発火しない)
-- [ ] score_triggers.py / check_trigger_evals.py
-- [ ] uv run python3 -m unittest discover -s tests
-- [ ] node scripts/rulesync-sync.mjs (生成物の drift なし)
+## Checks (PR 作成前に実行済み — `GITHUB_TOKEN` 起点のイベントは repo の `pull_request` run を作らない)
+<!-- 実際の結果で置き換える。チェックボックスは使わない (未チェックが「未実施」に読める) -->
+- score_triggers.py / check_trigger_evals.py: <F1 / exit code>
+- unittest discover -s tests: <N> tests OK
+- rulesync-sync.mjs --check: up to date
 
 承認はこの PR のレビューで行う (merge は人間)。
 ```

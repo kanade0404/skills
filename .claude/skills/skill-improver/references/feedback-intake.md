@@ -13,9 +13,16 @@
 - 収集:
 
   ```bash
-  gh issue list --label agent-feedback --state all --json number,title,url,updatedAt
-  gh pr list   --label agent-feedback --state all --json number,title,url,updatedAt
+  gh issue list --label agent-feedback --state all --limit 200 \
+    --json number,title,url,updatedAt
+  gh pr list   --label agent-feedback --state all --limit 200 \
+    --json number,title,url,updatedAt
   ```
+
+  `--state all` と `--limit` は省略しない。既定は `--state open` / 30 件で、
+  **closed の issue・merged の PR・31 件目以降のフィードバックが黙って落ちる** —
+  改善ループにとって「閉じた後に書かれた振り返り」は最も情報量の多い入力なので、
+  既定値のままだと一次信号を取りこぼす。件数が上限に達したら pagination に切り替える。
 
   週次実行では前回実行以降に更新されたものだけを見る (`updatedAt`)。
 

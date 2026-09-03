@@ -32,7 +32,7 @@
 - `finding_class`: 再発クラスキー (省略可)。空なら finding 本文の正規化で代用するが、
   それが吸収するのは表記揺れだけ。同じ問題の再発だと判断したら `add --class <key>` で
   明示して束ねる
-- `lever`: `skill-edit` / `ept` / `trigger`
+- `lever`: `skill-edit` / `ept` / `trigger` (上流の `ept-handoff` は `ept` に正規化して保存)
 - `status`: `proposed` / `pr_open` / `merged` / `rejected` / `excluded_meta` / `reverted`
 - 指標キー (すべて省略可): `trigger_f1` (大きいほど良い) / `ci_fix_iterations` /
   `review_cycles` / `escalations` (小さいほど良い)。**観測できなかった値は書かない** —

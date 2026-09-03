@@ -52,6 +52,10 @@ META_SKILLS: frozenset[str] = frozenset(
 
 SOURCES: tuple[str, ...] = ("retro", "session-retro", "agent-feedback", "trigger-eval")
 LEVERS: tuple[str, ...] = ("skill-edit", "ept", "trigger")
+#: 上流 (`retro` / `session-retro`) が使う lever 名 → 台帳の語彙。
+#: 上流の呼び名をそのまま渡して argparse に弾かれると、finding が記録されずに落ちる。
+#: 語彙を 1 つに矯正するより、入口で受けて保存時に正規化する方が両者を壊さない。
+LEVER_ALIASES: dict[str, str] = {"ept-handoff": "ept"}
 STATUSES: tuple[str, ...] = (
     "proposed",
     "pr_open",
@@ -96,6 +100,12 @@ def normalize_skill_name(skill: str) -> str:
     return Path(skill.strip()).name.strip().casefold()
 
 
+def normalize_lever(lever: str) -> str:
+    """上流の lever 名を台帳の語彙に落とす (純関数)。別名でなければそのまま返す。"""
+    key = lever.strip()
+    return LEVER_ALIASES.get(key, key)
+
+
 def classify_target(skill: str, known_skills: Iterable[str] | None) -> str:
     """改善対象 skill を分類する。
 
@@ -103,13 +113,17 @@ def classify_target(skill: str, known_skills: Iterable[str] | None) -> str:
     known_skills が None のときは skill ディレクトリを解決できなかった状態を表し
     "unresolved" を返す (存在しない skill を「あった」と誤認しない fail-closed)。
     メタスキル判定は known_skills に依存せず、表記揺れ (`Retro` / `skills/retro`) も
-    同じメタスキルとして弾く (ハードコードされた不変条件)。
+    同じメタスキルとして弾く (ハードコードされた不変条件)。既知判定も同じ正規化で
+    行う — メタ側だけ正規化すると `skills/tdd` が unknown に落ち、
+    `--allow-unknown-target` と併せて正規化前の文字列が台帳に入り、
+    `recurrence_for` / `report --skill` の突き合わせが一致しなくなる。
     """
-    if normalize_skill_name(skill) in META_SKILLS:
+    normalized = normalize_skill_name(skill)
+    if normalized in META_SKILLS:
         return "excluded_meta"
     if known_skills is None:
         return "unresolved"
-    return "ok" if skill in set(known_skills) else "unknown"
+    return "ok" if normalized in {normalize_skill_name(k) for k in known_skills} else "unknown"
 
 
 def _is_number(value: Any) -> bool:
@@ -465,7 +479,10 @@ def cmd_add(args: argparse.Namespace) -> int:
 
     created = args.created or today()
     class_key = args.finding_class.strip() or finding_class(args.finding)
-    entry_id = args.id.strip() if args.id else derive_id(args.target, class_key, created)
+    # 台帳に入れるのは正規化済みの skill 名。`skills/tdd` のような書き方をそのまま
+    # 保存すると、同じ skill が 2 つのキーに割れて recurrence が伸びなくなる。
+    target = normalize_skill_name(args.target)
+    entry_id = args.id.strip() if args.id else derive_id(target, class_key, created)
     # id は find_entry / link-pr / set-status の宛先そのもの。形式違反や重複を
     # 通すと、後続の更新が「最初に一致した行」に当たって別 finding を書き換える。
     if not ID_RE.match(entry_id):
@@ -489,13 +506,11 @@ def cmd_add(args: argparse.Namespace) -> int:
         created=created,
         source=args.source,
         evidence=args.evidence,
-        target_skill=args.target,
+        target_skill=target,
         finding=args.finding,
-        lever=args.lever,
+        lever=normalize_lever(args.lever),
         status=status,
-        recurrence=recurrence_for(
-            entries, args.target, args.finding, args.finding_class
-        ),
+        recurrence=recurrence_for(entries, target, args.finding, args.finding_class),
         class_key=args.finding_class,
         notes=args.notes,
     )
@@ -736,7 +751,16 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("--source", required=True, choices=SOURCES)
     add.add_argument("--target", required=True, help="対象 skill 名")
     add.add_argument("--finding", required=True, help="finding を 1 文で")
-    add.add_argument("--lever", required=True, choices=LEVERS)
+    add.add_argument(
+        "--lever",
+        required=True,
+        choices=(*LEVERS, *LEVER_ALIASES),
+        help=(
+            f"改善の手段。{', '.join(LEVERS)} を受け付ける。上流の呼び名 "
+            f"({', '.join(f'{k} -> {v}' for k, v in LEVER_ALIASES.items())}) も"
+            "そのまま渡せる (保存時に正規化する)"
+        ),
+    )
     add.add_argument(
         "--class",
         dest="finding_class",

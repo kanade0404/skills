@@ -49,6 +49,14 @@ class TestClassifyTarget(unittest.TestCase):
                 self.assertEqual(ledger.classify_target(skill, None), "excluded_meta")
                 self.assertEqual(ledger.classify_target(skill, {skill}), "excluded_meta")
 
+    def test_known_skill_match_uses_the_same_normalization_as_meta(self) -> None:
+        # メタ側だけ正規化すると skills/tdd が unknown に落ち、正規化前の文字列が
+        # 台帳に入って recurrence / report --skill の突き合わせが割れる
+        for spelling in ("tdd", "skills/tdd", " tdd ", ".claude/skills/tdd"):
+            with self.subTest(spelling=spelling):
+                self.assertEqual(ledger.classify_target(spelling, {"tdd"}), "ok")
+        self.assertEqual(ledger.classify_target("nope", {"tdd"}), "unknown")
+
     def test_exclusion_list_matches_documented_set(self) -> None:
         self.assertEqual(
             ledger.META_SKILLS,
@@ -564,6 +572,27 @@ class TestCliRoundTrip(unittest.TestCase):
             ledger.EXIT_FAIL,
         )
         self.assertEqual(len(self.entries()), 1)
+
+    def test_upstream_lever_alias_is_accepted_and_normalized(self) -> None:
+        # retro は ept-handoff を出す。argparse で弾くと finding がそのまま落ちる
+        code, _ = run(
+            self.base(
+                "add", "--source", "retro", "--target", "tdd",
+                "--finding", "f", "--lever", "ept-handoff",
+            )
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(self.entries()[0]["lever"], "ept")
+
+    def test_target_is_stored_normalized(self) -> None:
+        code, _ = run(
+            self.base(
+                "add", "--source", "retro", "--target", "skills/tdd",
+                "--finding", "f", "--lever", "skill-edit",
+            )
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(self.entries()[0]["target_skill"], "tdd")
 
     def test_list_filters_by_status(self) -> None:
         for target, status in (("tdd", "pr_open"), ("commit", "merged")):
