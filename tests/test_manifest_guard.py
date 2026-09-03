@@ -116,6 +116,61 @@ class TestSanitizeCli(unittest.TestCase):
             self.assertFalse(dest.exists())
 
 
+class TestDuplicateRejection(unittest.TestCase):
+    """manifest 全体での一意性 (行ごとの検査では見えない重複)。
+
+    publish は行ごとに `gh pr create` と `link-pr` を回すため、重複を通すと
+    1 つの finding に PR が 2 本立ち、台帳の同じ行に 2 度 link-pr が走る。
+    """
+
+    def sanitize(self, entries: list[dict]) -> tuple[int, str, bool]:
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "in.jsonl"
+            dest = Path(tmp) / "out.jsonl"
+            src.write_text(
+                "".join(json.dumps(e) + "\n" for e in entries), encoding="utf-8"
+            )
+            code, err = run(["sanitize", "--src", str(src), "--dest", str(dest)])
+            return code, err, dest.exists()
+
+    def test_duplicate_branch_rejects_the_whole_manifest(self) -> None:
+        code, err, wrote = self.sanitize(
+            [
+                entry(),
+                entry(
+                    ledger_id="IMP-20260903-bbbbbbbbbb",
+                    body_file="body-1.md",
+                    title="別の title",
+                ),
+            ]
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("branch", err)
+        self.assertFalse(wrote)
+
+    def test_duplicate_ledger_id_rejects_the_whole_manifest(self) -> None:
+        code, err, wrote = self.sanitize(
+            [
+                entry(),
+                entry(branch="improve/tdd-second", body_file="body-1.md"),
+            ]
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("ledger_id", err)
+        self.assertFalse(wrote)
+
+    def test_empty_ledger_ids_are_exempt_from_uniqueness(self) -> None:
+        # 突き合わせ (reconcile) 行は台帳の特定の行を指さないので複数あってよい
+        code, err, wrote = self.sanitize(
+            [
+                entry(ledger_id="", branch="improve/reconcile-a"),
+                entry(ledger_id="", branch="improve/reconcile-b", body_file="body-1.md"),
+            ]
+        )
+        self.assertEqual(code, 0, err)
+        self.assertTrue(wrote)
+
+
 class TestCheckTextCli(unittest.TestCase):
     def test_title_and_body_are_rechecked(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

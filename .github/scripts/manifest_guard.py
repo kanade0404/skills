@@ -6,7 +6,9 @@ agent が書いた manifest は **データ**であって、そのまま特権�
 値ではない。ここが唯一の関門なので、次の 2 つを 1 か所で持つ:
 
 1. `sanitize` — manifest を **許可したキーだけで組み直す**。未知のキーは落とし、
-   各フィールドは形式・長さ・制御文字・トークン様文字列で検査する。
+   各フィールドは形式・長さ・制御文字・トークン様文字列で検査する。さらに manifest
+   **全体**で `branch` と (空でない) `ledger_id` の一意性を見る — 行ごとの検査だけでは
+   同じ finding を 2 回起票する形が通ってしまう。
 2. `check-text` — `gh pr create` に渡す直前の title / body を同じ規則で再検査する。
 
 同じ走査を 2 か所に書き写すと片方だけ古くなるので、workflow の improve
@@ -23,6 +25,7 @@ import argparse
 import json
 import re
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -102,11 +105,38 @@ def rebuild_entry(entry: dict[str, Any]) -> dict[str, str]:
     return rebuilt
 
 
+def duplicate_problems(entries: Sequence[dict[str, str]]) -> list[str]:
+    """manifest 全体で重複してはいけない値の違反を並べる (純関数)。
+
+    1 行ずつの検査は「同じ finding を 2 回起票する」形を通してしまう。publish は
+    行ごとに `gh pr create` と `link-pr` を回すため、`branch` が重なれば同じ
+    ブランチから 2 本の PR が立ち、`ledger_id` が重なれば 1 つの台帳行に 2 度
+    `link-pr` が走って先に書いた PR URL が消える。
+
+    `ledger_id` が空の行 (突き合わせ用の reconcile 行) は台帳の特定の行を指さない
+    ので、この一意性検査の対象外にする。
+    """
+    problems: list[str] = []
+    for key in ("branch", "ledger_id"):
+        seen: dict[str, int] = {}
+        for lineno, entry in enumerate(entries, 1):
+            value = entry.get(key, "")
+            if key == "ledger_id" and not value:
+                continue
+            if value in seen:
+                problems.append(
+                    f"manifest:{lineno}: {key} {value!r} が {seen[value]} 行目と重複"
+                )
+            else:
+                seen[value] = lineno
+    return problems
+
+
 def cmd_sanitize(args: argparse.Namespace) -> int:
     """manifest を検査し、許可キーだけで組み直して書き出す。"""
     src = Path(args.src)
     lines = [ln for ln in src.read_text(encoding="utf-8").split("\n") if ln.strip()]
-    rebuilt: list[str] = []
+    rebuilt: list[dict[str, str]] = []
     failed = False
     for lineno, line in enumerate(lines, 1):
         try:
@@ -125,11 +155,17 @@ def cmd_sanitize(args: argparse.Namespace) -> int:
             for problem in problems:
                 print(f"manifest:{lineno}: {problem}", file=sys.stderr)
             continue
-        rebuilt.append(json.dumps(rebuild_entry(entry), ensure_ascii=False))
+        rebuilt.append(rebuild_entry(entry))
+    # 重複は行単位では見えないので、全行が個別検査を通った後にまとめて見る。
+    # 1 件でもあれば manifest 全体を落とす — どちらの行が正しいかは判断できない。
+    for problem in duplicate_problems(rebuilt):
+        print(problem, file=sys.stderr)
+        failed = True
     if failed:
         return 1
     Path(args.dest).write_text(
-        "".join(f"{line}\n" for line in rebuilt), encoding="utf-8"
+        "".join(f"{json.dumps(e, ensure_ascii=False)}\n" for e in rebuilt),
+        encoding="utf-8",
     )
     print(f"manifest_guard: {len(rebuilt)} 行を検査して書き出した")
     return 0

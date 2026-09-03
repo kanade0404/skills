@@ -358,7 +358,7 @@ class TestCliRoundTrip(unittest.TestCase):
         self.assertEqual(entry["recurrence"], 1)
 
         self.assertEqual(
-            run(self.base("link-pr", "--id", entry_id, "--pr", "https://x/1"))[0], 0
+            run(self.base("link-pr", "--id", entry_id, "--pr", "https://github.com/o/r/pull/1"))[0], 0
         )
         self.assertEqual(self.entries()[0]["status"], "pr_open")
 
@@ -437,7 +437,7 @@ class TestCliRoundTrip(unittest.TestCase):
         entry_id = self.only_id()
         for argv in (
             ["set-status", "--id", entry_id, "--status", "pr_open"],
-            ["link-pr", "--id", entry_id, "--pr", "https://x/1"],
+            ["link-pr", "--id", entry_id, "--pr", "https://github.com/o/r/pull/1"],
             ["record-metrics", "--id", entry_id, "--phase", "before",
              "--metric", "trigger_f1=0.7"],
         ):
@@ -474,12 +474,109 @@ class TestCliRoundTrip(unittest.TestCase):
         )
         code, _ = run(
             self.base(
-                "link-pr", "--id", self.only_id(), "--pr", "https://x/1", "--keep-status"
+                "link-pr", "--id", self.only_id(), "--pr", "https://github.com/o/r/pull/1", "--keep-status"
             )
         )
         self.assertEqual(code, 0)
-        self.assertEqual(self.entries()[0]["pr"], "https://x/1")
+        self.assertEqual(self.entries()[0]["pr"], "https://github.com/o/r/pull/1")
         self.assertEqual(self.entries()[0]["status"], "proposed")
+
+    def test_pr_open_requires_a_pr_url_on_every_write_path(self) -> None:
+        """`pr_open` かつ `pr` が空、という辿れない行を作らせない。
+
+        この形は `is_pending_row` が pending として抑止する一方、Step 0 には
+        決着させる URL が無いので、その finding が二度と提案されなくなる。
+        書き込み側で塞ぐのが唯一の防ぎ方。
+        """
+        # add: --status pr_open に --pr が無い
+        code, _ = run(
+            self.base(
+                "add", "--source", "retro", "--target", "tdd",
+                "--finding", "f", "--lever", "skill-edit", "--status", "pr_open",
+            )
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(self.entries(), [])
+
+        # add: --pr を渡せば通り、URL が保存される
+        code, _ = run(
+            self.base(
+                "add", "--source", "retro", "--target", "tdd",
+                "--finding", "f", "--lever", "skill-edit", "--status", "pr_open",
+                "--pr", "https://github.com/o/r/pull/7",
+            )
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(self.entries()[0]["pr"], "https://github.com/o/r/pull/7")
+
+        # set-status: pr の無い行を pr_open にはできない
+        run(
+            self.base(
+                "add", "--source", "retro", "--target", "commit",
+                "--finding", "別の finding", "--lever", "skill-edit",
+                "--allow-unknown-target",
+            )
+        )
+        bare = str(self.entries()[1]["id"])
+        code, _ = run(self.base("set-status", "--id", bare, "--status", "pr_open"))
+        self.assertEqual(code, 1)
+        self.assertEqual(self.entries()[1]["status"], "proposed")
+
+        # set-status: --pr を添えれば通る
+        code, _ = run(
+            self.base(
+                "set-status", "--id", bare, "--status", "pr_open",
+                "--pr", "https://github.com/o/r/pull/8",
+            )
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(self.entries()[1]["status"], "pr_open")
+        self.assertEqual(self.entries()[1]["pr"], "https://github.com/o/r/pull/8")
+
+        # link-pr: 空や PR URL でない値は拒否する
+        for bad in ("", "   ", "improve/tdd-IMP-20260903-aaaaaaaaaa"):
+            with self.subTest(pr=bad):
+                code, _ = run(self.base("link-pr", "--id", bare, "--pr", bad))
+                self.assertEqual(code, 1)
+                self.assertEqual(
+                    self.entries()[1]["pr"], "https://github.com/o/r/pull/8"
+                )
+
+    def test_set_status_pr_open_accepts_row_that_already_has_a_pr(self) -> None:
+        run(
+            self.base(
+                "add", "--source", "retro", "--target", "tdd",
+                "--finding", "f", "--lever", "skill-edit",
+            )
+        )
+        entry_id = self.only_id()
+        run(
+            self.base(
+                "link-pr", "--id", entry_id, "--pr",
+                "https://github.com/o/r/pull/5", "--keep-status",
+            )
+        )
+        code, _ = run(self.base("set-status", "--id", entry_id, "--status", "pr_open"))
+        self.assertEqual(code, 0)
+        self.assertEqual(self.entries()[0]["status"], "pr_open")
+
+    def test_list_inconsistent_enumerates_untraceable_pr_open_rows(self) -> None:
+        """Step 0 が修復対象を機械的に取り出せること。"""
+        run(
+            self.base(
+                "add", "--source", "retro", "--target", "tdd",
+                "--finding", "f", "--lever", "skill-edit",
+            )
+        )
+        entry_id = self.only_id()
+        # 書き込み経路では作れないので、過去の実行が残した形を直接置く
+        entries = self.entries()
+        entries[0]["status"] = "pr_open"
+        ledger.save_entries(self.ledger_path, entries)
+
+        code, out = run(self.base("list", "--inconsistent", "--json"))
+        self.assertEqual(code, 0)
+        self.assertEqual([e["id"] for e in json.loads(out)], [entry_id])
 
     def test_report_skill_filter(self) -> None:
         for target in ("tdd", "commit"):
@@ -643,14 +740,14 @@ class TestCliRoundTrip(unittest.TestCase):
             )
         linked = self.entries()[0]["id"]
         self.assertEqual(
-            run(self.base("link-pr", "--id", linked, "--pr", "https://x/1", "--keep-status"))[0],
+            run(self.base("link-pr", "--id", linked, "--pr", "https://github.com/o/r/pull/1", "--keep-status"))[0],
             0,
         )
         listed = json.loads(run(self.base("list", "--status", "proposed", "--json"))[1])
         self.assertEqual(len(listed), 2)
         by_id = {e["id"]: e for e in listed}
         self.assertEqual(by_id[linked]["status"], "proposed")
-        self.assertEqual(by_id[linked]["pr"], "https://x/1")
+        self.assertEqual(by_id[linked]["pr"], "https://github.com/o/r/pull/1")
         self.assertTrue(ledger.is_pending_row(by_id[linked]))
         other = next(e for e in listed if e["id"] != linked)
         self.assertIsNone(other["pr"])
@@ -697,11 +794,15 @@ class TestCliRoundTrip(unittest.TestCase):
 
     def test_list_filters_by_status(self) -> None:
         for target, status in (("tdd", "pr_open"), ("commit", "merged")):
+            # pr_open は PR URL を伴わないと記録できない (辿れない行を作らない)
+            extra = (
+                ["--pr", "https://github.com/o/r/pull/9"] if status == "pr_open" else []
+            )
             run(
                 self.base(
                     "add", "--source", "retro", "--target", target,
                     "--finding", "f", "--lever", "skill-edit",
-                    "--status", status, "--allow-unknown-target",
+                    "--status", status, "--allow-unknown-target", *extra,
                 )
             )
         code, out = run(self.base("list", "--status", "pr_open", "--json"))
@@ -824,12 +925,12 @@ class TestPendingRow(unittest.TestCase):
     """
 
     def test_pr_open_is_pending(self) -> None:
-        self.assertTrue(ledger.is_pending_row({"status": "pr_open", "pr": "https://x/1"}))
+        self.assertTrue(ledger.is_pending_row({"status": "pr_open", "pr": "https://github.com/o/r/pull/1"}))
 
     def test_proposed_with_pr_is_pending(self) -> None:
         # link-pr の後 set-status の前に落ちた残骸。PR は実在するので二重起票しない
         self.assertTrue(
-            ledger.is_pending_row({"status": "proposed", "pr": "https://x/1"})
+            ledger.is_pending_row({"status": "proposed", "pr": "https://github.com/o/r/pull/1"})
         )
 
     def test_proposed_without_pr_is_not_pending(self) -> None:
@@ -839,7 +940,40 @@ class TestPendingRow(unittest.TestCase):
         for status in ("merged", "rejected", "reverted", "excluded_meta"):
             with self.subTest(status=status):
                 self.assertFalse(
-                    ledger.is_pending_row({"status": status, "pr": "https://x/1"})
+                    ledger.is_pending_row({"status": status, "pr": "https://github.com/o/r/pull/1"})
+                )
+
+    def test_pr_open_without_pr_is_not_pending(self) -> None:
+        """辿れる PR が無い pr_open は pending に数えない。
+
+        数えてしまうと Step 0 は決着させる URL を持たず、Step 2.5 は同じ
+        finding を永久に抑止する — 改善ループがその finding について止まる。
+        """
+        for pr in (None, "", "   "):
+            with self.subTest(pr=pr):
+                self.assertFalse(ledger.is_pending_row({"status": "pr_open", "pr": pr}))
+
+
+class TestInconsistentRow(unittest.TestCase):
+    """Step 0 が修復対象として列挙する「辿れない pr_open」の判定 (純関数)。"""
+
+    def test_pr_open_without_pr_is_inconsistent(self) -> None:
+        for pr in (None, ""):
+            with self.subTest(pr=pr):
+                self.assertTrue(
+                    ledger.is_inconsistent_row({"status": "pr_open", "pr": pr})
+                )
+
+    def test_pr_open_with_pr_is_consistent(self) -> None:
+        self.assertFalse(
+            ledger.is_inconsistent_row({"status": "pr_open", "pr": "https://github.com/o/r/pull/1"})
+        )
+
+    def test_other_statuses_are_not_inconsistent(self) -> None:
+        for status in ("proposed", "merged", "rejected", "reverted", "excluded_meta"):
+            with self.subTest(status=status):
+                self.assertFalse(
+                    ledger.is_inconsistent_row({"status": status, "pr": None})
                 )
 
 
@@ -908,7 +1042,7 @@ class TestVerifyDiff(unittest.TestCase):
         self.assertTrue(any("一致しない" in p for p in problems), problems)
         # 最初から pr_open / pr 付きで足すのも通さない
         problems = ledger.check_candidate_diff(
-            [], [self.entry(new_id, status="pr_open", pr="https://x/1")], new_id
+            [], [self.entry(new_id, status="pr_open", pr="https://github.com/o/r/pull/1")], new_id
         )
         self.assertTrue(any("status" in p for p in problems), problems)
         self.assertTrue(any("pr が設定" in p for p in problems), problems)
@@ -940,7 +1074,7 @@ class TestVerifyDiff(unittest.TestCase):
         self.assertTrue(any("base に id の重複" in p for p in problems), problems)
 
     def test_reconcile_rejects_duplicate_ids(self) -> None:
-        dup = self.entry("IMP-20260801-bbbbbbbbbb", status="pr_open", pr="https://x/1")
+        dup = self.entry("IMP-20260801-bbbbbbbbbb", status="pr_open", pr="https://github.com/o/r/pull/1")
         problems = ledger.check_reconcile_diff([dup], [dup, dict(dup, status="merged")])
         self.assertTrue(any("head に id の重複" in p for p in problems), problems)
         problems = ledger.check_reconcile_diff([dup, dup], [dup, dup])
@@ -949,7 +1083,7 @@ class TestVerifyDiff(unittest.TestCase):
     # --- reconcile ---------------------------------------------------
     def test_reconcile_allows_settling_transitions(self) -> None:
         base = [
-            self.entry("IMP-20260801-bbbbbbbbbb", status="pr_open", pr="https://x/1"),
+            self.entry("IMP-20260801-bbbbbbbbbb", status="pr_open", pr="https://github.com/o/r/pull/1"),
             self.entry("IMP-20260701-dddddddddd", status="merged", pr="https://x/2"),
         ]
         head = [
@@ -966,11 +1100,35 @@ class TestVerifyDiff(unittest.TestCase):
     def test_reconcile_allows_the_repair_case(self) -> None:
         # PR 起票後に link-pr が落ちた行を pr_open へ進める
         base = [self.entry("IMP-20260903-aaaaaaaaaa")]
-        head = [dict(base[0], status="pr_open", pr="https://x/1")]
+        head = [dict(base[0], status="pr_open", pr="https://github.com/o/r/pull/1")]
         self.assertEqual(ledger.check_reconcile_diff(base, head), [])
 
+    def test_reconcile_allows_untraceable_pr_open_back_to_proposed(self) -> None:
+        """辿れない `pr_open` は finding を出し直せるよう proposed に戻せる。
+
+        Step 0 は対応する open PR (`improve/<skill>-<id>`) を探し、見つかれば
+        `link-pr` する。見つからなければこの遷移で proposed に戻す — そうしないと
+        その finding は pending として永久に抑止される。
+        """
+        base = [self.entry("IMP-20260903-aaaaaaaaaa", status="pr_open", pr=None)]
+        head = [dict(base[0], status="proposed", notes="対応する open PR が無い")]
+        self.assertEqual(ledger.check_reconcile_diff(base, head), [])
+
+    def test_reconcile_rejects_pr_open_to_proposed_when_pr_is_set(self) -> None:
+        # 追える PR がある行を proposed に戻すのは「無かったこと」にする書き換え
+        base = [
+            self.entry(
+                "IMP-20260903-aaaaaaaaaa",
+                status="pr_open",
+                pr="https://github.com/o/r/pull/1",
+            )
+        ]
+        head = [dict(base[0], status="proposed")]
+        problems = ledger.check_reconcile_diff(base, head)
+        self.assertTrue(any("許されない status 遷移" in p for p in problems), problems)
+
     def test_reconcile_rejects_illegal_field_and_transition(self) -> None:
-        base = [self.entry("IMP-20260801-bbbbbbbbbb", status="pr_open", pr="https://x/1")]
+        base = [self.entry("IMP-20260801-bbbbbbbbbb", status="pr_open", pr="https://github.com/o/r/pull/1")]
         head = [dict(base[0], finding="書き換えた", target_skill="commit")]
         problems = ledger.check_reconcile_diff(base, head)
         self.assertTrue(any("変更してはいけない項目" in p for p in problems), problems)
