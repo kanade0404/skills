@@ -136,7 +136,7 @@ gh api --paginate "repos/$REPO/pulls?state=all&per_page=100" \
 | closed (未 merge) | `link-pr --id <id> --pr <URL> --keep-status` → `set-status --status rejected --notes "<URL> は merge されずに閉じられた"` |
 | 1 件も無い | `proposed` のまま残す (`pr` に辿れない値が入っているなら `set-status --status proposed --clear-pr --notes "対応する PR が見つからない"`)。finding を**出し直せる**状態にして次回に回す |
 
-`verify-diff --mode reconcile` はこの回収に **head 側に開ける PR URL があること**を要求する (`references/ledger.md`)。PR を名指しできないまま `pr_open` / `merged` / `rejected` に進めるのは突き合わせではなく台帳の書き換えなので通らない。
+`verify-diff --mode reconcile` はこの回収に **head 側に開ける PR URL があること**を要求する (`references/ledger.md`)。これは `pr_open` / `merged` / `rejected` を名乗る行すべてに掛かる — 入る時も留まる時も PR を名指しできない行は通らないし、`pr` を空にして index 照合を外すこともできない。`pr` を消せるのは辿れない行を出し直す修復経路 (`pr_open → proposed`) だけ。
 
 **2 つ目の列挙を飛ばさない**。after を取れないまま `merged` にしたエントリは `pr_open` の列挙から外れ、`report` の delta にも revert candidate にも現れない — 効果が測られないまま静かに消える唯一の経路なので、毎回ここで拾い直して取れるようになった指標を記録する (それでも取れないなら `notes` にその旨を残す)。
 
@@ -357,7 +357,7 @@ agent が書くのは manifest の 1 行 1 JSON まで:
 
 **ブランチの差分は allow-list で制限される**。`skills/<target_skill>/**`、`.claude/skills/<target_skill>/**`、`.agents/skills/<target_skill>/**`、`improvements/ledger.jsonl` 以外を含むブランチは、`stage` が push する前に、`verify` が検査を実行する前に、それぞれ落とす (reconcile ブランチは `improvements/ledger.jsonl` のみ)。
 
-**台帳は行の粒度でも検査される**。パスの allow-list は `improvements/ledger.jsonl` をファイル単位で許すので、1 行足すついでに他の行を書き換える余地が残る。`verify` は base 側の `ledger.py verify-diff` で、改善ブランチには「自分の 1 行の追加だけ」(id が manifest の `ledger_id` と一致し、`proposed` / `pr == null`)、reconcile ブランチには「`status` / `pr` / `after` / `notes` を許された遷移で進めるだけ」を要求する (`proposed` からの決着は head 側に開ける PR URL があるときだけ通る。`references/ledger.md`)。
+**台帳は行の粒度でも検査される**。パスの allow-list は `improvements/ledger.jsonl` をファイル単位で許すので、1 行足すついでに他の行を書き換える余地が残る。`verify` は base 側の `ledger.py verify-diff` で、改善ブランチには「自分の 1 行の追加だけ」(id が manifest の `ledger_id` と一致し、`proposed` / `pr == null`)、reconcile ブランチには「`status` / `pr` / `after` / `notes` を許された遷移で進めるだけ」を要求する (`pr_open` / `merged` / `rejected` の行は常に head 側に開ける PR URL を持ち、`pr` を消せるのは `pr_open → proposed` の修復だけ。`references/ledger.md`)。
 
 その `pr` は**形だけでなく実在まで**照合する。`verify` は PR API を引き直さないので、形の検査だけでは「整った形の、別リポジトリの / 無関係な PR」を指して `proposed` → `merged` / `rejected` に進める経路が残る。そこで `stage` が `gh api --paginate` でこのリポジトリの `improve/*` PR を全件取って `pr-index.json` を manifest artifact に載せ、`verify` が `verify-diff --pr-index` でそれと突き合わせる — 触った行の `pr` は **index にあり**、その head ref が **`improve/<target_skill>-<id>-` で始まり**、**status が PR の状態と一致する**こと。index が読めなければ検査は形に落ちるのではなく **exit 1** する。
 

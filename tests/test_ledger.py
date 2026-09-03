@@ -1351,6 +1351,70 @@ class TestVerifyDiff(unittest.TestCase):
         head = [dict(base[0], status="proposed", pr=None, notes="辿れないため戻した")]
         self.assertEqual(ledger.check_reconcile_diff(base, head), [])
 
+    # --- reconcile: 決着した status は必ず PR を名指しする --------------
+    #
+    # 由来: `pr` は RECONCILE_MUTABLE_FIELDS なので、pr_open -> merged / rejected の
+    # ついでに `pr` を空にできてしまうと、pr_index_problem (状態の一致まで見る)
+    # の照合ごと外れ、実際には開いている PR を merged / rejected として畳める。
+    def test_reconcile_rejects_settling_a_pr_open_row_with_the_pr_cleared(self) -> None:
+        pr = "https://github.com/o/r/pull/1"
+        for new_status in ("merged", "rejected"):
+            with self.subTest(new_status=new_status):
+                base = [self.entry("IMP-20260903-aaaaaaaaaa", status="pr_open", pr=pr)]
+                head = [dict(base[0], status=new_status, pr=None, notes="決着したことにする")]
+                problems = ledger.check_reconcile_diff(base, head, self.pr_index())
+                self.assertTrue(
+                    any("開ける PR URL が要る" in p for p in problems), problems
+                )
+                self.assertTrue(
+                    any("空にはできない" in p for p in problems), problems
+                )
+
+    def test_reconcile_allows_settling_a_pr_open_row_with_the_indexed_pr(self) -> None:
+        # 同じ PR を指したまま、index の状態 (merged) と一致する決着だけが通る
+        pr = "https://github.com/o/r/pull/1"
+        base = [self.entry("IMP-20260903-aaaaaaaaaa", status="pr_open", pr=pr)]
+        head = [dict(base[0], status="merged", notes="reconciled")]
+        index = self.pr_index(state="closed", merged_at="2026-09-04T00:00:00Z")
+        self.assertEqual(ledger.check_reconcile_diff(base, head, index), [])
+
+    def test_reconcile_rejects_rejecting_a_pr_that_is_still_open(self) -> None:
+        # pr を残しても、index が open のままなら状態不一致で落ちる
+        pr = "https://github.com/o/r/pull/1"
+        base = [self.entry("IMP-20260903-aaaaaaaaaa", status="pr_open", pr=pr)]
+        head = [dict(base[0], status="rejected", notes="閉じたことにする")]
+        problems = ledger.check_reconcile_diff(base, head, self.pr_index())
+        self.assertTrue(any("一致しない" in p for p in problems), problems)
+
+    def test_reconcile_rejects_clearing_a_usable_pr_on_the_repair_path(self) -> None:
+        # 修復経路 (pr_open -> proposed) が使えるのは辿れない行だけ。
+        # 開ける PR を持つ行を空に戻すのは「無かったこと」にする書き換え
+        base = [
+            self.entry(
+                "IMP-20260903-aaaaaaaaaa",
+                status="pr_open",
+                pr="https://github.com/o/r/pull/1",
+            )
+        ]
+        head = [dict(base[0], status="proposed", pr=None, notes="消してから出し直す")]
+        problems = ledger.check_reconcile_diff(base, head)
+        self.assertTrue(any("空にはできない" in p for p in problems), problems)
+        self.assertTrue(any("許されない status 遷移" in p for p in problems), problems)
+
+    def test_reconcile_rejects_erasing_the_pr_of_a_merged_row(self) -> None:
+        # status を動かさなくても、決着した行から PR を消させない
+        base = [
+            self.entry(
+                "IMP-20260801-bbbbbbbbbb",
+                status="merged",
+                pr="https://github.com/o/r/pull/2",
+            )
+        ]
+        head = [dict(base[0], pr=None, notes="出所を消す")]
+        problems = ledger.check_reconcile_diff(base, head)
+        self.assertTrue(any("空にはできない" in p for p in problems), problems)
+        self.assertTrue(any("開ける PR URL が要る" in p for p in problems), problems)
+
     def test_reconcile_rejects_illegal_field_and_transition(self) -> None:
         base = [self.entry("IMP-20260801-bbbbbbbbbb", status="pr_open", pr="https://github.com/o/r/pull/1")]
         head = [dict(base[0], finding="書き換えた", target_skill="commit")]

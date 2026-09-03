@@ -790,8 +790,9 @@ RECONCILE_MUTABLE_FIELDS: frozenset[str] = frozenset({"status", "pr", "after", "
 #: improve/<skill>-<id>-<run id> の PR を**接頭辞**で全状態から引いて
 #: open / merged / closed に決着させる。
 #: 条件は **head 側に開ける PR URL が入っていること** (check_reconcile_diff が動的に
-#: 見る)。PR を名指しできないまま merged / rejected に進めるのは、突き合わせでは
-#: なく台帳の書き換えなので通さない。
+#: 見る)。これは遷移先が pr_open / merged / rejected である限り常に required で、
+#: pr_open -> merged / rejected も同じ — PR を名指しできないまま (あるいは pr を
+#: 空にして index 照合を外して) 決着させるのは、突き合わせではなく台帳の書き換え。
 #: pr_open -> proposed は表に持たない — pr が空の行に限って
 #: check_reconcile_diff が動的に足す (辿れない行を出し直すための修復経路)。
 ALLOWED_STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
@@ -914,6 +915,12 @@ PR_STATE_EXPECTATION: dict[str, str] = {
     "rejected": "closed_unmerged",
 }
 
+#: 「その PR が現にこの状態にある」ことを主張する status。突き合わせでこの status を
+#: 名乗る行は、入る時も留まる時も **開ける PR URL を持っていなければならない**。
+#: 持たせないと `pr` を空にするだけで `pr_index_problem` の照合 (状態の一致まで見る)
+#: を回避でき、実際には開いている PR を merged / rejected として畳める。
+PR_REQUIRED_STATUSES: frozenset[str] = frozenset(PR_STATE_EXPECTATION)
+
 
 def pr_index_state(record: dict[str, Any]) -> str:
     """PR index の 1 件を `open` / `merged` / `closed_unmerged` に畳む (純関数)。"""
@@ -1017,10 +1024,11 @@ def check_reconcile_diff(
     許すのは「決着した PR の status / pr / after / notes を進める」ことだけ。
     finding 本文や target_skill が動いていたら、それは突き合わせではない。
 
-    `proposed` の行を進められるのは **head 側に開ける PR URL がある**ときだけ。
-    起票済みだが紐付いていない行 (`pr` が空 / `link-pr --keep-status` まで通った行)
-    を Step 0 が全状態の PR 検索で回収するための経路で、PR を名指しできないまま
-    決着させることは許さない。
+    `pr_open` / `merged` / `rejected` を名乗る行は、入る時も留まる時も **head 側に
+    開ける PR URL** を持っていなければならない。PR を名指しできないまま決着させる
+    ことは許さないし、`pr` を空にして `pr_index` との照合 (状態の一致まで見る) を
+    回避することもできない。開ける `pr` を空に戻せるのは、辿れない行を出し直す
+    修復経路 (`pr_open` -> `proposed` で base 側の `pr` が空 / 開けない) だけ。
 
     `pr_index` を渡すと、その URL が**実在してこの finding のものである**ことまで
     照合する (`pr_index_problem`)。渡さない場合は URL の**形**しか見ない — 対話
@@ -1044,9 +1052,12 @@ def check_reconcile_diff(
         illegal = sorted(changed - RECONCILE_MUTABLE_FIELDS)
         if illegal:
             problems.append(f"{entry_id}: 変更してはいけない項目 ({', '.join(illegal)})")
-        # 触った行に、開けない `pr` を残させない。空でない限り形を検査する
-        # (空に戻すのは辿れない行を出し直すための修復経路なので許す)。
+        # 触った行に、開けない `pr` を残させない。空でない限り形を検査し、
+        # index があれば「実在してこの finding のもので、status と状態が一致する」
+        # ことまで照合する。
         head_pr = str(after.get("pr") or "").strip()
+        old_status = str(before.get("status", ""))
+        new_status = str(after.get("status", ""))
         if head_pr:
             problem = pr_url_problem(head_pr)
             if problem is not None:
@@ -1055,8 +1066,23 @@ def check_reconcile_diff(
                 problem = pr_index_problem(after, pr_index)
                 if problem is not None:
                     problems.append(f"{entry_id}: {problem}")
-        old_status = str(before.get("status", ""))
-        new_status = str(after.get("status", ""))
+        elif has_usable_pr(before):
+            # 開ける `pr` を空に戻せるのは、辿れない行を出し直す修復経路
+            # (`pr_open` -> `proposed` で base 側の `pr` が空 / 開けない) だけ。
+            # 開ける PR を消せると、その行が指していた PR が誰にも辿れなくなり、
+            # `pr_index_problem` の照合も効かなくなる。
+            problems.append(
+                f"{entry_id}: 開ける pr を空にはできない ({before.get('pr')!r})"
+            )
+        if new_status in PR_REQUIRED_STATUSES and not has_usable_pr(after):
+            # `pr_open` / `merged` / `rejected` は PR の状態そのものの記録。
+            # head 側に開ける PR URL が無いと index と突き合わせようがなく、
+            # `pr` を空にするだけで「実際には開いている PR を merged / rejected に
+            # する」書き換えが通ってしまう。
+            problems.append(
+                f"{entry_id}: status {new_status!r} には head 側に開ける PR URL が要る"
+                f" (pr={after.get('pr')!r})"
+            )
         if old_status != new_status:
             allowed = ALLOWED_STATUS_TRANSITIONS.get(old_status, frozenset())
             # 追える PR が無い pr_open は決着させようがない (pr が空でも、
@@ -1068,14 +1094,6 @@ def check_reconcile_diff(
             if new_status not in allowed:
                 problems.append(
                     f"{entry_id}: 許されない status 遷移 ({old_status} -> {new_status})"
-                )
-            elif old_status == "proposed" and not has_usable_pr(after):
-                # proposed からの遷移は「PR が実在した」ことの記録に限る。
-                # head 側に開ける PR URL が無いまま pr_open / merged / rejected へ
-                # 進めるのは、突き合わせに見せかけた status の書き換え。
-                problems.append(
-                    f"{entry_id}: proposed からの遷移には head 側に開ける PR URL が要る"
-                    f" ({old_status} -> {new_status})"
                 )
     for entry in added:
         problems.extend(_proposed_entry_problems(entry, f"追加行 {entry.get('id')}"))

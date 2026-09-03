@@ -137,7 +137,8 @@ PR URL を持つ行しか pending にしないのでこの行は pending にな�
 **base 側の行が辿れない場合 (`pr` が空、または PR URL の形をしていない) に限って**
 許す。開ける PR URL を持つ `pr_open` を `proposed` に戻すのは、出した PR を
 「無かったこと」にする書き換えなので通さない。reconcile モードは併せて、**触った行に
-開けない `pr` を残すこと**も拒否する。
+開けない `pr` を残すこと**も、**開ける `pr` を空に戻すこと**も拒否する — `pr` を
+消せる唯一の経路がこの 3 の修復 (base 側が辿れない `pr_open → proposed`) である。
 
 書き込み側では `set-status --status pr_open --clear-pr` も拒否する。片方ずつは
 正当な操作 (`--clear-pr` は 3 の修復経路、`--status pr_open` は 2 の決着) だが、
@@ -287,7 +288,7 @@ added / removed / modified の 3 分類で行い、モードごとに許す形�
 |---|---|
 | `candidate` (改善ブランチ) | **追加 1 行だけ**。削除・既存行の変更は不可。追加行は `--ledger-id` と一致する id を持ち、`status` が `proposed`、`pr` が `null` であること |
 | 両モード共通 | **base / head のどちらかに id の重複があれば不合格**。重複があると id をキーにした差分計算が 2 行目以降を落とすので、同じ id を 2 行書くだけで「追加は 1 行だけ」の検査をすり抜けられる。base 側の重複は台帳自体が壊れている状態なのでこちらも通さない |
-| `reconcile` (突き合わせブランチ) | 削除は不可。既存行で変えてよいのは `status` / `pr` / `after` / `notes` だけで、`status` の遷移は `pr_open → merged`\|`rejected`、`merged → reverted`、`proposed → pr_open`\|`merged`\|`rejected` (**head 側に開ける PR URL があるときだけ**。base 側の `pr` は空でも入っていてもよい — どちらも起票済みで紐付いていない行で、Step 0 が head branch の PR を接頭辞 + 全状態で引いて回収する経路)、`pr_open` (pr が辿れない) `→ proposed` (辿れない行を出し直す修復経路) のみ。触った行の `pr` は空か、PR URL の形をしていること。追加行があれば `proposed` の形であること |
+| `reconcile` (突き合わせブランチ) | 削除は不可。既存行で変えてよいのは `status` / `pr` / `after` / `notes` だけで、`status` の遷移は `pr_open → merged`\|`rejected`、`merged → reverted`、`proposed → pr_open`\|`merged`\|`rejected`、`pr_open` (pr が辿れない) `→ proposed` (辿れない行を出し直す修復経路) のみ。**`pr_open` / `merged` / `rejected` を名乗る行は、入る時も留まる時も head 側に開ける PR URL を持つこと** (index があれば実在と状態まで照合する)。base 側の `pr` は空でも入っていてもよい — どちらも起票済みで紐付いていない行で、Step 0 が head branch の PR を接頭辞 + 全状態で引いて回収する経路。**開ける `pr` を空に戻せるのは修復経路 (`pr_open → proposed` かつ base 側の `pr` が空 / 開けない) だけ**で、それ以外の行から `pr` を消すことはできない。追加行があれば `proposed` の形であること |
 
 `verify` job は **base (default branch) 側の `ledger.py`** でこの検査を実行する —
 候補ブランチのコピーを使ったら検査にならないため。違反があれば内容を並べて
@@ -300,6 +301,12 @@ exit 1 し、そのブランチは PR にならない。
 **別リポジトリの / 無関係な PR** を指す整った URL を書くだけで `proposed` →
 `merged` / `rejected` に進められる — 台帳の決着は「その PR が本当にそうなった」ことの
 記録なので、これは突き合わせではなく捏造になる。
+
+`pr_open` / `merged` / `rejected` に **PR URL を必須にしているのはこの照合を外させない
+ため**でもある。`pr` は `reconcile` で変更してよい項目なので、URL を空にできると
+`pr_open → merged` / `rejected` のついでに index との突き合わせごと消え、**実際には
+開いたままの PR を決着済みとして畳める**。空の `pr` は「照合できない」であって
+「照合に通った」ではない。
 
 そこで `verify-diff` は `--pr-index <file>` を受け、**触った行の `pr` を信用できる
 index と突き合わせる**。index を作るのは workflow の `stage` job — 候補コードを 1 行も
