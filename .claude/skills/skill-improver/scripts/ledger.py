@@ -231,6 +231,22 @@ def recurrence_for(
     return prior + 1
 
 
+def validate_created(created: str) -> str:
+    """`created` が実在する YYYY-MM-DD であることを確かめて返す (純関数)。
+
+    `derive_id` の中だけで検査していると、`--id` を明示したときに検査が丸ごと
+    飛んで `2026-99-99` がそのまま台帳の `created` に入る。日付は id とは独立に
+    「いつの finding か」を持つフィールドなので、採番経路と切り離して常に通す。
+    """
+    if not CREATED_RE.match(created):
+        raise ValueError(f"created は YYYY-MM-DD 形式で指定する: {created!r}")
+    try:
+        _dt.date.fromisoformat(created)
+    except ValueError as exc:
+        raise ValueError(f"created が実在しない日付: {created!r}") from exc
+    return created
+
+
 def derive_id(target_skill: str, class_key: str, created: str) -> str:
     """内容由来の id `IMP-<YYYYMMDD>-<sha1 先頭 10 桁>` を返す (純関数)。
 
@@ -240,14 +256,7 @@ def derive_id(target_skill: str, class_key: str, created: str) -> str:
     同じ日・同じ skill・同じクラスなら同じ id になる — それは同一 finding の
     二重登録であり、`add` が重複として弾く。
     """
-    if not CREATED_RE.match(created):
-        raise ValueError(f"created は YYYY-MM-DD 形式で指定する: {created!r}")
-    # 形式が合っていても存在しない日付 (2026-99-99) は通さない。id に埋まると
-    # 「いつの finding か」が読めなくなり、日付順の突き合わせも壊れる。
-    try:
-        _dt.date.fromisoformat(created)
-    except ValueError as exc:
-        raise ValueError(f"created が実在しない日付: {created!r}") from exc
+    validate_created(created)
     digest = hashlib.sha1(  # noqa: S324 - 衝突耐性ではなく短い安定 id が目的
         f"{target_skill}\n{class_key}".encode()
     ).hexdigest()[:ID_HASH_LEN]
@@ -529,7 +538,8 @@ def cmd_add(args: argparse.Namespace) -> int:
         )
         return EXIT_FAIL
 
-    created = args.created or today()
+    # --id を渡しても検査は飛ばさない (created は id とは独立のフィールド)
+    created = validate_created(args.created or today())
     class_key = args.finding_class.strip() or finding_class(args.finding)
     # 台帳に入れるのは正規化済みの skill 名。`skills/tdd` のような書き方をそのまま
     # 保存すると、同じ skill が 2 つのキーに割れて recurrence が伸びなくなる。
@@ -681,7 +691,14 @@ def cmd_report(args: argparse.Namespace) -> int:
     path = ledger_path(args)
     entries = load_entries(path)
     if args.skill:
-        entries = [e for e in entries if e.get("target_skill") == args.skill]
+        # `skills/tdd` のような書き方でも同じ skill として絞る。生の文字列比較だと
+        # add 側が正規化して保存しているぶんと食い違い、静かに 0 件になる。
+        wanted_skill = normalize_skill_name(args.skill)
+        entries = [
+            e
+            for e in entries
+            if normalize_skill_name(str(e.get("target_skill", ""))) == wanted_skill
+        ]
     report = build_report(entries)
 
     if args.json:
@@ -754,7 +771,14 @@ def cmd_list(args: argparse.Namespace) -> int:
         wanted = set(args.status)
         entries = [e for e in entries if str(e.get("status")) in wanted]
     if args.skill:
-        entries = [e for e in entries if e.get("target_skill") == args.skill]
+        # `skills/tdd` のような書き方でも同じ skill として絞る。生の文字列比較だと
+        # add 側が正規化して保存しているぶんと食い違い、静かに 0 件になる。
+        wanted_skill = normalize_skill_name(args.skill)
+        entries = [
+            e
+            for e in entries
+            if normalize_skill_name(str(e.get("target_skill", ""))) == wanted_skill
+        ]
 
     if args.json:
         print(json.dumps(entries, ensure_ascii=False, indent=2))

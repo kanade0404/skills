@@ -122,6 +122,12 @@ kanade0404/skills で skill-improver を 1 周回してください。
    "chore(ledger): reconcile <date>" として PR を出す (default branch には push
    しない)。そのうえで ledger.py report を読み、revert candidate があれば
    新規候補より先に報告する
+2.5. open な improve/* PR (gh pr list --state open --search 'head:improve/') の
+   head ブランチにある improvements/ledger.jsonl も
+   ledger.py list --ledger <tmp> で読む。target_skill と finding クラスが一致する
+   行は pending 扱いで新規候補から外し、実行レポートの「既存 PR あり (skip)」に
+   PR URL を並べる (未 merge の PR の台帳行は default branch にまだ無いので、
+   これをしないと翌週に同じ finding で二重に PR を出す)
 3. 入力は 3 系統: (a) 直近 1 週の retro / session-retro finding のうち lever が
    skill edit / ept-handoff のもの (台帳には ept として保存される)
    (b) agent-feedback ラベルの issue / PR で、author association が

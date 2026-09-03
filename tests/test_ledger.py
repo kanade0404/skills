@@ -557,6 +557,40 @@ class TestCliRoundTrip(unittest.TestCase):
         self.assertEqual(run(self.base(*argv))[0], ledger.EXIT_FAIL)
         self.assertEqual(len(self.entries()), 1)
 
+    def test_skill_filters_accept_path_spelling(self) -> None:
+        # 生の文字列比較だと、正規化して保存された行と食い違って静かに 0 件になる
+        run(
+            self.base(
+                "add", "--source", "retro", "--target", "tdd",
+                "--finding", "f", "--lever", "skill-edit",
+            )
+        )
+        for spelling in ("tdd", "skills/tdd", " tdd "):
+            with self.subTest(spelling=spelling):
+                listed = json.loads(
+                    run(self.base("list", "--skill", spelling, "--json"))[1]
+                )
+                self.assertEqual(len(listed), 1)
+                report = json.loads(
+                    run(self.base("report", "--skill", spelling, "--json"))[1]
+                )
+                self.assertEqual(report["entries"], 1)
+        self.assertEqual(
+            json.loads(run(self.base("list", "--skill", "commit", "--json"))[1]), []
+        )
+
+    def test_created_is_validated_even_when_id_is_given(self) -> None:
+        # 検査が derive_id の中だけだと、--id を渡した経路で丸ごと飛ぶ
+        code, _ = run(
+            self.base(
+                "add", "--source", "retro", "--target", "tdd",
+                "--finding", "f", "--lever", "skill-edit",
+                "--created", "2026-99-99", "--id", "IMP-20269999-abcdef0123",
+            )
+        )
+        self.assertEqual(code, ledger.EXIT_FAIL)
+        self.assertEqual(self.entries(), [])
+
     def test_manual_id_must_match_format_and_be_unique(self) -> None:
         base_argv = [
             "add", "--source", "retro", "--target", "tdd",

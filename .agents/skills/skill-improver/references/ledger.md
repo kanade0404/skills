@@ -22,6 +22,20 @@ git が受け止める (台帳への追記は必ずブランチ + PR 経由で d
 実行中に書いた行はそのブランチにしか無く、次回の実行は default branch の台帳を読む。
 この遅延は承認ゲートを PR レビューに置いたことの代償として受け入れる。
 
+そのぶん、**まだ merge されていない改善 PR が持っている行も読む**必要がある
+(SKILL.md Step 0)。open な `improve/*` PR の head ブランチから台帳を取り出し、
+`--ledger` でそのファイルを指して `list` すればよい:
+
+```bash
+gh api "repos/<owner>/<repo>/contents/improvements/ledger.jsonl?ref=<branch>" \
+  --jq '.content' | base64 -d > "$tmp/<branch>.jsonl"
+uv run python3 skills/skill-improver/scripts/ledger.py list --ledger "$tmp/<branch>.jsonl" --json
+```
+
+そこに `target_skill` × finding クラスが一致する行があれば、その finding は
+**処理済み (pending)** であり、新規候補にしない。これをしないと、レビュー待ちの
+PR がある間じゅう同じ finding で PR を出し続ける。
+
 ## エントリのフィールド
 
 | field | 型 | 内容 |
