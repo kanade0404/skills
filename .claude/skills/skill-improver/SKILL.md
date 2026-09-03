@@ -265,13 +265,14 @@ description を触ったら `evals/<skill>-trigger-results-<日付>.jsonl` を�
 | **workflow** (`.github/workflows/skill-improver.yml`) | `verify` job (資格情報を持たない。ブランチごとに checkout して Step 5 の検査を実行) | `publish` job。検証が通ったブランチにだけ `gh pr create` |
 | **手動 / Routine** (対話セッション) | 自分 (Step 5 をそのまま実行) | 自分。Step 5 が全て通ってから |
 
-workflow モードは job を 3 つに割ってある。**候補ブランチの中身を実行するのは `verify` job だけで、その job は資格情報を持たない** (`contents: read` / `persist-credentials: false` / `GH_TOKEN` なし) — ブランチがテストや検査スクリプトを書き換えていても、奪える資格情報がそこに無いようにするため。書き込み権限を持つ `publish` job はブランチのコードを実行しない (`ledger.py` は default branch 側のコピーを使う)。
+workflow モードは job を 4 つに割ってある。**候補ブランチの中身を実行するのは `verify` job だけで、その job は資格情報を持たない** (`contents: read` / `persist-credentials: false` / `GH_TOKEN` なし) — ブランチがテストや検査スクリプトを書き換えていても、奪える資格情報がそこに無いようにするため。さらに **`verify` は候補 1 件につき 1 job** で、**artifact を一切上げない**: 候補コードが動いた runner の出力は (artifact も含めて) 信用できないので、信頼できる出力を job の conclusion 1 ビットだけに絞り、合格記録の組み立ては候補コードを動かさない `collect` job が行う。書き込み権限を持つ `publish` job はブランチのコードを実行しない (`ledger.py` は default branch 側のコピーを使う)。
 
 | job | 権限 | 役割 |
 |---|---|---|
 | `improve` | `contents: write` / `issues: read` | ruleset の preflight、agent 実行 (読み取り専用トークン)、trusted step でのブランチ push、manifest の artifact 化 |
-| `verify` | `contents: read` のみ | manifest の検証、allow-list diff ゲート、ブランチ上での Step 5 の検査 |
-| `publish` | `contents: write` / `pull-requests: write` | 通ったブランチの `gh pr create`、`link-pr` の commit / push、失敗時の補償 |
+| `verify` (**候補 1 件につき 1 job**) | `contents: read` のみ | manifest の検証、allow-list ゲート、台帳差分のゲート、ブランチ上での Step 5 の検査。**artifact は上げない** |
+| `collect` | `actions: read` のみ | 各 `verify` の conclusion と improve の manifest から合格記録を組み立てる |
+| `publish` | `contents: write` / `pull-requests: write` | 合格記録にある候補の `gh pr create`、`link-pr` の commit / push、失敗時の補償 |
 
 workflow モードでは **agent は push も PR 起票もしない**。agent が持つのは読み取り専用トークンだけで (checkout も `persist-credentials: false`)、改善ブランチにローカル commit するところまで。push は agent の実行後に発行される書き込みトークンで trusted step が行い、PR 起票は `publish` job が行う。書き込みトークンは agent の実行中に runner のどこにも存在しないので、injection が通っても持ち出せる write 権限が無い。
 

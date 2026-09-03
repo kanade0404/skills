@@ -74,23 +74,35 @@ run」を押すまで走らない** ([GITHUB_TOKEN のドキュメント](https:
    検査し、その SHA でテストを回す。通ったものだけ `publish` が `gh pr create` し、
    `link-pr` を commit / push する
 
-### job の分割 (権限の分離)
+### job の分割 (権限と信頼の分離)
 
 候補ブランチの中身は agent が書いたコードであり、そのまま書き込み資格情報のある場所で
 実行すると、テストや検査スクリプトを書き換えたブランチが資格情報に手を伸ばせる。
-そのため job を 3 つに割り、**ブランチを実行する job から資格情報を外す**:
+そのため job を 4 つに割り、**ブランチを実行する job から資格情報を外し、その job の
+出力も信用しない**:
 
 | job | 権限 | 役割 |
 |---|---|---|
-| `improve` | `contents: write` / `issues: read` | ruleset の preflight、agent 実行、ブランチ push、manifest を artifact に上げる |
-| `verify` | `contents: read` のみ (`persist-credentials: false`、`GH_TOKEN` もシークレットも渡さない) | manifest の値の検証、パスの allow-list ゲート、**台帳差分のゲート (`ledger.py verify-diff`)**、ブランチ上で `unittest` / `check_trigger_evals.py` / `rulesync-sync.mjs --check` |
-| `publish` | `contents: write` / `pull-requests: write` | 通ったブランチの `gh pr create`、`link-pr` の commit / push、失敗時の補償 |
+| `improve` | `contents: write` / `issues: read` | ruleset の preflight、agent 実行 (読み取り専用トークン)、trusted step でのブランチ push、manifest を artifact に上げる |
+| `verify` (**候補 1 件につき 1 job**) | `contents: read` のみ (`persist-credentials: false`、`GH_TOKEN` もシークレットも渡さない) | manifest の値の検証、パスの allow-list ゲート、**台帳差分のゲート (`ledger.py verify-diff`)**、メタスキル対象の拒否、ブランチ上で `unittest` / `check_trigger_evals.py` / `rulesync-sync.mjs --check`。**artifact は上げない** |
+| `collect` | `actions: read` のみ | 各 `verify (<idx>)` の conclusion と improve の manifest から合格記録を組み立てて artifact に上げる。候補コードは動かさない |
+| `publish` | `contents: write` / `pull-requests: write` | 合格記録にある候補の `gh pr create`、`link-pr` の commit / push、失敗時の補償 |
 
-`verify` は候補が 1 つでも落ちれば赤くなる (その可視性は保つ) が、**通った候補は起票する** —
-`publish` は `always() && needs.improve.result == 'success' && (verify が success か
-failure)` で回し、cancelled / skipped では走らせない (状態関数を含まない `if` には
-暗黙の `success()` が掛かるため `always()` が要る)。`PASSED` の artifact は候補ループの
-成否に関わらず `if: always()` で上げるので、`publish` は常に完全な入力を受け取る。
+**なぜ verify を 1 件 1 job にするか**: 「候補コードを動かした runner が、そのまま
+合格記録も書く」構造は成立しない。候補コードは runner 上で任意に動けるので、落ちた
+別の `improve/*` ブランチを指す「合格した行」を書き足せてしまい、`publish` からは
+区別が付かない。artifact も同じ理由で信用できない (`ACTIONS_RUNTIME_TOKEN` があれば
+runner 上の任意のコードが artifact を上げられる)。そこで **verify の信頼できる出力を
+job の conclusion 1 ビットだけに絞り**、合格記録の組み立ては候補コードを動かさない
+`collect` が行う。`collect` が読むのは (1) 各 `verify (<idx>)` の conclusion
+(`actions: read` で jobs API から取得)、(2) **候補コードが 1 行も動く前に** improve が
+上げた manifest — の 2 つだけで、PR 本文も後者から取る。
+
+`verify` は候補が 1 つでも落ちれば赤くなる (その可視性は保つ) が、**通った候補は
+起票する** — `collect` と `publish` は `always()` を含む条件で回し、cancelled では
+走らせない (状態関数を含まない `if` には暗黙の `success()` が掛かるため `always()` が
+要る)。候補が 0 件なら `verify` の matrix は空で job ごと skip され、`collect` が空の
+合格記録を出して `publish` が「起票なし」で正常終了する。
 
 `verify` は `fetch-depth: 0` の checkout で全 remote head をローカルに取り込むため、
 job 中に追加のネットワークアクセス (= 資格情報) が要らない。`publish` は書き込み権限を

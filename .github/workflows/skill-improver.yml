@@ -8,18 +8,26 @@
 # ブランチの push とマニフェスト記録までさせ、検証が通ったブランチにだけ publish job が
 # gh pr create する。
 #
-# **job を 3 つに割る理由 (権限の分離)**:
+# **job を 4 つに割る理由 (権限と信頼の分離)**:
 #   improve — agent を動かす。contents: write (improve/* の push) を持つが、
 #             ブランチの中身を実行しない
-#   verify  — 候補ブランチの中身を実行する唯一の job。contents: read だけで、
-#             資格情報 (GH_TOKEN / persist-credentials) もシークレットも持たない。
-#             敵対的なブランチがテストや検査スクリプトを書き換えていても、
-#             奪える資格情報がそこに無い
-#   publish — 検証を通ったブランチにだけ PR を作る。contents: write を持つが、
+#   verify  — 候補ブランチの中身を実行する唯一の job。**候補 1 件につき 1 job**
+#             (matrix) で、contents: read だけ、資格情報もシークレットも持たない。
+#             **artifact を一切上げず、信頼できる出力は job の conclusion だけ**
+#   collect — verify の conclusion と improve の manifest (候補コードが動く前に
+#             上げたもの) から合格記録を組み立てる。候補コードは動かさない
+#   publish — 合格記録にある候補にだけ PR を作る。contents: write を持つが、
 #             ブランチのコードは実行しない (ledger.py は default branch 側の
 #             コピーを使う)
+#
+# verify を 1 件 1 job にするのは、**同じ runner で候補コードを動かしてから合格記録を
+# 書く構造が成立しない**ため。候補コードは runner 上で任意に動けるので、落ちた別の
+# improve/* ブランチを指す「合格した行」を書き足せてしまう (artifact は
+# ACTIONS_RUNTIME_TOKEN があれば誰でも上げられるので、artifact も同じ理由で信用
+# できない)。conclusion は候補コードから触れないので、そこだけを信頼の担い手にする。
+#
 # この分離があっても、ブランチの差分は allow-list で対象 skill ディレクトリと
-# improvements/ledger.jsonl に限る (verify の diff ゲート)。
+# improvements/ledger.jsonl に限り、台帳は行の粒度でも検査する (verify のゲート)。
 #
 # **実行アイデンティティは専用の GitHub App (必須)**。repo secrets の
 # SKILL_IMPROVER_APP_ID / SKILL_IMPROVER_APP_PRIVATE_KEY から installation token を
@@ -64,6 +72,10 @@ concurrency:
 jobs:
   improve:
     runs-on: ubuntu-latest
+    # verify は候補 1 件につき 1 job にする (matrix)。その添字リストをここから渡す。
+    outputs:
+      indexes: ${{ steps.push.outputs.indexes }}
+      count: ${{ steps.push.outputs.count }}
     permissions:
       # improve/* ブランチの push に必要 (default branch へ push しないのは手順側の約束)
       contents: write
@@ -326,14 +338,27 @@ jobs:
           permission-pull-requests: write
 
       - name: Push the improvement branches
+        id: push
         if: steps.skill-improver.outcome == 'success'
         env:
           WRITE_TOKEN: ${{ steps.write-token.outputs.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -uo pipefail
+          emit_indexes() {
+            # push できた行数から matrix の添字リストを作る (0 始まり)
+            n="$(wc -l < "$MANIFEST" | tr -d ' ')"
+            echo "count=$n" >> "$GITHUB_OUTPUT"
+            if [ "$n" -eq 0 ]; then
+              echo "indexes=[]" >> "$GITHUB_OUTPUT"
+            else
+              echo "indexes=$(seq 0 $((n - 1)) | jq -cs '.')" >> "$GITHUB_OUTPUT"
+            fi
+          }
           if [ ! -s "$MANIFEST" ]; then
             echo "no improvement branch was recorded - nothing to push" >> "$GITHUB_STEP_SUMMARY"
+            : > "$MANIFEST"
+            emit_indexes
             exit 0
           fi
           remote="https://x-access-token:${WRITE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
@@ -360,6 +385,7 @@ jobs:
             echo "- \`$branch\` (\`$head_sha\`): push 済み" >> "$GITHUB_STEP_SUMMARY"
           done < "$MANIFEST"
           mv "$MANIFEST.new" "$MANIFEST"
+          emit_indexes
           exit "$failed"
 
       - name: Upload the manifest
@@ -371,23 +397,37 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # 候補ブランチの中身を実行する唯一の job。資格情報を持たない (contents: read /
-  # persist-credentials: false / GH_TOKEN なし / secrets なし) ので、敵対的な
-  # ブランチがテストや検査スクリプトを書き換えていても奪えるものが無い。
+  # 候補ブランチの中身を実行する唯一の job。**候補 1 件につき 1 job** に分ける
+  # (matrix) のが要点で、その理由は「同じ runner で候補コードを動かしてから合格記録を
+  # 書く」構造が成立しないこと: 候補コードは runner 上で任意に動けるので、合格した
+  # ふりをする行を artifact に足せてしまう (ACTIONS_RUNTIME_TOKEN があれば artifact は
+  # 誰でも上げられる)。だからこの job は **artifact を一切上げず**、信頼できる出力を
+  # job の conclusion 1 ビットだけに絞る。合格記録の組み立ては collect job が行う。
+  #
+  # 資格情報も持たない (contents: read / persist-credentials: false / GH_TOKEN なし /
+  # secrets なし)。候補がテストや検査スクリプトを書き換えていても奪えるものが無い。
   verify:
     needs: improve
+    if: needs.improve.outputs.count != '0'
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    strategy:
+      # 1 件落ちても残りは検証する (どれが落ちたかを conclusion で個別に見るため)
+      fail-fast: false
+      matrix:
+        idx: ${{ fromJSON(needs.improve.outputs.indexes) }}
+    # collect が job 名から添字を引くので、名前は決め打ちにする
+    name: verify (${{ matrix.idx }})
 
     env:
       WORKDIR: ${{ runner.temp }}/skill-improver
       MANIFEST: ${{ runner.temp }}/skill-improver/prs.jsonl
       BODIES: ${{ runner.temp }}/skill-improver/bodies
-      PASSED: ${{ runner.temp }}/skill-improver/passed.jsonl
       TRUSTED_LEDGER: ${{ runner.temp }}/trusted-ledger.py
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      IDX: ${{ matrix.idx }}
 
     steps:
       # fetch-depth: 0 で全 remote head を取り込むので、この job 中に追加の
@@ -415,163 +455,179 @@ jobs:
       - name: Stage the trusted ledger script
         run: cp skills/skill-improver/scripts/ledger.py "$TRUSTED_LEDGER"
 
-      - name: Verify each improvement branch
-        id: verify
+      - name: Verify one improvement branch
         run: |
           set -uo pipefail
           mkdir -p "$BODIES"
-          : > "$PASSED"
-          if [ ! -s "$MANIFEST" ]; then
-            echo "no improvement branch was recorded - nothing to verify" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+          line="$(sed -n "$((IDX + 1))p" "$MANIFEST")"
+          if [ -z "$line" ]; then
+            echo "::error::manifest の $IDX 行目が空"
+            exit 1
           fi
           bodies_real="$(realpath "$BODIES")"
+          branch="$(printf '%s' "$line" | jq -r '.branch // ""')"
+          title="$(printf '%s' "$line" | jq -r '.title // ""')"
+          body_file="$(printf '%s' "$line" | jq -r '.body_file // ""')"
+          ledger_id="$(printf '%s' "$line" | jq -r '.ledger_id // ""')"
+          head_sha="$(printf '%s' "$line" | jq -r '.head_sha // ""')"
+          reject() {
+            echo "- \`${branch:-<no branch>}\`: $1 — PR は作らない ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::$1"
+            exit 1
+          }
+
+          # --- manifest の値は agent が書いたデータ。特権的に使う前に検証する ---
+          printf '%s' "$branch" | grep -Eq '^improve/[A-Za-z0-9._-]+$' \
+            || reject "branch 名が不正"
+          [ -n "$title" ] || reject "title が空"
+          # body_file は bodies/ 直下の実ファイルだけ許す (symlink / .. / 別ディレクトリを弾く)。
+          # `.git/config` のようなファイルを指されると PR 本文にトークンが載る。
+          body_base="$(basename -- "$body_file")"
+          printf '%s' "$body_base" | grep -Eq '^[A-Za-z0-9._-]+$' || reject "body_file の名前が不正"
+          body_path="$BODIES/$body_base"
+          { [ ! -L "$body_path" ] && [ -f "$body_path" ]; } \
+            || reject "body_file が bodies/ 配下の通常ファイルでない"
+          [ "$(realpath "$body_path")" = "$bodies_real/$body_base" ] \
+            || reject "body_file の実体が bodies/ の外にある"
+          if [ -n "$ledger_id" ]; then
+            printf '%s' "$ledger_id" | grep -Eq '^IMP-[0-9]{8}-[0-9a-f]{10}$' \
+              || reject "ledger_id の形式が不正"
+          fi
+          printf '%s' "$head_sha" | grep -Eq '^[0-9a-f]{40}$' || reject "head_sha の形式が不正"
+          git rev-parse --verify --quiet "origin/$branch" > /dev/null \
+            || reject "origin にそのブランチが無い"
+          actual_sha="$(git rev-parse "origin/$branch")"
+          [ "$actual_sha" = "$head_sha" ] \
+            || reject "manifest の head_sha ($head_sha) と origin/$branch ($actual_sha) が不一致"
+
+          # --- 台帳の該当行を読み、allow-list の対象 skill を決める ---
+          target=""
+          if [ -n "$ledger_id" ]; then
+            target="$(git show "$head_sha:improvements/ledger.jsonl" 2>/dev/null \
+              | jq -r --arg id "$ledger_id" '
+                  select(.id == $id and .status == "proposed" and (.pr == null))
+                  | .target_skill // empty
+                ' 2>/dev/null | head -n 1)"
+            [ -n "$target" ] || reject "台帳に proposed かつ pr 未設定の $ledger_id が無い"
+            printf '%s' "$target" | grep -Eq '^[A-Za-z0-9._-]+$' || reject "target_skill の名前が不正"
+            # メタスキルは改善対象にしない (ledger.py の除外リストと同じ不変条件を
+            # パス側でも効かせる)。これらの scripts/ はテストや検査から実行されるので、
+            # 対象として通すと候補コードが verify の中で走る経路になる。
+            case "$target" in
+              retro|session-retro|skill-builder|empirical-prompt-tuning|skill-improver|model-policy|harness-distribution|rulesync-sync)
+                reject "メタスキル ($target) は改善対象にできない" ;;
+            esac
+          fi
+
+          # --- 台帳の「行」の粒度でも見る -------------------------------------
+          base_ledger="$(mktemp)"; head_ledger="$(mktemp)"
+          git show "origin/$DEFAULT_BRANCH:improvements/ledger.jsonl" > "$base_ledger" 2>/dev/null || : > "$base_ledger"
+          git show "$head_sha:improvements/ledger.jsonl" > "$head_ledger" 2>/dev/null || : > "$head_ledger"
+          diff_ok=0
+          if [ -n "$ledger_id" ]; then
+            python3 "$TRUSTED_LEDGER" verify-diff --base "$base_ledger" \
+              --head "$head_ledger" --mode candidate --ledger-id "$ledger_id" && diff_ok=1
+          else
+            python3 "$TRUSTED_LEDGER" verify-diff --base "$base_ledger" \
+              --head "$head_ledger" --mode reconcile && diff_ok=1
+          fi
+          rm -f "$base_ledger" "$head_ledger"
+          [ "$diff_ok" -eq 1 ] || reject "台帳の差分が許された範囲を超えている (verify-diff)"
+
+          # --- allow-list diff ゲート: 触ってよいパス以外を含むブランチは実行しない ---
+          changed="$(mktemp)"
+          git diff --name-only "origin/$DEFAULT_BRANCH...$head_sha" > "$changed" \
+            || { rm -f "$changed"; reject "diff を取れなかった"; }
+          bad=""
+          while IFS= read -r path; do
+            [ -n "$path" ] || continue
+            case "$path" in
+              improvements/ledger.jsonl) continue ;;
+            esac
+            if [ -n "$target" ]; then
+              case "$path" in
+                "skills/$target"/*|".claude/skills/$target"/*|".agents/skills/$target"/*) continue ;;
+              esac
+            fi
+            bad="$path"
+            break
+          done < "$changed"
+          rm -f "$changed"
+          [ -z "$bad" ] || reject "allow-list 外の変更を含む (\`$bad\`)"
+
+          # --- ここで初めてブランチの中身を実行する (資格情報の無い job) ---
+          git checkout --force --detach "$head_sha" || reject "検証対象の SHA を checkout できなかった"
+          for cmd in "python3 -m unittest discover tests" \
+                     "python3 .github/scripts/check_trigger_evals.py" \
+                     "node scripts/rulesync-sync.mjs --check"; do
+            sh -c "$cmd" || reject "検証失敗 (\`$cmd\`)。ブランチは調査用に残す"
+          done
+          echo "- \`$branch\` (\`$head_sha\`): 検証 OK" >> "$GITHUB_STEP_SUMMARY"
+
+  # 合格記録を組み立てる trusted job。候補コードは一切動かさず、**verify job の
+  # conclusion** (改竄できない) と **improve が候補コードを動かす前に上げた manifest**
+  # だけを材料にする。verify が上げた artifact は使わない (使えばそこが抜け穴になる)。
+  collect:
+    needs: [improve, verify]
+    if: >-
+      always() && needs.improve.result == 'success'
+      && needs.verify.result != 'cancelled'
+    runs-on: ubuntu-latest
+    permissions:
+      # 同じ run の job 一覧 (conclusion) を読むためだけの権限
+      actions: read
+
+    env:
+      WORKDIR: ${{ runner.temp }}/skill-improver
+      MANIFEST: ${{ runner.temp }}/skill-improver/prs.jsonl
+      PASSED: ${{ runner.temp }}/skill-improver/passed.jsonl
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    steps:
+      # improve が上げた manifest (= 候補コードが 1 行も動く前の状態)。
+      # bodies/ もこちらから取る — verify 側の成果物は信用しない。
+      - name: Download the manifest
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: skill-improver-manifest
+          path: ${{ env.WORKDIR }}
+
+      - name: Rebuild the pass record from job conclusions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          : > "$PASSED"
+          if [ ! -s "$MANIFEST" ]; then
+            echo "no candidate was verified - nothing to publish" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          jobs_json="$(mktemp)"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" \
+            --paginate --jq '.jobs[] | {name, conclusion}' | jq -cs '.' > "$jobs_json" \
+            || { echo "::error::job 一覧を取得できなかった"; exit 1; }
+          idx=0
           failed=0
           while IFS= read -r line; do
-            [ -n "$line" ] || continue
-            branch="$(printf '%s' "$line" | jq -r '.branch // ""')"
-            title="$(printf '%s' "$line" | jq -r '.title // ""')"
-            body_file="$(printf '%s' "$line" | jq -r '.body_file // ""')"
-            ledger_id="$(printf '%s' "$line" | jq -r '.ledger_id // ""')"
-            head_sha="$(printf '%s' "$line" | jq -r '.head_sha // ""')"
-            echo "::group::verify ${branch:-<no branch>}"
-            reject() {
-              echo "- \`${branch:-<no branch>}\`: $1 — PR は作らない ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
-              failed=1
-              echo "::endgroup::"
-            }
-
-            # --- manifest の値は agent が書いたデータ。特権的に使う前に検証する ---
-            case "$branch" in
-              improve/*) ;;
-              *) reject "branch 名が improve/ で始まらない"; continue ;;
-            esac
-            if ! printf '%s' "$branch" | grep -Eq '^improve/[A-Za-z0-9._-]+$'; then
-              reject "branch 名に使えない文字が含まれる"; continue
-            fi
-            if [ -z "$title" ]; then reject "title が空"; continue; fi
-            # body_file は bodies/ 直下の実ファイルだけ許す (symlink / .. / 別ディレクトリを弾く)。
-            # `.git/config` のようなファイルを指されると PR 本文にトークンが載る。
-            body_base="$(basename -- "$body_file")"
-            if ! printf '%s' "$body_base" | grep -Eq '^[A-Za-z0-9._-]+$'; then
-              reject "body_file の名前が不正"; continue
-            fi
-            body_path="$BODIES/$body_base"
-            if [ -L "$body_path" ] || [ ! -f "$body_path" ]; then
-              reject "body_file が bodies/ 配下の通常ファイルでない"; continue
-            fi
-            if [ "$(realpath "$body_path")" != "$bodies_real/$body_base" ]; then
-              reject "body_file の実体が bodies/ の外にある"; continue
-            fi
-            if [ -n "$ledger_id" ] && \
-               ! printf '%s' "$ledger_id" | grep -Eq '^IMP-[0-9]{8}-[0-9a-f]{10}$'; then
-              reject "ledger_id の形式が不正"; continue
-            fi
-            if ! git rev-parse --verify --quiet "origin/$branch" > /dev/null; then
-              reject "origin にそのブランチが無い"; continue
-            fi
-            # 以降はブランチ名ではなく **検証した SHA** を対象にする。ブランチ名で
-            # 追い続けると、検証と起票の間に押された commit が「検証済み」として
-            # 通ってしまう (TOCTOU)。
-            if ! printf '%s' "$head_sha" | grep -Eq '^[0-9a-f]{40}$'; then
-              reject "head_sha の形式が不正"; continue
-            fi
-            actual_sha="$(git rev-parse "origin/$branch")"
-            if [ "$actual_sha" != "$head_sha" ]; then
-              reject "manifest の head_sha ($head_sha) と origin/$branch ($actual_sha) が不一致"
-              continue
-            fi
-
-            # --- 台帳の該当行を読み、allow-list の対象 skill を決める ---
-            # jq は JSON Lines をストリームとして読めるので、行ごとの分解は要らない。
-            # 対象行が proposed かつ pr 未設定であることまで確かめる (既に紐付いた
-            # 行や merged の行を材料に allow-list を広げられないように)。
-            target=""
-            if [ -n "$ledger_id" ]; then
-              target="$(git show "$head_sha:improvements/ledger.jsonl" 2>/dev/null \
-                | jq -r --arg id "$ledger_id" '
-                    select(.id == $id and .status == "proposed" and (.pr == null))
-                    | .target_skill // empty
-                  ' 2>/dev/null | head -n 1)"
-              if [ -z "$target" ]; then
-                reject "台帳に proposed かつ pr 未設定の $ledger_id が無い"; continue
-              fi
-              if ! printf '%s' "$target" | grep -Eq '^[A-Za-z0-9._-]+$'; then
-                reject "target_skill の名前が不正"; continue
-              fi
-            fi
-
-            # --- allow-list diff ゲート: 触ってよいパス以外を含むブランチは実行しない ---
-            # ブランチの中身を実行するのはこのゲートを通った後だけ。tests/ や
-            # 検査スクリプトを書き換えたブランチはここで落ちる。
-            changed="$(mktemp)"
-            if ! git diff --name-only "origin/$DEFAULT_BRANCH...$head_sha" > "$changed"; then
-              rm -f "$changed"; reject "diff を取れなかった"; continue
-            fi
-            bad=""
-            while IFS= read -r path; do
-              [ -n "$path" ] || continue
-              case "$path" in
-                improvements/ledger.jsonl) continue ;;
-              esac
-              if [ -n "$target" ]; then
-                case "$path" in
-                  "skills/$target"/*|".claude/skills/$target"/*|".agents/skills/$target"/*) continue ;;
-                esac
-              fi
-              bad="$path"
-              break
-            done < "$changed"
-            rm -f "$changed"
-            if [ -n "$bad" ]; then
-              reject "allow-list 外の変更を含む (\`$bad\`)"; continue
-            fi
-
-            # --- 台帳の「行」の粒度でも見る -------------------------------------
-            # パスの allow-list は improvements/ledger.jsonl 全体を許すので、
-            # 1 行足すついでに他の行 (別 skill の merged 記録など) を書き換えられる。
-            # 検査には base 側の ledger.py を使う (候補ブランチのコピーは信用しない)。
-            base_ledger="$(mktemp)"; head_ledger="$(mktemp)"
-            git show "origin/$DEFAULT_BRANCH:improvements/ledger.jsonl" > "$base_ledger" 2>/dev/null || : > "$base_ledger"
-            git show "$head_sha:improvements/ledger.jsonl" > "$head_ledger" 2>/dev/null || : > "$head_ledger"
-            if [ -n "$ledger_id" ]; then
-              diff_ok=0
-              python3 "$TRUSTED_LEDGER" verify-diff --base "$base_ledger" \
-                --head "$head_ledger" --mode candidate --ledger-id "$ledger_id" && diff_ok=1
-            else
-              diff_ok=0
-              python3 "$TRUSTED_LEDGER" verify-diff --base "$base_ledger" \
-                --head "$head_ledger" --mode reconcile && diff_ok=1
-            fi
-            rm -f "$base_ledger" "$head_ledger"
-            if [ "$diff_ok" -ne 1 ]; then
-              reject "台帳の差分が許された範囲を超えている (verify-diff)"; continue
-            fi
-
-            # --- ここで初めてブランチの中身を実行する (資格情報の無い job) ---
-            git checkout --force --detach "$head_sha" || {
-              reject "検証対象の SHA を checkout できなかった"; continue
-            }
-            ok=1
-            for cmd in "python3 -m unittest discover tests" \
-                       "python3 .github/scripts/check_trigger_evals.py" \
-                       "node scripts/rulesync-sync.mjs --check"; do
-              if ! sh -c "$cmd"; then
-                reject "検証失敗 (\`$cmd\`)。ブランチは調査用に残す"
-                ok=0
-                break
-              fi
-            done
-            if [ "$ok" -eq 1 ]; then
+            [ -n "$line" ] || { idx=$((idx + 1)); continue; }
+            branch="$(printf '%s' "$line" | jq -r '.branch // "?"')"
+            conclusion="$(jq -r --arg name "verify ($idx)" \
+              '(map(select(.name == $name)) | first | .conclusion) // "missing"' "$jobs_json")"
+            if [ "$conclusion" = "success" ]; then
               printf '%s\n' "$line" >> "$PASSED"
-              echo "- \`$branch\` (\`${head_sha}\`): 検証 OK" >> "$GITHUB_STEP_SUMMARY"
-              echo "::endgroup::"
+              echo "- \`$branch\`: verify ($idx) 成功 → 起票対象" >> "$GITHUB_STEP_SUMMARY"
+            else
+              failed=1
+              echo "- \`$branch\`: verify ($idx) の結果は $conclusion — 起票しない ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
             fi
+            idx=$((idx + 1))
           done < "$MANIFEST"
-          exit "$failed"
+          rm -f "$jobs_json"
+          # 落ちた候補があること自体は job を赤くしない (publish に進ませるため)。
+          # 赤の可視性は verify 側の job が持つ。
+          [ "$failed" -eq 0 ] || echo "一部の候補が検証に落ちた ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the verified manifest
-        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: skill-improver-passed
@@ -583,15 +639,17 @@ jobs:
   # 実行しない** — ledger.py は default branch 側のコピーを $RUNNER_TEMP に退避して
   # から使う。
   publish:
-    needs: [improve, verify]
+    # 入力は collect が組み立てた合格記録だけ。verify が上げた artifact は
+    # (そもそも上げていないが) 使わない — 候補コードが動いた runner の成果物を
+    # 信頼した時点で検証の意味が消えるため。
+    needs: [improve, collect]
     # verify は候補が 1 つでも落ちれば赤くなる (その可視性は保つ)。ただし通った候補は
-    # 起票したいので、verify の failure でも publish は走らせる。
+    # 起票したいので、その場合も publish は走らせる。
     # **always() が要る**: 状態関数を含まない if には暗黙の success() が掛かるため、
-    # `needs.verify.result == 'failure'` だけ書いても verify が赤いと job ごと skip
-    # される。cancelled / skipped では走らせない。
+    # needs の result を見るだけでは上流が赤いと job ごと skip される。
     if: >-
       always() && needs.improve.result == 'success'
-      && (needs.verify.result == 'success' || needs.verify.result == 'failure')
+      && needs.collect.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
