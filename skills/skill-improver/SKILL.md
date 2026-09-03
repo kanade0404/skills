@@ -264,7 +264,7 @@ workflow モードでは `gh pr create` が使えない。改善ブランチを 
 {"branch": "improve/<skill>-<finding-id>", "title": "<PR title>", "body_file": "<BODIES 直下のパス>", "ledger_id": "<IMP-...>", "head_sha": "<40 桁の SHA>"}
 ```
 
-**検証も起票もブランチ名ではなく `head_sha` を対象にする**。ブランチ名で追い続けると、検証が終わってから起票までの間に押された commit が「検証済み」として PR に載る (TOCTOU)。`verify` は `origin/<branch>` が `head_sha` と一致することを確かめてからその SHA を checkout し、`publish` は `gh pr create` の直前と `link-pr` の push 直前に `git ls-remote` で remote の先端を取り直して再確認する。不一致ならそのブランチは起票しない (起票後に判明した場合は PR を閉じて補償する)。**manifest に記録した後、そのブランチに push しないこと**。
+**検証も起票もブランチ名ではなく `head_sha` を対象にする**。ブランチ名で追い続けると、検証が終わってから起票までの間に押された commit が「検証済み」として PR に載る (TOCTOU)。`verify` は `origin/<branch>` が `head_sha` と一致することを確かめてからその SHA を checkout し、`publish` は `gh pr create` の直前と `link-pr` の push 直前に `git ls-remote` で remote の先端を取り直して再確認する。不一致ならそのブランチは起票しない (起票後に判明した場合は PR を閉じて補償する)。**agent (`improve` job) は manifest に記録した後、そのブランチに push しないこと** — 記録した SHA が動くと、そのブランチは検証済みとして扱えなくなる。`publish` が `link-pr` の commit を同じブランチに push するのは別で、直前の `git ls-remote` による再照合を通った後なので問題ない。
 
 > 残る窓: 最後の照合と `gh pr create` の間はごく短いが 0 ではない。塞ぎ切るには `improve/**` への push を Actions integration だけに制限する ruleset が要る (repo 設定なのでコード側では閉じられない — `references/scheduling.md`)。
 
@@ -274,7 +274,7 @@ workflow モードでは `gh pr create` が使えない。改善ブランチを 
 
 検証に落ちたブランチは PR にならず、失敗したコマンドと共に job summary に出て job が赤になる。ブランチは調査用に残る。PR を作った後で `link-pr` の commit / push に失敗した場合は、**その PR を自動的に閉じて補償する** (台帳から辿れない PR をレビュー待ちに残さない) — 補償自体が失敗したら job summary にその旨を出し、次回の Step 0 が修復対象として拾う。
 
-(任意) PR 作成の資格情報を GitHub App トークン / PAT に替えれば、承認を挟まずに `pull_request` の run が走る。その場合もこの「検証してから起票」の順序は変えない。
+workflow は 2 つの実行アイデンティティで動く: `GITHUB_TOKEN` モード (既定) と、GitHub App の installation token を使う **App モード** (推奨)。App モードでは `improve/**` への push を App だけに絞る ruleset が効き、`improve/*` PR の `pull_request` run も承認を挟まずに走る (設定は `references/scheduling.md`)。どちらでもこの「検証してから起票」の順序は変えない。
 
 PR 本文は下記フォーマット固定。作成後、**紐付けを同じブランチの 2 つ目の commit として載せる** — ここで commit せずローカルに置いたままだと、`pr` も `status` もどの PR にも入らず、次回の Step 0 が突き合わせる相手を失う (台帳が実行の中だけで完結して消える):
 

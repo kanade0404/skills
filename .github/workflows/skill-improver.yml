@@ -21,6 +21,13 @@
 # この分離があっても、ブランチの差分は allow-list で対象 skill ディレクトリと
 # improvements/ledger.jsonl に限る (verify の diff ゲート)。
 #
+# **実行アイデンティティは 2 モード**。repo secrets に SKILL_IMPROVER_APP_ID /
+# SKILL_IMPROVER_APP_PRIVATE_KEY があれば GitHub App の installation token で push と
+# PR 起票を行い (App モード)、improve/** への push をその App だけに絞る ruleset も
+# 必須にする。無ければ GITHUB_TOKEN で動き、improve/** の ruleset は要求しない
+# (GITHUB_TOKEN は bypass actor になれず、作ると自分の push が止まるため) — 代わりに
+# 保護が 1 段薄い旨を job summary に出す。
+#
 # 人間の承認ゲートは PR レビュー。**手順として** default branch へ push も merge も
 # しない — contents: write は improve/* ブランチを push するために必要な権限であり、
 # それ自体は default branch への push を技術的に禁止できない。実効的な保証は default
@@ -64,6 +71,36 @@ jobs:
       BODIES: ${{ runner.temp }}/skill-improver/bodies
 
     steps:
+      # --- 実行アイデンティティ (2 モード) ---------------------------------
+      # App モード: SKILL_IMPROVER_APP_ID / SKILL_IMPROVER_APP_PRIVATE_KEY が
+      #   設定されていれば installation token を発行し、push と PR 起票をその App
+      #   として行う。improve/** への push を「その App だけ」に絞る ruleset が
+      #   書けるようになり、improve/* PR の pull_request run も承認待ちにならない。
+      # GITHUB_TOKEN モード: secrets が無ければ従来どおり。improve/** の ruleset は
+      #   要求しない (GITHUB_TOKEN は bypass actor になれず、自分の push を止めて
+      #   しまう) — 保護が 1 段薄いことを job summary に明記する。
+      # secrets は if: で直接参照できないため、env に渡して非空判定する。
+      - name: Detect the run identity
+        id: identity
+        env:
+          APP_ID: ${{ secrets.SKILL_IMPROVER_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.SKILL_IMPROVER_APP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -n "${APP_ID:-}" ] && [ -n "${APP_PRIVATE_KEY:-}" ]; then
+            echo "app_mode=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "app_mode=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Mint a GitHub App token
+        id: app-token
+        if: steps.identity.outputs.app_mode == 'true'
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ secrets.SKILL_IMPROVER_APP_ID }}
+          private-key: ${{ secrets.SKILL_IMPROVER_APP_PRIVATE_KEY }}
+
       # action は full commit SHA で固定する。この job は contents: write と
       # CLAUDE_CODE_OAUTH_TOKEN を持つため、可変タグを差し替えられると資格情報ごと
       # 奪われる。更新は SHA と併記コメントの両方を直す。
@@ -72,6 +109,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: true
+          token: ${{ steps.app-token.outputs.token || github.token }}
 
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -84,8 +122,10 @@ jobs:
       # (fail-closed)。ここで落ちたら ruleset を作ってから再実行する。
       - name: Require an active default-branch ruleset
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          APP_MODE: ${{ steps.identity.outputs.app_mode }}
+          APP_ID: ${{ secrets.SKILL_IMPROVER_APP_ID }}
         run: |
           set -euo pipefail
           found=0
@@ -108,6 +148,44 @@ jobs:
                  "Actions / GITHUB_TOKEN からの push を拒否する ruleset" \
                  "(enforcement=active, pull_request または update ルール, bypass_actors に" \
                  "Integration を入れない) を作ってから再実行すること" \
+                 "— skills/skill-improver/references/scheduling.md"
+            exit 1
+          fi
+
+          # App モードでは improve/** の push もその App だけに絞れる。絞れる以上は
+          # 絞れていることを要求する (fail-closed) — verify と publish の間に
+          # 第三者が push できる窓を残さないため。
+          # GITHUB_TOKEN モードでは要求しない: GITHUB_TOKEN は ruleset の bypass
+          # actor になれないので、この ruleset を作ると workflow 自身の push が
+          # 止まる。保護が 1 段薄いことを summary に明示して先へ進む。
+          if [ "${APP_MODE:-false}" != "true" ]; then
+            echo "> reduced protection: improve/** ruleset not enforceable without App identity" \
+                 "(GITHUB_TOKEN は bypass actor になれない)。App モードの設定は" \
+                 "skills/skill-improver/references/scheduling.md を参照" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          improve_found=0
+          for id in $(gh api "repos/$GITHUB_REPOSITORY/rulesets" --paginate --jq '.[].id'); do
+            if gh api "repos/$GITHUB_REPOSITORY/rulesets/$id" | jq -e \
+                 --argjson app_id "${APP_ID:-0}" '
+                   .enforcement == "active"
+                   and ((.conditions.ref_name.include // [])
+                        | any(. == "refs/heads/improve/**"))
+                   and ((.rules // []) | any(.type == "update"))
+                   and ((.bypass_actors // []) | length == 1)
+                   and ((.bypass_actors // [])
+                        | any(.actor_type == "Integration" and .actor_id == $app_id))
+                 ' > /dev/null; then
+              echo "improve/** is restricted to the App by ruleset $id"
+              improve_found=1
+              break
+            fi
+          done
+          if [ "$improve_found" -ne 1 ]; then
+            echo "::error::App モードでは improve/** の ruleset も必須。" \
+                 "refs/heads/improve/** を対象に enforcement=active / update ルール /" \
+                 "bypass_actors はこの App (Integration, actor_id=$APP_ID) 1 件だけ、" \
+                 "という ruleset を作ってから再実行すること" \
                  "— skills/skill-improver/references/scheduling.md"
             exit 1
           fi
@@ -405,11 +483,42 @@ jobs:
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
     steps:
+      # --- 実行アイデンティティ (2 モード) ---------------------------------
+      # App モード: SKILL_IMPROVER_APP_ID / SKILL_IMPROVER_APP_PRIVATE_KEY が
+      #   設定されていれば installation token を発行し、push と PR 起票をその App
+      #   として行う。improve/** への push を「その App だけ」に絞る ruleset が
+      #   書けるようになり、improve/* PR の pull_request run も承認待ちにならない。
+      # GITHUB_TOKEN モード: secrets が無ければ従来どおり。improve/** の ruleset は
+      #   要求しない (GITHUB_TOKEN は bypass actor になれず、自分の push を止めて
+      #   しまう) — 保護が 1 段薄いことを job summary に明記する。
+      # secrets は if: で直接参照できないため、env に渡して非空判定する。
+      - name: Detect the run identity
+        id: identity
+        env:
+          APP_ID: ${{ secrets.SKILL_IMPROVER_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.SKILL_IMPROVER_APP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -n "${APP_ID:-}" ] && [ -n "${APP_PRIVATE_KEY:-}" ]; then
+            echo "app_mode=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "app_mode=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Mint a GitHub App token
+        id: app-token
+        if: steps.identity.outputs.app_mode == 'true'
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ secrets.SKILL_IMPROVER_APP_ID }}
+          private-key: ${{ secrets.SKILL_IMPROVER_APP_PRIVATE_KEY }}
+
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
           persist-credentials: true
+          token: ${{ steps.app-token.outputs.token || github.token }}
 
       - name: Download the verified manifest
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -424,7 +533,7 @@ jobs:
 
       - name: Open a PR for each verified branch
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
         run: |
           set -uo pipefail
           mkdir -p "$BODIES"

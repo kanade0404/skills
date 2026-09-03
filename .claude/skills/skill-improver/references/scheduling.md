@@ -38,8 +38,9 @@
 起動しません** (PR の Follow-ups に挙げてあるとおり、repo 設定の変更はコード PR の
 スコープ外)。
 
-より強い分離が要るなら、PR 作成の資格情報を GitHub App トークン / PAT に替えて
-workflow の `GITHUB_TOKEN` から `contents: write` を落とす経路もあります (任意)。
+より強い分離が要るなら **App モード** (下の「実行アイデンティティ」節) を使う。
+push と PR 起票を GitHub App の installation token で行い、`improve/**` の ruleset も
+併せて効かせられる。
 
 この job は書き込み資格情報を持ったまま、第三者が書ける可能性のあるテキスト
 (`agent-feedback` ラベルの issue / PR コメント) を読む。そのため:
@@ -62,7 +63,8 @@ run」を押すまで走らない** ([GITHUB_TOKEN のドキュメント](https:
 
 そこで **workflow モードでは PR を作るのは agent ではない**。agent は改善ブランチを
 push し、環境変数 `MANIFEST` のファイルに 1 行 1 JSON
-(`{"branch":..., "title":..., "body_file":..., "ledger_id":...}`) を追記するところまで。
+(`{"branch":..., "title":..., "body_file":..., "ledger_id":..., "head_sha": "<40 桁の SHA>"}`)
+を追記するところまで (`head_sha` は push 直後の `git rev-parse origin/<branch>`)。
 `gh pr create` は allow-list から外してある。
 
 ### job の分割 (権限の分離)
@@ -108,9 +110,10 @@ job 中に追加のネットワークアクセス (= 資格情報) が要らな�
 
 > **残る窓と、その塞ぎ方**: 最後の照合と `gh pr create` の間はごく短いが 0 ではない。
 > `link-pr` の push は非 force なので remote が動いていればそこでも弾かれるが、
-> 窓そのものを消すには **`improve/**` への push を Actions integration だけに制限する
-> ruleset** が要る (Rulesets → `improve/**` を target に Restrict updates、bypass に
-> Actions のみ)。repo 設定の変更なのでコード側では閉じられない — PR の Follow-ups 参照。
+> 窓そのものを消すには `improve/**` への push を 1 つのアイデンティティに絞る
+> ruleset が要る。それには **App モード**が要る (下記) — `GITHUB_TOKEN` は ruleset の
+> bypass actor になれないため、`GITHUB_TOKEN` モードでこの ruleset を作ると
+> workflow 自身の push が止まる。
 
 **PR 起票後に `link-pr` が落ちた場合の補償**: 台帳から辿れない PR をレビュー待ちに
 残さないため、`publish` はその PR を `gh pr close` して閉じる。補償自体が失敗したら
@@ -123,9 +126,34 @@ CI runner は `trigger-evals.yml` と同じく `python3` を直接呼ぶ (`uv` �
 `rulesync-sync.mjs` は引数なしだと生成物を**書き込む**。検証に使うのは `--check` の方で、
 生成は Step 5 の前段として別に実行する。
 
-(任意) PR 作成の資格情報を `GITHUB_TOKEN` ではなく GitHub App のトークンか PAT に
-差し替えれば、承認を挟まずに `pull_request` の run が走る。その場合も
-「検証してから起票する」順序は変えない。
+### 実行アイデンティティ — 2 モード
+
+workflow は 2 つのモードで動く。**App モードを推奨**する:
+
+| | GITHUB_TOKEN モード (既定) | App モード (推奨) |
+|---|---|---|
+| 有効化 | 何もしない | repo secrets に `SKILL_IMPROVER_APP_ID` と `SKILL_IMPROVER_APP_PRIVATE_KEY` を置く |
+| push / PR 起票の主体 | `GITHUB_TOKEN` | GitHub App の installation token |
+| `improve/**` の ruleset | **要求しない** (作ると自分の push が止まる)。保護が 1 段薄いことを job summary に警告として出す | **必須** (fail-closed)。`refs/heads/improve/**` を対象に enforcement=active / `update` ルール / bypass_actors はその App 1 件だけ |
+| `improve/*` PR の CI | `pull_request` run が approval-required で止まる | 承認を挟まずに走る |
+
+App モードは 3 つを同時に解く: (1) `improve/**` への push を App だけに絞れるので
+verify と publish の間の窓が消える、(2) `improve/*` PR の `pull_request` run が承認待ちに
+ならない、(3) default branch への push 権限を workflow の `GITHUB_TOKEN` から切り離せる。
+
+セットアップ:
+
+1. GitHub App を作り、この repo にインストールする (権限: Contents read/write、
+   Pull requests read/write)
+2. App ID と private key を repo secrets (`SKILL_IMPROVER_APP_ID` /
+   `SKILL_IMPROVER_APP_PRIVATE_KEY`) に置く
+3. Rulesets → `refs/heads/improve/**` を target に、enforcement=active、`update` ルール、
+   bypass に**その App だけ**を入れる
+4. default branch 側の ruleset (前節) はどちらのモードでも必須
+
+secrets が両方揃っているときだけ App モードになり、その場合は 3 の ruleset が
+無ければ workflow は起動しない (揃っていなければ従来どおり `GITHUB_TOKEN` で動き、
+警告だけ出す)。
 
 `concurrency: skill-improver` で直列化しているのは、同時実行が同じ
 `improve/<skill>-<finding-id>` ブランチを取り合うのを防ぐため。
