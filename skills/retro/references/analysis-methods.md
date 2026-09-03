@@ -101,6 +101,11 @@ subagent の間でも繰り返す入れ子構造になっている。
 - **insight の confidence カウンタ運用** (ExpeL / ACE / ECC v2 の instinct):
   提案の delta 化までを実装し、カウンタ管理は未実装。findings の再出現を
   retro が横断スコープで数えられるようになった時点で導入を再検討する。
+- 上記 2 項目 (outcome mode / confidence カウンタ) は `skill-improver` の
+  `improvements/ledger.jsonl` により部分的に補われた: PR にリンクした before/after
+  指標と、**台帳に登録された finding の範囲で**の recurrence count は取れる
+  (台帳に載らなかった finding の再発は数えられない)。revert された commit との照合と
+  後続 CI 失敗との照合は、いずれも依然未実装のまま。
 - **skill 自動生成 + curation loop** (UniM0cha/claude-self-improving-skills):
   usage telemetry / stale archive / rollback 付き curation は工学的に最良だが、
   自動書き込みが本スキルの Iron Law (提案のみ) と衝突するため設計参考に留める。
