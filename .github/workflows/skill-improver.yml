@@ -388,12 +388,63 @@ jobs:
           emit_indexes
           exit "$failed"
 
+      # $WORKDIR は agent が書けるディレクトリなので、そのまま artifact にしない。
+      # body_file を「runner が読める任意のファイル」への symlink / hard link に
+      # すり替えられると、upload-artifact がリンクを解決して中身を運び、
+      # gh pr create --body-file 経由で公開 PR 本文に載る (OAuth token 等)。
+      # ここで 1 件ずつ検証し、**通ったファイルだけを新しく作った空のディレクトリに
+      # コピー**して、そちらだけを上げる。
+      - name: Stage the artifact from validated files
+        id: stage
+        if: steps.skill-improver.outcome == 'success'
+        run: |
+          set -uo pipefail
+          # mktemp -d で毎回別名にする (agent が先回りして作れる固定パスを使わない)
+          stage="$(mktemp -d "$RUNNER_TEMP/si-stage-XXXXXX")"
+          mkdir -p "$stage/bodies"
+          echo "dir=$stage" >> "$GITHUB_OUTPUT"
+          cp -- "$MANIFEST" "$stage/prs.jsonl"
+          if [ ! -s "$MANIFEST" ]; then
+            echo "no candidate to stage" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          bodies_real="$(realpath "$BODIES")"
+          bad=0
+          while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            branch="$(printf '%s' "$line" | jq -r '.branch // "?"')"
+            body_file="$(printf '%s' "$line" | jq -r '.body_file // ""')"
+            fail() {
+              echo "::error::$branch: body_file ($body_file) $1"
+              bad=1
+            }
+            base="$(basename -- "$body_file")"
+            if ! printf '%s' "$base" | grep -Eq '^[A-Za-z0-9._-]+$'; then
+              fail "の名前が不正"; continue
+            fi
+            src="$BODIES/$base"
+            # symlink は拒否 (-L)。hard link も拒否 (リンク数 1 以外)。
+            if [ -L "$src" ]; then fail "が symlink"; continue; fi
+            if [ ! -f "$src" ]; then fail "が通常ファイルでない"; continue; fi
+            if [ "$(realpath "$src")" != "$bodies_real/$base" ]; then
+              fail "の実体が bodies/ の外にある"; continue
+            fi
+            if [ "$(stat -c %h "$src")" != "1" ]; then fail "が hard link"; continue; fi
+            if [ "$(stat -c %s "$src")" -gt 65536 ]; then fail "が 64 KiB を超えている"; continue; fi
+            if grep -Eq '(ghs_|ghp_|github_pat_|ghu_)[A-Za-z0-9_]{10,}' "$src"; then
+              fail "にトークンらしき文字列がある"; continue
+            fi
+            cp -- "$src" "$stage/bodies/$base" || { fail "をコピーできなかった"; continue; }
+          done < "$MANIFEST"
+          [ "$bad" -eq 0 ] || exit 1
+
       - name: Upload the manifest
         if: always() && steps.skill-improver.outcome == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: skill-improver-manifest
-          path: ${{ env.WORKDIR }}
+          # 検証を通ったファイルだけを入れた staging ディレクトリ。$WORKDIR は上げない。
+          path: ${{ steps.stage.outputs.dir }}
           if-no-files-found: error
           retention-days: 7
 
@@ -607,25 +658,49 @@ jobs:
             --paginate --jq '.jobs[] | {name, conclusion}' | jq -cs '.' > "$jobs_json" \
             || { echo "::error::job 一覧を取得できなかった"; exit 1; }
           idx=0
-          failed=0
+          not_passed=0
+          unmatched=""
+          {
+            echo "| idx | branch | verify の結果 |"
+            echo "|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
           while IFS= read -r line; do
             [ -n "$line" ] || { idx=$((idx + 1)); continue; }
             branch="$(printf '%s' "$line" | jq -r '.branch // "?"')"
+            # manifest の 1 行は必ず 1 つの matrix job に展開される。名前が引けない =
+            # job 名の形式が想定と違う (または API の paginate 異常) ということなので、
+            # 「不合格」ではなく **こちらの読み取りの故障**として扱う。
+            matched="$(jq -r --arg name "verify ($idx)" \
+              '[.[] | select(.name == $name)] | length' "$jobs_json")"
+            if [ "$matched" -eq 0 ]; then
+              unmatched="$unmatched $idx"
+              echo "| $idx | \`$branch\` | **job が見つからない** |" >> "$GITHUB_STEP_SUMMARY"
+              idx=$((idx + 1))
+              continue
+            fi
             conclusion="$(jq -r --arg name "verify ($idx)" \
-              '(map(select(.name == $name)) | first | .conclusion) // "missing"' "$jobs_json")"
+              '[.[] | select(.name == $name)] | first | .conclusion // "null"' "$jobs_json")"
             if [ "$conclusion" = "success" ]; then
               printf '%s\n' "$line" >> "$PASSED"
-              echo "- \`$branch\`: verify ($idx) 成功 → 起票対象" >> "$GITHUB_STEP_SUMMARY"
             else
-              failed=1
-              echo "- \`$branch\`: verify ($idx) の結果は $conclusion — 起票しない ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
+              not_passed=1
             fi
+            echo "| $idx | \`$branch\` | $conclusion |" >> "$GITHUB_STEP_SUMMARY"
             idx=$((idx + 1))
           done < "$MANIFEST"
+
+          # 名前が引けなかった添字があれば、合格記録は作れない (0 件の週と区別が
+          # 付かないまま黙って終わるのが一番まずい)。返ってきた job 名を添えて落とす。
+          if [ -n "$unmatched" ]; then
+            echo "::error::verify job を名前で引けなかった添字:$unmatched." \
+                 "jobs API が返した job 名: $(jq -r '[.[].name] | join(", ")' "$jobs_json")"
+            rm -f "$jobs_json"
+            exit 1
+          fi
           rm -f "$jobs_json"
-          # 落ちた候補があること自体は job を赤くしない (publish に進ませるため)。
-          # 赤の可視性は verify 側の job が持つ。
-          [ "$failed" -eq 0 ] || echo "一部の候補が検証に落ちた ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
+          # failure / cancelled / skipped は正当な「不合格」なので job は赤くしない
+          # (publish に進ませ、通った候補は起票する)。赤の可視性は verify 側が持つ。
+          [ "$not_passed" -eq 0 ] || echo "一部の候補が検証に落ちた ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the verified manifest
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

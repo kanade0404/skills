@@ -273,7 +273,7 @@ agent が書くのは manifest の 1 行 1 JSON まで:
 
 > 最後の窓: 最後の照合と `gh pr create` の間はごく短いが 0 ではない。これを閉じるのは **`improve/**` への push を専用 GitHub App だけに制限する ruleset** の役目で、workflow の preflight がその存在を必須として検査する (`references/scheduling.md`)。
 
-**PR 本文は環境変数 `BODIES` のディレクトリ直下にだけ書き出す**。後段はそのディレクトリ配下の通常ファイルしか読まず、symlink・`..`・別ディレクトリを指したエントリは検証で落ちる (任意のファイルを PR 本文に載せてトークンを漏らす経路を塞ぐため)。`branch` は `^improve/[A-Za-z0-9._-]+$`、`head_sha` は `^[0-9a-f]{40}$`、`ledger_id` は `^IMP-[0-9]{8}-[0-9a-f]{10}$` に合致し、`ledger_id` はそのブランチの台帳に `proposed` / `pr == null` の行として実在することまで検査される。
+**PR 本文は環境変数 `BODIES` のディレクトリ直下にだけ書き出す**。後段はそのディレクトリ配下の通常ファイルしか読まず、symlink・hard link・`..`・別ディレクトリを指したエントリは検証で落ちる (任意のファイルを PR 本文に載せてトークンを漏らす経路を塞ぐため)。artifact に載るのも、この検証を通ったファイルを trusted step が新しい空ディレクトリにコピーしたものだけで、agent が書けるディレクトリはそのまま上げない。`branch` は `^improve/[A-Za-z0-9._-]+$`、`head_sha` は `^[0-9a-f]{40}$`、`ledger_id` は `^IMP-[0-9]{8}-[0-9a-f]{10}$` に合致し、`ledger_id` はそのブランチの台帳に `proposed` / `pr == null` の行として実在することまで検査される。
 
 **ブランチの差分は allow-list で制限される**。`skills/<target_skill>/**`、`.claude/skills/<target_skill>/**`、`.agents/skills/<target_skill>/**`、`improvements/ledger.jsonl` 以外を含むブランチは検査を実行する前に落とす (reconcile ブランチは `improvements/ledger.jsonl` のみ)。
 

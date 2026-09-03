@@ -69,7 +69,12 @@ run」を押すまで走らない** ([GITHUB_TOKEN のドキュメント](https:
    持っているのは読み取り専用トークンだけで、`gh pr create` も allow-list の外
 2. **trusted push step (`improve` job、agent の実行後)** — 書き込みトークンを発行し、
    manifest の `branch` を検証してローカル ref を push する。**`head_sha` はここで
-   実際に push した ref から計算して manifest に書き足す** (agent の申告値は使わない)
+   実際に push した ref から計算して manifest に書き足す** (agent の申告値は使わない)。
+   続けて **artifact に上げる前に** `body_file` を 1 件ずつ検証し (bodies/ 直下の通常
+   ファイル、symlink でない、hard link でない、64 KiB 以下、トークン様文字列を含まない)、
+   **通ったファイルだけを新しく作った空のディレクトリにコピーして、そちらだけを上げる** —
+   agent が書けるディレクトリをそのまま artifact にすると、`body_file` を任意のファイルへの
+   symlink / hard link にすり替えるだけで `upload-artifact` がその中身を運び、PR 本文に載る
 3. **`verify` → `publish`** — `verify` が manifest の値・台帳差分・パスの allow-list を
    検査し、その SHA でテストを回す。通ったものだけ `publish` が `gh pr create` し、
    `link-pr` を commit / push する
