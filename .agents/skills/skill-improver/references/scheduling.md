@@ -86,6 +86,12 @@ run」を押すまで走らない** ([GITHUB_TOKEN のドキュメント](https:
 | `verify` | `contents: read` のみ (`persist-credentials: false`、`GH_TOKEN` もシークレットも渡さない) | manifest の値の検証、パスの allow-list ゲート、**台帳差分のゲート (`ledger.py verify-diff`)**、ブランチ上で `unittest` / `check_trigger_evals.py` / `rulesync-sync.mjs --check` |
 | `publish` | `contents: write` / `pull-requests: write` | 通ったブランチの `gh pr create`、`link-pr` の commit / push、失敗時の補償 |
 
+`verify` は候補が 1 つでも落ちれば赤くなる (その可視性は保つ) が、**通った候補は起票する** —
+`publish` は `always() && needs.improve.result == 'success' && (verify が success か
+failure)` で回し、cancelled / skipped では走らせない (状態関数を含まない `if` には
+暗黙の `success()` が掛かるため `always()` が要る)。`PASSED` の artifact は候補ループの
+成否に関わらず `if: always()` で上げるので、`publish` は常に完全な入力を受け取る。
+
 `verify` は `fetch-depth: 0` の checkout で全 remote head をローカルに取り込むため、
 job 中に追加のネットワークアクセス (= 資格情報) が要らない。`publish` は書き込み権限を
 持つが**ブランチのコードを実行しない** — `ledger.py` は checkout 前に default branch 側の

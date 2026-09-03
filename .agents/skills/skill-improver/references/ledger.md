@@ -193,6 +193,7 @@ added / removed / modified の 3 分類で行い、モードごとに許す形�
 | モード | 許す差分 |
 |---|---|
 | `candidate` (改善ブランチ) | **追加 1 行だけ**。削除・既存行の変更は不可。追加行は `--ledger-id` と一致する id を持ち、`status` が `proposed`、`pr` が `null` であること |
+| 両モード共通 | **base / head のどちらかに id の重複があれば不合格**。重複があると id をキーにした差分計算が 2 行目以降を落とすので、同じ id を 2 行書くだけで「追加は 1 行だけ」の検査をすり抜けられる。base 側の重複は台帳自体が壊れている状態なのでこちらも通さない |
 | `reconcile` (突き合わせブランチ) | 削除は不可。既存行で変えてよいのは `status` / `pr` / `after` / `notes` だけで、`status` の遷移は `pr_open → merged`\|`rejected`、`merged → reverted`、`proposed` (pr 未設定) `→ pr_open`\|`rejected` (修復経路) のみ。追加行があれば `proposed` の形であること |
 
 `verify` job は **base (default branch) 側の `ledger.py`** でこの検査を実行する —

@@ -669,6 +669,36 @@ def index_by_id(entries: Sequence[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return indexed
 
 
+def duplicate_ids(entries: Sequence[dict[str, Any]]) -> list[str]:
+    """同じ id が 2 行以上あるならその id を返す (純関数)。
+
+    `index_by_id` は id ごとに最初の行だけを採るので、重複があると 2 行目以降が
+    差分の計算から消える。「追加は 1 行だけ」の検査は、同じ id を 2 行書けば
+    1 行分しか見えないまますり抜けてしまうため、重複そのものを違反として扱う。
+    """
+    seen: dict[str, int] = {}
+    for entry in entries:
+        key = str(entry.get("id", ""))
+        seen[key] = seen.get(key, 0) + 1
+    return sorted(key for key, count in seen.items() if count > 1)
+
+
+def _duplicate_problems(
+    base: Sequence[dict[str, Any]], head: Sequence[dict[str, Any]]
+) -> list[str]:
+    """base / head 双方の id 重複を違反として並べる。
+
+    base 側の重複は「信頼しているはずの台帳が既に壊れている」状態なので、
+    こちらも通さない (fail-closed)。
+    """
+    problems: list[str] = []
+    for label, entries in (("base", base), ("head", head)):
+        dupes = duplicate_ids(entries)
+        if dupes:
+            problems.append(f"{label} に id の重複がある ({', '.join(dupes)})")
+    return problems
+
+
 def diff_ledgers(
     base: Sequence[dict[str, Any]], head: Sequence[dict[str, Any]]
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[tuple[dict, dict]]]:
@@ -709,8 +739,10 @@ def check_candidate_diff(
     allow-list は `improvements/ledger.jsonl` 全体を許してしまうので、行の粒度でも
     見ないと、1 行足すついでに他の行 (別 skill の merged 記録など) を書き換えられる。
     """
+    problems = _duplicate_problems(base, head)
+    if problems:
+        return problems
     added, removed, modified = diff_ledgers(base, head)
-    problems: list[str] = []
     if removed:
         problems.append(
             f"既存の行が消えている ({', '.join(str(e.get('id')) for e in removed)})"
@@ -740,8 +772,10 @@ def check_reconcile_diff(
     許すのは「決着した PR の status / pr / after / notes を進める」ことだけ。
     finding 本文や target_skill が動いていたら、それは突き合わせではない。
     """
+    problems = _duplicate_problems(base, head)
+    if problems:
+        return problems
     added, removed, modified = diff_ledgers(base, head)
-    problems: list[str] = []
     if removed:
         problems.append(
             f"既存の行が消えている ({', '.join(str(e.get('id')) for e in removed)})"

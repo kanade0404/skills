@@ -860,6 +860,39 @@ class TestVerifyDiff(unittest.TestCase):
         self.assertTrue(any("status" in p for p in problems), problems)
         self.assertTrue(any("pr が設定" in p for p in problems), problems)
 
+    # --- 重複 id -----------------------------------------------------
+    def test_duplicate_ids_helper(self) -> None:
+        self.assertEqual(ledger.duplicate_ids([]), [])
+        entries = [self.entry("IMP-20260903-aaaaaaaaaa")] * 2 + [
+            self.entry("IMP-20260903-cccccccccc")
+        ]
+        self.assertEqual(ledger.duplicate_ids(entries), ["IMP-20260903-aaaaaaaaaa"])
+
+    def test_candidate_rejects_duplicate_id_bypass(self) -> None:
+        # 同じ id を 2 行書くと index_by_id が 1 行しか採らないため、
+        # 「追加は 1 行だけ」の検査を素通りできてしまう — 重複自体を弾く
+        new_id = "IMP-20260903-aaaaaaaaaa"
+        head = [
+            self.entry(new_id),
+            self.entry(new_id, target_skill="commit", finding="紛れ込ませた行"),
+        ]
+        problems = ledger.check_candidate_diff([], head, new_id)
+        self.assertTrue(any("head に id の重複" in p for p in problems), problems)
+
+    def test_candidate_rejects_duplicate_id_in_base(self) -> None:
+        # base 側の重複は「信頼している台帳が既に壊れている」— こちらも通さない
+        dup = self.entry("IMP-20260801-bbbbbbbbbb", status="merged")
+        new_id = "IMP-20260903-aaaaaaaaaa"
+        problems = ledger.check_candidate_diff([dup, dup], [dup, dup, self.entry(new_id)], new_id)
+        self.assertTrue(any("base に id の重複" in p for p in problems), problems)
+
+    def test_reconcile_rejects_duplicate_ids(self) -> None:
+        dup = self.entry("IMP-20260801-bbbbbbbbbb", status="pr_open", pr="https://x/1")
+        problems = ledger.check_reconcile_diff([dup], [dup, dict(dup, status="merged")])
+        self.assertTrue(any("head に id の重複" in p for p in problems), problems)
+        problems = ledger.check_reconcile_diff([dup, dup], [dup, dup])
+        self.assertTrue(any("base に id の重複" in p for p in problems), problems)
+
     # --- reconcile ---------------------------------------------------
     def test_reconcile_allows_settling_transitions(self) -> None:
         base = [
