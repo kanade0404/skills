@@ -77,6 +77,7 @@ jobs:
       indexes: ${{ steps.push.outputs.indexes }}
       count: ${{ steps.push.outputs.count }}
       push_failed: ${{ steps.push.outputs.push_failed }}
+      secret_hit: ${{ steps.push.outputs.secret_hit }}
     permissions:
       # この job の GITHUB_TOKEN は **read だけ**にする。claude-code-action は
       # process.env をそのまま SDK に渡すので、job の GITHUB_TOKEN は我々が渡す
@@ -274,10 +275,17 @@ jobs:
           # branch ruleset 側 (skills/skill-improver/references/scheduling.md)。
           # deny の branch 名はハードコードせず default branch から組み立てる —
           # 既定ブランチを改名した瞬間に効かなくなる書き方にしないため。
+          # `Read(//proc/**)` / `Bash(printenv*)` / `Bash(env*)` も同じ**浅い**ガード。
+          # この action は API を呼ぶために資格情報を agent のプロセスに渡すので、
+          # 環境変数は `Bash(python3 *)` (ledger.py とテストに要る) からいくらでも
+          # 読める。**資格情報が読めること自体は前提**にして、実効的な関門は
+          # 「push の前に候補ブランチの差分をシークレットで走査する」trusted step に
+          # 置く (下の Push the improvement branches step と
+          # references/scheduling.md)。
           # ツールを増やすときは「その週の改善ループに本当に要るか」で判断する。
           claude_args: >-
             --allowed-tools "Read,Edit,Write,Glob,Grep,Task,Skill,Bash(git *),Bash(gh *),Bash(python3 *),Bash(uv run *),Bash(node *)"
-            --disallowed-tools "Bash(gh pr create*),Bash(gh pr merge*),Bash(git push origin ${{ github.event.repository.default_branch }}*),Bash(git push origin HEAD:${{ github.event.repository.default_branch }}*),Bash(git push --force*),WebFetch,WebSearch"
+            --disallowed-tools "Bash(gh pr create*),Bash(gh pr merge*),Bash(git push origin ${{ github.event.repository.default_branch }}*),Bash(git push origin HEAD:${{ github.event.repository.default_branch }}*),Bash(git push --force*),Read(//proc/**),Bash(printenv*),Bash(env*),WebFetch,WebSearch"
           prompt: |
             skills/skill-improver/SKILL.md の手順に従って改善ループを 1 周回してください。
             この実行は **workflow モード** です (SKILL.md Step 6 参照)。
@@ -334,6 +342,22 @@ jobs:
             - 候補が 0 件なら MANIFEST を空のまま「今週は改善なし」と報告して終了する
 
       # --- ここから trusted step (agent の出力を検証してから push する) --------
+      # 検査スクリプトを **working tree から実行しない**。agent は改善ブランチを
+      # checkout したまま終われるし、Write でファイルも作れるので、working tree の
+      # `.github/scripts/manifest_guard.py` は候補側の内容かもしれない
+      # (`.github/` を禁じるパスの allow-list が効くのは push の後の verify job)。
+      # run を起動した commit の blob を取り出して、それだけを使う。ここは agent の
+      # 実行が終わった後なので、書き出し先を横取りする実行主体はもう居ない。
+      - name: Stage the trusted guard script
+        id: guard
+        if: steps.skill-improver.outcome == 'success'
+        run: |
+          set -euo pipefail
+          dest="$(mktemp "$RUNNER_TEMP/si-guard-XXXXXX.py")"
+          git show "$GITHUB_SHA:.github/scripts/manifest_guard.py" > "$dest"
+          chmod 0600 "$dest"
+          echo "path=$dest" >> "$GITHUB_OUTPUT"
+
       # 書き込みトークンはここで初めて発行する。agent の実行中は runner のどこにも
       # 存在しないので、injection が成功しても持ち出せる write 権限が無い。
       - name: Mint a write-scoped App token
@@ -346,20 +370,51 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
+      # 候補ブランチを push する = **公開する**。ここが信用の境界なので、公開の前に
+      # 差分そのものをシークレットで走査する。パスの allow-list (verify) はパスしか
+      # 見ないので、`skills/<x>/**` や台帳の中に書かれた資格情報は素通りする。
+      #
+      # SCAN_* は **この step の env にだけ**置く。job の env に置くと agent の
+      # プロセスにも届いてしまう (App の秘密鍵は今 agent の環境に無い)。値は
+      # コマンドラインに渡さず環境変数名だけを渡し、検出しても値は出力しない。
       - name: Push the improvement branches
         id: push
         if: steps.skill-improver.outcome == 'success'
         env:
           WRITE_TOKEN: ${{ steps.write-token.outputs.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          GUARD: ${{ steps.guard.outputs.path }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          # この job が見えるシークレットを全部渡す (どれが漏れても同じ被害なので、
+          # 1 本でも渡し忘れるとその 1 本が抜け道になる)。SKILL_IMPROVER_APP_ID は
+          # 短い数字列で誤検知にしかならないため対象外 (スクリプト側でも弾く)。
+          SCAN_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          SCAN_APP_PRIVATE_KEY: ${{ secrets.SKILL_IMPROVER_APP_PRIVATE_KEY }}
+          SCAN_READ_TOKEN: ${{ steps.read-token.outputs.token }}
+          SCAN_PREFLIGHT_TOKEN: ${{ steps.preflight-token.outputs.token }}
+          SCAN_WRITE_TOKEN: ${{ steps.write-token.outputs.token }}
+          SCAN_JOB_GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
           failed=0
+          secret_hit=0
+          scan_branch() {
+            # 値ではなく環境変数名を渡す (コマンドラインは他プロセスから見える)
+            python3 "$GUARD" scan-diff \
+              --repo . --base "origin/$DEFAULT_BRANCH" --head "$1" \
+              --secret-env SCAN_CLAUDE_CODE_OAUTH_TOKEN \
+              --secret-env SCAN_APP_PRIVATE_KEY \
+              --secret-env SCAN_READ_TOKEN \
+              --secret-env SCAN_PREFLIGHT_TOKEN \
+              --secret-env SCAN_WRITE_TOKEN \
+              --secret-env SCAN_JOB_GITHUB_TOKEN
+          }
           emit_indexes() {
             # push できた行数から matrix の添字リストを作る (0 始まり)
             n="$(wc -l < "$MANIFEST" | tr -d ' ')"
             echo "count=$n" >> "$GITHUB_OUTPUT"
             echo "push_failed=$failed" >> "$GITHUB_OUTPUT"
+            echo "secret_hit=$secret_hit" >> "$GITHUB_OUTPUT"
             if [ "$n" -eq 0 ]; then
               echo "indexes=[]" >> "$GITHUB_OUTPUT"
             else
@@ -389,6 +444,15 @@ jobs:
             fi
             # head_sha は agent の申告ではなく、いま push する ref から取る
             head_sha="$(git rev-parse "refs/heads/$branch")"
+            # **公開の直前**にシークレットを走査する。差分が読めない場合も不合格
+            # (fail-closed)。理由はパスまでで、一致した値はログにも summary にも
+            # 出さない。落ちた候補は push しないので manifest からも消え、
+            # verify / publish には渡らない。
+            if ! scan_branch "$head_sha"; then
+              echo "::error::$branch: 差分にシークレットらしき値がある — push しない"
+              echo "- \`$branch\`: 差分にシークレットらしき値がある — push しない (詳細は improve job のログ、値は出さない) ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
+              secret_hit=$((secret_hit + 1)); continue
+            fi
             if ! git push "$remote" "refs/heads/$branch:refs/heads/$branch" > /dev/null 2>&1; then
               echo "::warning::$branch: push に失敗"
               echo "- \`$branch\`: push に失敗 ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
@@ -399,9 +463,10 @@ jobs:
           done < "$MANIFEST"
           mv "$MANIFEST.new" "$MANIFEST"
           emit_indexes
-          # push できなかった候補があってもここでは落とさない — 落とすと後続 job が
-          # まるごと skip され、push できた候補まで検証・起票されなくなる。
-          # run を赤くする役目は publish の最終 step が持つ (push_failed を見る)。
+          # push できなかった候補・シークレットで落とした候補があってもここでは
+          # 落とさない — 落とすと後続 job がまるごと skip され、通った候補まで
+          # 検証・起票されなくなる。run を赤くする役目は publish の最終 step が
+          # 持つ (push_failed / secret_hit を見る)。
           exit 0
 
       # $WORKDIR は agent が書けるディレクトリなので、そのまま artifact にしない。
@@ -413,6 +478,16 @@ jobs:
       - name: Stage the artifact from validated files
         id: stage
         if: steps.skill-improver.outcome == 'success'
+        env:
+          GUARD: ${{ steps.guard.outputs.path }}
+          # PR 本文は公開面そのもの。差分と同じ規則で走査する (SCAN_* を job の env に
+          # 置かないのは push step と同じ理由 — agent のプロセスに届かせないため)。
+          SCAN_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          SCAN_APP_PRIVATE_KEY: ${{ secrets.SKILL_IMPROVER_APP_PRIVATE_KEY }}
+          SCAN_READ_TOKEN: ${{ steps.read-token.outputs.token }}
+          SCAN_PREFLIGHT_TOKEN: ${{ steps.preflight-token.outputs.token }}
+          SCAN_WRITE_TOKEN: ${{ steps.write-token.outputs.token }}
+          SCAN_JOB_GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
           # mktemp -d で毎回別名にする (agent が先回りして作れる固定パスを使わない)
@@ -450,7 +525,7 @@ jobs:
           # title のような任意の文字列フィールドにトークンを載せられる (それは
           # gh pr create --title で公開される)。許可したキーだけで組み直し、
           # 長さ・制御文字・トークン様文字列を全フィールドで検査する。
-          python3 .github/scripts/manifest_guard.py sanitize \
+          python3 "$GUARD" sanitize \
             --src "$MANIFEST" --dest "$stage/prs.jsonl" || {
             echo "::error::manifest の検査に失敗した"; exit 1
           }
@@ -479,6 +554,18 @@ jobs:
             if [ "$(stat -c %s "$src")" -gt 65536 ]; then fail "が 64 KiB を超えている"; continue; fi
             if grep -Eq '(ghs_|ghp_|github_pat_|ghu_)[A-Za-z0-9_]{10,}' "$src"; then
               fail "にトークンらしき文字列がある"; continue
+            fi
+            # 接頭辞の網だけでなく、この job が見えるシークレットの**実値**でも見る
+            # (OAuth トークンは ghs_ 系の接頭辞に当たらない)。値は出力しない。
+            if ! python3 "$GUARD" scan-files \
+                 --secret-env SCAN_CLAUDE_CODE_OAUTH_TOKEN \
+                 --secret-env SCAN_APP_PRIVATE_KEY \
+                 --secret-env SCAN_READ_TOKEN \
+                 --secret-env SCAN_PREFLIGHT_TOKEN \
+                 --secret-env SCAN_WRITE_TOKEN \
+                 --secret-env SCAN_JOB_GITHUB_TOKEN \
+                 -- "$src"; then
+              fail "にシークレットらしき値がある"; continue
             fi
             cp -- "$src" "$stage/bodies/$base" || { fail "をコピーできなかった"; continue; }
           done < "$MANIFEST"
@@ -996,6 +1083,22 @@ jobs:
             echo "::endgroup::"
           done < "$PASSED"
           exit "$failed"
+
+      # 差分にシークレットらしき値があった候補は push されていない。**その run は
+      # 必ず赤で終える** — 通った候補の起票は済ませたうえで、最終 step でまとめて
+      # 落とす (push 失敗と同じ扱い)。どのブランチだったかは improve job の
+      # summary に出ており、一致した値はどこにも出さない。
+      - name: Fail the run when a candidate branch carried a secret
+        if: >-
+          always() && needs.improve.outputs.secret_hit != ''
+          && needs.improve.outputs.secret_hit != '0'
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          echo "::error::${{ needs.improve.outputs.secret_hit }} 件の候補ブランチの" \
+               "差分にシークレットらしき値があったため公開しなかった。" \
+               "資格情報のローテーションを検討すること。詳細は improve job の summary ($RUN_URL)"
+          exit 1
 
       # push に失敗した候補があった run は赤で終える。improve 側で落とすと後続 job が
       # skip され、push できた候補まで起票されなくなるので、**起票を終えた後の

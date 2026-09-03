@@ -53,6 +53,61 @@ workflow は起動しない。
 - **action は full commit SHA で固定する**: 可変タグのままだと、差し替えられた
   action が `CLAUDE_CODE_OAUTH_TOKEN` と `contents: write` ごと持っていける
 
+### 資格情報は agent のプロセスに残る — 関門は「公開の直前」に置く
+
+**`CLAUDE_CODE_OAUTH_TOKEN` は agent のプロセスから取り除けない**。`claude-code-action`
+はその値で API を呼ぶので、agent の環境変数として存在することは前提条件であって、
+設定で消せる類のものではない。`--allowed-tools` には `Bash(python3 *)` が要る
+(`ledger.py` と Step 5 の検査を回すため) 以上、`os.environ` からでも
+`/proc/self/environ` からでも読める。`--disallowed-tools` の
+`Read(//proc/**)` / `Bash(printenv*)` / `Bash(env*)` は被害を面倒にするだけの
+**浅いガードで、境界ではない**。
+
+そして**パスの allow-list は値を見ない**。`skills/<skill>/**` や
+`improvements/ledger.jsonl` の中に資格情報を書けば allow-list は通り、push →
+`publish` の `gh pr create` で公開 PR に載る。**したがって信用の境界はブランチの
+公開 (push) に置く**: `improve` job の trusted push step が、**push の前に**候補
+ブランチの差分をシークレットで走査する (`manifest_guard.py scan-diff`)。
+
+走査するもの:
+
+- **この job が見えるシークレットの実値** — `CLAUDE_CODE_OAUTH_TOKEN`、App の
+  read / preflight / write トークン、`SKILL_IMPROVER_APP_PRIVATE_KEY`、job の
+  `GITHUB_TOKEN`。それぞれ **literal / base64 / base64url / hex** の姿で探し、
+  さらに**空白と `\n` `\r` `\t` エスケープを落とした姿**でも突き合わせる
+  (折り返して埋め込むだけで一致を外せないため)。秘密鍵は**行単位**でも探す。
+  `SKILL_IMPROVER_APP_ID` だけは短い数字列で誤検知にしかならないので対象外
+- **値を知らなくても拾う接頭辞** — `sk-ant-`、`ghs_` / `ghp_` / `ghu_` / `gho_`、
+  `github_pat_`、PEM 秘密鍵の `BEGIN ... PRIVATE KEY` 行
+- **対象は差分テキストだけでなく、変更後ファイルの中身丸ごと** (`git show
+  <sha>:<path>` の生 blob)。バイナリ扱いのファイルは差分に中身が出ないし、
+  生 blob なら textconv / smudge フィルタで隠せない
+- **PR 本文ファイル**も同じ規則で走査する (`scan-files`)。OAuth トークンは
+  `ghs_` 系の接頭辞に当たらないので、既存の接頭辞 grep だけでは足りない
+
+運用上の規律:
+
+- シークレットの値は**環境変数名で渡す** (コマンドラインは他プロセスから見える)。
+  検出しても**値も一致箇所も出力しない** — ログと summary に出るのはパスと
+  「どの名前のシークレットか」だけ
+- 検査スクリプトは working tree からではなく **run を起動した commit の blob**
+  (`git show $GITHUB_SHA:.github/scripts/manifest_guard.py`) を取り出して実行する。
+  `.github/` を禁じるパスの allow-list が効くのは `verify` job = push の後なので、
+  push 前の working tree にあるコピーは候補側の内容かもしれない
+- 走査できる値が 1 つも組み立てられなければ**走査しなかったものとして落とす**
+  (fail-closed)。差分が読めない場合も同じ
+- 当たった候補は push しない。manifest からも落ちるので `verify` / `publish` には
+  渡らず、**他の候補はそのまま進む**。件数は job output `secret_hit` に出し、
+  `publish` の最終 step が起票を終えてからその run を赤にする
+
+**残余リスク (捕まえられないもの)**: 見ているのは実値とその base64 / hex、そして
+接頭辞だけである。値を分割して別の符号に変える、圧縮・暗号化する、`Bash(python3 *)`
+から外部へ送る、といった経路は**この走査では捕まらない**。したがって:
+
+> この workflow に渡す資格情報は、**この用途専用で、失効させられて、上限を掛けられる
+> もの**にすること。個人の長期トークンを流用しない。`secret_hit` で run が赤くなったら、
+> ブランチの調査より先に該当の資格情報をローテーションする。
+
 ### improve/* PR には repo の CI が来ない — だから検証してから起票する
 
 **`GITHUB_TOKEN` が作成・更新した PR の `pull_request` run (`opened` / `synchronize` /

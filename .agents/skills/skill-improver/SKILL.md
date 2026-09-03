@@ -288,6 +288,8 @@ workflow モードは job を 4 つに割ってある。**候補ブランチの�
 
 workflow モードでは **agent は push も PR 起票もしない**。agent が持つのは読み取り専用トークンだけで (checkout も `persist-credentials: false`)、改善ブランチにローカル commit するところまで。push は agent の実行後に発行される書き込みトークンで trusted step が行い、PR 起票は `publish` job が行う。書き込みトークンは agent の実行中に runner のどこにも存在しないので、injection が通っても持ち出せる write 権限が無い。
 
+ただし **API の資格情報は agent のプロセスから取り除けない** (action がその値で API を呼ぶ)。そこで**信用の境界はブランチの公開 (push) に置く**: trusted push step が push の前に候補ブランチの差分と PR 本文を、この job が見えるシークレットの実値 (literal / base64 / hex / 空白を落とした姿) と資格情報の接頭辞で走査し、当たった候補は公開しない (`secret_hit` として run を赤で終える)。残余リスクと資格情報の選び方は `references/scheduling.md`。
+
 agent が書くのは manifest の 1 行 1 JSON まで:
 
 ```json
