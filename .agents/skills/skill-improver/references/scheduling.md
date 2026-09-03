@@ -70,7 +70,7 @@ run」を押すまで走らない** ([GITHUB_TOKEN のドキュメント](https:
 2. **trusted push step (`improve` job、agent の実行後)** — 書き込みトークンを発行し、
    manifest の `branch` を検証してローカル ref を push する。**`head_sha` はここで
    実際に push した ref から計算して manifest に書き足す** (agent の申告値は使わない)。
-   続けて **artifact に上げる前に** manifest を `\.github/scripts/manifest_guard.py`
+   続けて **artifact に上げる前に** manifest を `.github/scripts/manifest_guard.py`
    で組み直す — 許可したキー (`branch` / `head_sha` / `body_file` / `ledger_id` /
    `title`) だけを残し、**全ての文字列フィールド**について長さ・制御文字・トークン様
    文字列を検査する (agent は自分の `GH_TOKEN` を読めるので、`title` に入れられると
