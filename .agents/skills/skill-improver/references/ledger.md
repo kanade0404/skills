@@ -26,10 +26,15 @@ git が受け止める (台帳への追記は必ずブランチ + PR 経由で d
 (SKILL.md Step 0)。open な `improve/*` PR の head ブランチから台帳を取り出し、
 `--ledger` でそのファイルを指して `list` すればよい:
 
+取り出し先のファイル名には **PR 番号**を使う。ブランチ名 (`improve/...`) には `/` が
+入るので、`"$tmp/<branch>.jsonl"` はその名前の親ディレクトリへのリダイレクトになり、
+`mktemp -d` の直下にそんなディレクトリは無い — 台帳を 1 件も読めないまま「pending
+無し」と読んでしまう:
+
 ```bash
 gh api "repos/<owner>/<repo>/contents/improvements/ledger.jsonl?ref=<branch>" \
-  --jq '.content' | base64 -d > "$tmp/<branch>.jsonl"
-uv run python3 skills/skill-improver/scripts/ledger.py list --ledger "$tmp/<branch>.jsonl" --json
+  --jq '.content' | base64 -d > "$tmp/pr-<PR 番号>.jsonl"
+uv run python3 skills/skill-improver/scripts/ledger.py list --ledger "$tmp/pr-<PR 番号>.jsonl" --json
 ```
 
 ただし **head ブランチの台帳は default branch の履歴を丸ごと含む**。そこに載っている
@@ -81,11 +86,15 @@ finding の id を含むので機械的に引ける — ただし **run ごと�
 merge 済み**なのに台帳がそれを知らないまま重複起票する — 台帳が改善の履歴として
 使えなくなる。したがって:
 
+列挙に **`gh pr list` は使わない**。`--limit` は取得件数の上限で、超えた分は黙って
+落ちる (既定 30 件) — この節が塞ごうとしている「実在する PR の見落とし」を
+列挙自体が作ってしまう。REST の pulls を `--paginate` で全ページ取り切る:
+
 ```bash
-gh pr list --state all --limit 200 \
-  --json number,state,mergedAt,url,headRefName \
-  | jq --arg p "improve/<target_skill>-<id>-" \
-       '[.[] | select(.headRefName | startswith($p))] | sort_by(.number) | reverse'
+gh api --paginate "repos/<owner>/<repo>/pulls?state=all&per_page=100" \
+  --jq '.[] | {number, state, merged_at, url: .html_url, head_ref: .head.ref}' \
+  | jq -s --arg p "improve/<target_skill>-<id>-" \
+       '[.[] | select(.head_ref | startswith($p))] | sort_by(.number) | reverse'
 ```
 
 **作者で絞る必要は無い** — `improve/**` を作れるのは workflow の GitHub App だけ
@@ -225,7 +234,7 @@ cwd から見た repo root。規約外の場所に台帳を置くときは `--sk
 | `record-metrics --id --phase before\|after --metric KEY=VALUE [--metric ...]` | 指標を記録。両相が揃うと delta を表示する。非有限値 (`nan` / `inf`) は拒否 |
 | `list [--status ...] [--skill] [--missing-after] [--inconsistent] [--json]` | エントリを絞って列挙。Step 0 の突き合わせは `--status pr_open`、`--missing-after` (merged なのに `after` が空)、`--status proposed` (PR に紐付いていない = 修復対象)、`--inconsistent` (`pr_open` なのに `pr` が空、または `pr` が PR URL の形をしていない = 壊れた行) の 4 本を起点にする |
 | `report [--skill] [--json] [--fail-on-revert]` | skill 別の件数・**再発クラスキーとその件数**・status 内訳、before→after の delta、**merged without after metrics**、**revert candidate** を出力 |
-| `verify-diff --head <file> [--base <file>] --mode candidate\|reconcile [--ledger-id ID]` | ブランチの台帳差分が許された変更だけかを検査する (workflow の `verify` job 用) |
+| `verify-diff --head <file> [--base <file>] --mode candidate\|reconcile [--ledger-id ID] [--pr-index FILE]` | ブランチの台帳差分が許された変更だけかを検査する (workflow の `verify` job 用)。`--pr-index` は信用できる PR index との照合 (下記) |
 | `check-target <skill>` | 改善対象にしてよいかの判定 |
 
 ### exit code 契約
@@ -283,6 +292,46 @@ added / removed / modified の 3 分類で行い、モードごとに許す形�
 `verify` job は **base (default branch) 側の `ledger.py`** でこの検査を実行する —
 候補ブランチのコピーを使ったら検査にならないため。違反があれば内容を並べて
 exit 1 し、そのブランチは PR にならない。
+
+### `pr` は形だけでなく **実在まで**照合する (`--pr-index`)
+
+上の表の `reconcile` は「head 側に開ける PR URL があること」を求めるが、それは
+**URL の形**の検査でしかない。`verify` は PR API を引き直さないので、形の検査だけだと
+**別リポジトリの / 無関係な PR** を指す整った URL を書くだけで `proposed` →
+`merged` / `rejected` に進められる — 台帳の決着は「その PR が本当にそうなった」ことの
+記録なので、これは突き合わせではなく捏造になる。
+
+そこで `verify-diff` は `--pr-index <file>` を受け、**触った行の `pr` を信用できる
+index と突き合わせる**。index を作るのは workflow の `stage` job — 候補コードを 1 行も
+動かさない runner で、job の `GITHUB_TOKEN` (`pull-requests: read`) を使って
+`gh api --paginate` でこのリポジトリの `improve/*` PR を全件取り、manifest artifact に
+載せて `verify` に渡す:
+
+```bash
+gh api --paginate "repos/<owner>/<repo>/pulls?state=all&per_page=100" \
+  --jq '.[] | select(.head.ref | startswith("improve/"))
+        | {number, html_url, head_ref: .head.ref, state, merged_at}' \
+  | jq -s '.' > pr-index.json
+```
+
+index があるとき、**`pr` が入っている触った行**は 3 つを全て満たさなければならない
+(1 つでも外れれば差分ごと不合格):
+
+| 条件 | 何を塞ぐか |
+|---|---|
+| その `html_url` が index にある | **別リポジトリ**の PR を指す URL |
+| index 側の head ref が `improve/<target_skill>-<id>-` で始まる | 同じ repo の**別 finding / 無関係**な PR を指す URL |
+| head 側の status が PR の状態と一致する (`pr_open` ⇔ open、`merged` ⇔ merged、`rejected` ⇔ merge されずに closed) | まだ open な PR を `merged` として決着させる書き換え |
+
+`proposed` (`link-pr --keep-status` の途中状態) と `reverted` (merge 後の取り消し) は
+PR の状態から決まらないので、状態の一致だけ検査対象から外す (URL と head ref は見る)。
+
+**workflow モードでは `--pr-index` が必須**で、`verify` は candidate / reconcile の
+どちらにも渡す (candidate の追加行は `pr == null` が条件なので照合対象は無いが、
+渡し忘れの経路を作らないために同じ扱いにする)。ファイルが読めなければ `ledger.py` は
+そこで **exit 1** する — 「index が無いので形だけ検査した」と黙って落ちる経路を作らない
+ため。`--pr-index` を省いた実行は許すが、その場合は「`pr` は形しか見ていない」旨を
+stderr に警告として出す (対話モードの手元検査用)。
 
 ## revert candidate の扱い
 

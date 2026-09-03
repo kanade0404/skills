@@ -905,8 +905,112 @@ def check_candidate_diff(
     return problems
 
 
+#: `--pr-index` があるとき、head 側の status が指す PR の状態。
+#: `proposed` (link-pr --keep-status の途中状態) と `reverted` (merge 後の取り消し)
+#: は PR の状態から決まらないので入れない — その 2 つは URL と head ref だけ照合する。
+PR_STATE_EXPECTATION: dict[str, str] = {
+    "pr_open": "open",
+    "merged": "merged",
+    "rejected": "closed_unmerged",
+}
+
+
+def pr_index_state(record: dict[str, Any]) -> str:
+    """PR index の 1 件を `open` / `merged` / `closed_unmerged` に畳む (純関数)。"""
+    if record.get("merged_at"):
+        return "merged"
+    return "open" if str(record.get("state", "")).lower() == "open" else "closed_unmerged"
+
+
+def pr_index_head_ref(record: dict[str, Any]) -> str:
+    """PR index の 1 件から head ref を取り出す (純関数)。
+
+    `head_ref` を正とし、`gh api` の生の形 (`head.ref`) も受ける。
+    """
+    ref = record.get("head_ref")
+    if ref is None:
+        head = record.get("head")
+        if isinstance(head, dict):
+            ref = head.get("ref")
+    return str(ref or "")
+
+
+def load_pr_index(path: Path) -> dict[str, dict[str, Any]]:
+    """信用できる PR index を読み、`html_url` をキーにした辞書で返す。
+
+    index は `stage` job (候補コードを動かさない runner) が GitHub API から取った
+    ものだけを想定する。読めない / 形が違うときは **例外にして fail-closed** にする
+    — 「index が無いので形だけ検査した」と黙って落とすと、strict のつもりの経路が
+    素通りになる。
+
+    受ける形は JSON 配列と JSON Lines の両方 (`gh api --paginate --jq ... | jq -s .`
+    と、その素の出力のどちらでも通す)。
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"PR index を読めない ({path}): {exc}") from exc
+    records: list[Any]
+    try:
+        loaded = json.loads(text)
+    except json.JSONDecodeError:
+        records = [json.loads(line) for line in text.splitlines() if line.strip()]
+    else:
+        records = loaded if isinstance(loaded, list) else [loaded]
+    index: dict[str, dict[str, Any]] = {}
+    for record in records:
+        if not isinstance(record, dict):
+            raise ValueError(f"PR index の要素が JSON object でない: {record!r}")
+        url = str(record.get("html_url") or "").strip()
+        if not url:
+            raise ValueError(f"PR index の要素に html_url が無い: {record!r}")
+        index[url] = record
+    return index
+
+
+def pr_index_problem(
+    entry: dict[str, Any], pr_index: dict[str, dict[str, Any]]
+) -> str | None:
+    """head 側の行が指す PR を index と突き合わせ、駄目なら理由を返す (純関数)。
+
+    形の検査 (`pr_url_problem`) だけでは、**別リポジトリの / 無関係な PR** を指す
+    整った URL を書いて `proposed` → `merged` / `rejected` に進める経路が残る
+    (`verify` は API を引き直さないので、URL の中身を誰も確かめていない)。
+    そこで信用できる index を突き合わせ、次の 3 つを全て満たすことを求める:
+
+    1. その `html_url` が index にある (= **このリポジトリの** PR である)
+    2. index 側の head ref が `improve/<target_skill>-<id>-` で始まる
+       (= その finding のために **このループが作った**ブランチの PR である)
+    3. head 側の status が PR の状態と一致する
+       (`pr_open` ⇔ open、`merged` ⇔ merged、`rejected` ⇔ merge されずに closed)
+    """
+    pr = str(entry.get("pr") or "").strip()
+    record = pr_index.get(pr)
+    if record is None:
+        return f"pr {pr!r} が PR index に無い (このリポジトリの PR ではない)"
+    prefix = f"improve/{entry.get('target_skill')}-{entry.get('id')}-"
+    head_ref = pr_index_head_ref(record)
+    if not head_ref.startswith(prefix):
+        return (
+            f"pr {pr!r} の head ref {head_ref!r} が {prefix!r} で始まらない"
+            " (別の finding の PR)"
+        )
+    expected = PR_STATE_EXPECTATION.get(str(entry.get("status", "")))
+    if expected is None:
+        return None
+    actual = pr_index_state(record)
+    if actual != expected:
+        return (
+            f"status {entry.get('status')!r} と PR の状態 ({actual}) が一致しない"
+            f" ({pr})"
+        )
+    return None
+
+
 def check_reconcile_diff(
-    base: Sequence[dict[str, Any]], head: Sequence[dict[str, Any]]
+    base: Sequence[dict[str, Any]],
+    head: Sequence[dict[str, Any]],
+    pr_index: dict[str, dict[str, Any]] | None = None,
 ) -> list[str]:
     """突き合わせブランチの台帳差分を検査する (純関数)。
 
@@ -917,6 +1021,10 @@ def check_reconcile_diff(
     起票済みだが紐付いていない行 (`pr` が空 / `link-pr --keep-status` まで通った行)
     を Step 0 が全状態の PR 検索で回収するための経路で、PR を名指しできないまま
     決着させることは許さない。
+
+    `pr_index` を渡すと、その URL が**実在してこの finding のものである**ことまで
+    照合する (`pr_index_problem`)。渡さない場合は URL の**形**しか見ない — 対話
+    モードの手元検査用で、workflow の `verify` は必ず index を渡す。
     """
     problems = _duplicate_problems(base, head)
     if problems:
@@ -943,6 +1051,10 @@ def check_reconcile_diff(
             problem = pr_url_problem(head_pr)
             if problem is not None:
                 problems.append(f"{entry_id}: {problem}")
+            elif pr_index is not None:
+                problem = pr_index_problem(after, pr_index)
+                if problem is not None:
+                    problems.append(f"{entry_id}: {problem}")
         old_status = str(before.get("status", ""))
         new_status = str(after.get("status", ""))
         if old_status != new_status:
@@ -974,13 +1086,24 @@ def cmd_verify_diff(args: argparse.Namespace) -> int:
     """base と head の台帳を突き合わせ、ブランチが許された変更だけをしているか見る。"""
     base = load_entries(Path(args.base)) if args.base else []
     head = load_entries(Path(args.head))
+    # index が指定されたのに読めなければ**そこで落とす** — 「読めなかったので形だけ
+    # 検査した」と黙って続けると、strict のつもりの workflow 経路が素通りになる。
+    pr_index = load_pr_index(Path(args.pr_index)) if args.pr_index else None
     if args.mode == "candidate":
         if not args.ledger_id:
             print("error: --mode candidate には --ledger-id が要る", file=sys.stderr)
             return EXIT_FAIL
+        # candidate ブランチの追加行は `pr == null` が条件なので、照合する PR が無い。
+        # それでも受けるのは、workflow が両モードに同じ index を渡せるようにするため。
         problems = check_candidate_diff(base, head, args.ledger_id)
     else:
-        problems = check_reconcile_diff(base, head)
+        if pr_index is None:
+            print(
+                "warning: --pr-index が無いため pr は URL の形しか検査していない"
+                " (workflow の verify は必ず index を渡す)",
+                file=sys.stderr,
+            )
+        problems = check_reconcile_diff(base, head, pr_index)
     if problems:
         print(f"verify-diff: {len(problems)} 件の違反")
         for problem in problems:
@@ -1331,6 +1454,16 @@ def build_parser() -> argparse.ArgumentParser:
         dest="ledger_id",
         default="",
         help="candidate モードで追加行に期待する id",
+    )
+    verify_diff.add_argument(
+        "--pr-index",
+        dest="pr_index",
+        default="",
+        help=(
+            "信用できる PR index (stage job が GitHub API から作る JSON)。"
+            "reconcile モードで pr の実在・head ref・状態を照合する。"
+            "省略すると URL の形しか見ない (対話モード用)"
+        ),
     )
     verify_diff.set_defaults(func=cmd_verify_diff)
 

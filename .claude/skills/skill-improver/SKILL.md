@@ -112,13 +112,18 @@ $LEDGER list --inconsistent --json        # pr が辿れない壊れた行 (修�
 
 ブランチ名は `improve/<target_skill>-<id>-<run id>` で finding の id を含むので、PR は機械的に引ける。**ブランチ名は run ごとに一意**なので、完全一致ではなく **接頭辞 `improve/<target_skill>-<id>-` で引く**。**`--state open` だけで引かない** — closed の PR は列挙から丸ごと落ち、merged の PR は `proposed` / `pr == null` の行を default branch に残す (突き合わせでは決着させられず、`--missing-after` は `merged` の行しか見ないので拾えない)。どちらもその finding を永久に抑止する:
 
+**列挙は打ち切りの無い方法で行う**。`gh pr list` の `--limit` は取得件数の上限で、超えた分は黙って落ちる (既定は 30 件)。`improve/**` PR が上限を超えると既存 PR を見落とし、同じ finding に二重で PR が立つ — 見落としの側に倒れるのは、この節が塞ごうとしている事故そのものである。REST の pulls を `--paginate` で全ページ取り切る:
+
 ```bash
+REPO="<owner>/<repo>"
 prefix="improve/<target_skill>-<id>-"
-gh pr list --state all --limit 200 \
-  --json number,state,mergedAt,url,headRefName \
-  | jq --arg p "$prefix" '[.[] | select(.headRefName | startswith($p))]
-                          | sort_by(.number) | reverse'
+gh api --paginate "repos/$REPO/pulls?state=all&per_page=100" \
+  --jq '.[] | {number, state, merged_at, url: .html_url, head_ref: .head.ref}' \
+  | jq -s --arg p "$prefix" '[.[] | select(.head_ref | startswith($p))]
+                             | sort_by(.number) | reverse'
 ```
+
+`--paginate` は Link ヘッダを辿り切るので件数の上限が無い (`--jq` はページごとに適用されるため、まとめるのは `jq -s` の側)。
 
 **作者で絞る必要は無い**。`improve/**` を作れるのは workflow の GitHub App だけ (ruleset A) なので、この接頭辞を持つ head branch の PR はすべてこのループが起票したものである。
 
@@ -173,12 +178,21 @@ PR タイトルは `chore(ledger): reconcile <date>`。workflow モードでは�
 
 ```bash
 tmp="$(mktemp -d)"
-gh pr list --state open --search 'head:improve/' \
-  --json headRefName,number,url --limit 200 > "$tmp/prs.json"
-# 各 PR の head ブランチ側の台帳を取り出して読む
-gh api "repos/<owner>/<repo>/contents/improvements/ledger.jsonl?ref=<headRefName>" \
-  --jq '.content' | base64 -d > "$tmp/<headRefName>.jsonl"
-$LEDGER list --ledger "$tmp/<headRefName>.jsonl" --json
+REPO="<owner>/<repo>"
+# 上と同じ理由で --paginate で全ページ取る (gh pr list の --limit は打ち切り)
+gh api --paginate "repos/$REPO/pulls?state=open&per_page=100" \
+  --jq '.[] | select(.head.ref | startswith("improve/"))
+        | {number, url: .html_url, head_ref: .head.ref}' \
+  | jq -s '.' > "$tmp/prs.json"
+# 各 PR の head ブランチ側の台帳を取り出して読む。**取り出し先は PR 番号で名付ける**
+# — ブランチ名には `/` が入るので "$tmp/<head_ref>.jsonl" は存在しない
+# ディレクトリへのリダイレクトになり、台帳を 1 件も読めないまま次に進んでしまう。
+jq -r '.[] | "\(.number)\t\(.head_ref)"' "$tmp/prs.json" \
+| while IFS="$(printf '\t')" read -r number head_ref; do
+    gh api "repos/$REPO/contents/improvements/ledger.jsonl?ref=$head_ref" \
+      --jq '.content' | base64 -d > "$tmp/pr-$number.jsonl"
+    $LEDGER list --ledger "$tmp/pr-$number.jsonl" --json
+  done
 ```
 
 **「その台帳に載っている」だけでは pending にしない**。head ブランチの台帳は default branch の履歴を丸ごと引き継いでいるので、過去に `merged` / `rejected` / `reverted` になった行もそこに並ぶ。それらまで数えると、**同じ skill で本当に再発した finding を「対応済み」と誤認して握り潰す**。pending と数えるのは次の 2 つだけ:
@@ -258,7 +272,9 @@ git switch <default branch> && git pull --ff-only   # 前の improve ブラン�
 git switch -c improve/<skill>-<finding-id>-<run id>
 ```
 
-**ブランチ名は run ごとに一意にする**。`improve/**` は ruleset で**作成後に更新も削除もできない** (`references/scheduling.md`) ため、同じ名前を作り直すことも、既存のブランチに push し直すこともできない。workflow モードでは `<run id>` に環境変数 `RUN_ID` (= `github.run_id`) を使い、その suffix を持たない候補は `stage` job が push せずに落とす。対話モードでは日時など実行ごとに変わる値でよい。
+**ブランチ名は run ごとに一意にする**。`improve/**` は ruleset で**作成後に更新も削除もできない** (`references/scheduling.md`) ため、同じ名前を作り直すことも、既存のブランチに push し直すこともできない。workflow モードでは `<run id>` に環境変数 `RUN_ID` (= `github.run_id`) を使い、その suffix を持たない候補は `stage` job が push せずに落とす。ruleset の無い consumer 環境で自分で回すときは、日時など実行ごとに変わる値でよい。
+
+**このブランチを push できるのは workflow の `stage` job だけ**である。ruleset A が `improve/**` の**作成**を専用 GitHub App に限っているので、人間や Routine の資格情報では初回 push がサーバ側で弾かれる (`references/scheduling.md`)。ここでローカルにブランチを切るのは、**workflow モードの agent** (commit までを行い、push は別 runner の `stage` job が担う) と、**ruleset の無い consumer 環境**の 2 つだけ。この repo で対話 / Routine セッションから改善 PR を出したいときは、自分でブランチを切らずに `gh workflow run skill-improver.yml` で workflow を起動する (Step 6)。
 
 台帳の行も **PR ごとにその PR のブランチで append する** (共通の先行コミットに積まない)。id は台帳の既存行を読まずに内容から決まる (`IMP-<YYYYMMDD>-<hash>`) ため、並走しても採番が衝突しない。JSONL の末尾追記が merge 時に conflict したときは、**両方の行を残す** — 別 finding の記録どうしで、どちらかを捨てる理由が無い。
 
@@ -306,15 +322,18 @@ description を触ったら `evals/<skill>-trigger-results-<日付>.jsonl` を�
 | モード | 検証を走らせるのは | PR を作るのは |
 |---|---|---|
 | **workflow** (`.github/workflows/skill-improver.yml`) | `verify` job (資格情報を持たない。ブランチごとに checkout して Step 5 の検査を実行) | `publish` job。検証が通ったブランチにだけ `gh pr create` |
-| **手動 / Routine** (対話セッション) | 自分 (Step 5 をそのまま実行) | 自分。Step 5 が全て通ってから |
+| **手動 / Routine** (対話セッション、**ruleset のあるこの repo**) | 同じ `verify` job — 対話セッションは `gh workflow run skill-improver.yml` で workflow を起動し、以降は workflow モードそのもの | `publish` job |
+| **ruleset の無い consumer 環境** | 自分 (Step 5 をそのまま実行) | 自分。Step 5 が全て通ってから |
+
+**対話 / Routine セッションが自分で `improve/**` を作る経路は、この repo には無い**。ruleset A は `improve/**` の作成を専用 GitHub App の bypass 1 件に絞っているので、人間の資格情報からの初回 push はサーバ側で弾かれる — 「自分で push して PR を作る」手順を残すと、実行のたびに push で落ちる。**人間の bypass を足して解くことはしない**: B に bypass を 1 つでも置けば、鍵の持ち主が検証済みブランチを差し替えられるようになり、`head_sha` の不変性という設計の土台が崩れる (`references/scheduling.md`)。したがって週次を待たずに回したいときも入口は同じで、`gh workflow run skill-improver.yml` (`-f focus=<skill>` で対象を絞れる) を起動し、App token を持つ `stage` / `publish` に push と起票をさせる。自分で push してよいのは、ruleset を入れていない consumer 環境だけである。
 
 workflow モードは job を 5 つに割ってある。**agent を動かす `improve` job は書き込み資格情報を一切持たず、agent の実行後に残すのは untrusted な hand-off artifact 1 つだけ** — 同じ job の後段 step は agent が残したプロセスと同じ runner・同じ UID なので、「agent の後の step は trusted」という前提が置けないため (`references/scheduling.md`)。検証・シークレット走査・push は**別 runner の `stage` job**が行い、そこが信用の境界になる。**候補ブランチの中身を実行するのは `verify` job だけで、その job は資格情報を持たない** (`contents: read` / `persist-credentials: false` / `GH_TOKEN` なし) — ブランチがテストや検査スクリプトを書き換えていても、奪える資格情報がそこに無いようにするため。さらに **`verify` は候補 1 件につき 1 job** で、**artifact を一切上げない**: 候補コードが動いた runner の出力は (artifact も含めて) 信用できないので、信頼できる出力を job の conclusion 1 ビットだけに絞り、合格記録の組み立ては候補コードを動かさない `collect` job が行う。書き込み権限を持つ `stage` / `publish` job はブランチのコードを実行しない (`ledger.py` は default branch 側のコピーを使う)。
 
 | job | 権限 | 役割 |
 |---|---|---|
 | `improve` | **`contents: read` のみ** | ruleset の preflight、agent 実行 (読み取り専用トークン)。実行後は untrusted な hand-off artifact を上げるだけ |
-| `stage` (**信用の境界**) | `contents: read` + 自分で発行する App の write トークン | hand-off の取り込み (`git bundle verify`)、manifest の組み直し、allow-list ゲート、シークレット走査、通った候補の push、検証済み manifest の artifact 化 |
-| `verify` (**候補 1 件につき 1 job**) | `contents: read` のみ | manifest の検証、allow-list ゲート、台帳差分のゲート、ブランチ上での Step 5 の検査。**artifact は上げない** |
+| `stage` (**信用の境界**) | `contents: read` + `pull-requests: read` + 自分で発行する App の write トークン | hand-off の取り込み (`git bundle verify`)、manifest の組み直し、allow-list ゲート、シークレット走査、通った候補の push、**PR index の作成**、検証済み manifest の artifact 化 |
+| `verify` (**候補 1 件につき 1 job**) | `contents: read` のみ | manifest の検証、allow-list ゲート、台帳差分のゲート (PR index との照合を含む)、ブランチ上での Step 5 の検査。**artifact は上げない** |
 | `collect` | `actions: read` のみ | 各 `verify` の conclusion と stage の manifest から合格記録を組み立てる |
 | `publish` | `contents: read` / `pull-requests: write` | 合格記録にある候補の `gh pr create` と起票後の head 照合。**push も台帳の書き込みもしない** (ブランチは凍結済み) |
 
@@ -339,6 +358,8 @@ agent が書くのは manifest の 1 行 1 JSON まで:
 **ブランチの差分は allow-list で制限される**。`skills/<target_skill>/**`、`.claude/skills/<target_skill>/**`、`.agents/skills/<target_skill>/**`、`improvements/ledger.jsonl` 以外を含むブランチは、`stage` が push する前に、`verify` が検査を実行する前に、それぞれ落とす (reconcile ブランチは `improvements/ledger.jsonl` のみ)。
 
 **台帳は行の粒度でも検査される**。パスの allow-list は `improvements/ledger.jsonl` をファイル単位で許すので、1 行足すついでに他の行を書き換える余地が残る。`verify` は base 側の `ledger.py verify-diff` で、改善ブランチには「自分の 1 行の追加だけ」(id が manifest の `ledger_id` と一致し、`proposed` / `pr == null`)、reconcile ブランチには「`status` / `pr` / `after` / `notes` を許された遷移で進めるだけ」を要求する (`proposed` からの決着は head 側に開ける PR URL があるときだけ通る。`references/ledger.md`)。
+
+その `pr` は**形だけでなく実在まで**照合する。`verify` は PR API を引き直さないので、形の検査だけでは「整った形の、別リポジトリの / 無関係な PR」を指して `proposed` → `merged` / `rejected` に進める経路が残る。そこで `stage` が `gh api --paginate` でこのリポジトリの `improve/*` PR を全件取って `pr-index.json` を manifest artifact に載せ、`verify` が `verify-diff --pr-index` でそれと突き合わせる — 触った行の `pr` は **index にあり**、その head ref が **`improve/<target_skill>-<id>-` で始まり**、**status が PR の状態と一致する**こと。index が読めなければ検査は形に落ちるのではなく **exit 1** する。
 
 検証に落ちたブランチは PR にならず、失敗したコマンドと共に job summary に出て job が赤になる。ブランチは調査用に残る (凍結されているので消せない — 調査後も履歴として残る)。
 

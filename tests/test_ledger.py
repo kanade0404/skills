@@ -1370,6 +1370,155 @@ class TestVerifyDiff(unittest.TestCase):
         problems = ledger.check_reconcile_diff(base, head)
         self.assertTrue(any("status が proposed でない" in p for p in problems), problems)
 
+    # --- reconcile: 信用できる PR index との照合 ------------------------
+    #
+    # 由来: URL の**形**しか見ないと、整った形の「別リポジトリ / 無関係な PR」を
+    # 書くだけで proposed → merged / rejected に進められる (verify は API を
+    # 引き直さない)。index は stage job が API から作った信用できる入力。
+    def pr_index(self, **overrides: object) -> dict:
+        record = {
+            "number": 1,
+            "html_url": "https://github.com/o/r/pull/1",
+            "head_ref": "improve/tdd-IMP-20260903-aaaaaaaaaa-42",
+            "state": "open",
+            "merged_at": None,
+        }
+        record.update(overrides)
+        return {str(record["html_url"]): record}
+
+    def test_reconcile_accepts_transitions_backed_by_the_pr_index(self) -> None:
+        base = [self.entry("IMP-20260903-aaaaaaaaaa")]
+        cases = [
+            ("pr_open", {"state": "open", "merged_at": None}),
+            ("merged", {"state": "closed", "merged_at": "2026-09-04T00:00:00Z"}),
+            ("rejected", {"state": "closed", "merged_at": None}),
+        ]
+        for status, pr_state in cases:
+            with self.subTest(status=status):
+                head = [
+                    dict(base[0], status=status, pr="https://github.com/o/r/pull/1")
+                ]
+                self.assertEqual(
+                    ledger.check_reconcile_diff(base, head, self.pr_index(**pr_state)),
+                    [],
+                )
+
+    def test_reconcile_rejects_a_pr_url_outside_the_index(self) -> None:
+        # 形は正しいが別リポジトリの PR を指す URL
+        base = [self.entry("IMP-20260903-aaaaaaaaaa")]
+        head = [
+            dict(base[0], status="merged", pr="https://github.com/evil/r/pull/1")
+        ]
+        problems = ledger.check_reconcile_diff(base, head, self.pr_index())
+        self.assertTrue(any("PR index に無い" in p for p in problems), problems)
+
+    def test_reconcile_rejects_a_pr_from_another_finding(self) -> None:
+        # index にはあるが、head ref が別の finding のブランチ
+        base = [self.entry("IMP-20260903-aaaaaaaaaa")]
+        head = [dict(base[0], status="pr_open", pr="https://github.com/o/r/pull/1")]
+        index = self.pr_index(head_ref="improve/commit-IMP-20260101-bbbbbbbbbb-7")
+        problems = ledger.check_reconcile_diff(base, head, index)
+        self.assertTrue(any("head ref" in p for p in problems), problems)
+
+    def test_reconcile_rejects_a_status_that_contradicts_the_pr(self) -> None:
+        # PR は open のままなのに merged で決着させようとする
+        base = [self.entry("IMP-20260903-aaaaaaaaaa")]
+        head = [dict(base[0], status="merged", pr="https://github.com/o/r/pull/1")]
+        problems = ledger.check_reconcile_diff(base, head, self.pr_index())
+        self.assertTrue(any("一致しない" in p for p in problems), problems)
+
+    def test_reconcile_without_an_index_checks_only_the_url_shape(self) -> None:
+        # 対話モードの手元検査。index が無いときは形だけ (CLI は警告を出す)
+        base = [self.entry("IMP-20260903-aaaaaaaaaa")]
+        head = [dict(base[0], status="merged", pr="https://github.com/evil/r/pull/1")]
+        self.assertEqual(ledger.check_reconcile_diff(base, head), [])
+
+    def test_load_pr_index_accepts_array_and_jsonl_and_nested_head(self) -> None:
+        record = {
+            "number": 1,
+            "html_url": "https://github.com/o/r/pull/1",
+            "head": {"ref": "improve/tdd-IMP-20260903-aaaaaaaaaa-42"},
+            "state": "open",
+            "merged_at": None,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            as_array = Path(tmp) / "array.json"
+            as_array.write_text(json.dumps([record]), encoding="utf-8")
+            as_lines = Path(tmp) / "lines.jsonl"
+            as_lines.write_text(json.dumps(record) + "\n", encoding="utf-8")
+            for path in (as_array, as_lines):
+                with self.subTest(path=path.name):
+                    index = ledger.load_pr_index(path)
+                    self.assertEqual(
+                        ledger.pr_index_head_ref(index[record["html_url"]]),
+                        "improve/tdd-IMP-20260903-aaaaaaaaaa-42",
+                    )
+
+    def test_cli_fails_when_the_pr_index_is_missing(self) -> None:
+        """workflow モードは index 必須。読めなければ形だけの検査に落とさない。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            head_path = Path(tmp) / "head.jsonl"
+            ledger.save_entries(head_path, [])
+            code, _ = run(
+                [
+                    "verify-diff", "--head", str(head_path), "--mode", "reconcile",
+                    "--pr-index", str(Path(tmp) / "does-not-exist.json"),
+                ]
+            )
+            self.assertEqual(code, ledger.EXIT_FAIL)
+
+    def test_cli_reconcile_enforces_the_pr_index(self) -> None:
+        entry_id = "IMP-20260903-aaaaaaaaaa"
+        with tempfile.TemporaryDirectory() as tmp:
+            base_path = Path(tmp) / "base.jsonl"
+            head_path = Path(tmp) / "head.jsonl"
+            index_path = Path(tmp) / "pr-index.json"
+            base_entry = self.entry(entry_id)
+            ledger.save_entries(base_path, [base_entry])
+            ledger.save_entries(
+                head_path,
+                [dict(base_entry, status="merged", pr="https://github.com/o/r/pull/1")],
+            )
+            index_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "number": 1,
+                            "html_url": "https://github.com/o/r/pull/1",
+                            "head_ref": f"improve/tdd-{entry_id}-42",
+                            "state": "closed",
+                            "merged_at": "2026-09-04T00:00:00Z",
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            argv = [
+                "verify-diff", "--base", str(base_path), "--head", str(head_path),
+                "--mode", "reconcile", "--pr-index", str(index_path),
+            ]
+            code, out = run(argv)
+            self.assertEqual(code, ledger.EXIT_OK)
+            self.assertIn("verify-diff: ok", out)
+
+            # 同じ差分でも、index 側が open のままなら通さない
+            index_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "number": 1,
+                            "html_url": "https://github.com/o/r/pull/1",
+                            "head_ref": f"improve/tdd-{entry_id}-42",
+                            "state": "open",
+                            "merged_at": None,
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            code, _ = run(argv)
+            self.assertEqual(code, ledger.EXIT_FAIL)
+
     # --- CLI ---------------------------------------------------------
     def test_cli_reports_violations_with_exit_code(self) -> None:
         new_id = "IMP-20260903-aaaaaaaaaa"

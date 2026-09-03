@@ -132,6 +132,7 @@ jobs:
       # agent が「検証待ちのブランチ」を書き出す先
       WORKDIR: ${{ runner.temp }}/skill-improver
       MANIFEST: ${{ runner.temp }}/skill-improver/prs.jsonl
+      PR_INDEX: ${{ runner.temp }}/skill-improver/pr-index.json
       BODIES: ${{ runner.temp }}/skill-improver/bodies
 
     steps:
@@ -385,11 +386,14 @@ jobs:
               取りこぼす** — closed の PR は列挙から落ち、merged の PR は proposed /
               pr=null の行を default branch に残したまま突き合わせでも --missing-after
               でも決着させられなくなる。ブランチ名は run id を suffix に持つので
-              **接頭辞 improve/<target_skill>-<id>- で全状態から引く**こと:
-              gh pr list --state all --limit 200
-              --json number,state,mergedAt,url,headRefName
-              | jq --arg p "improve/<target_skill>-<id>-"
-                   '[.[] | select(.headRefName | startswith($p))]
+              **接頭辞 improve/<target_skill>-<id>- で全状態から引く**こと。
+              列挙に gh pr list は使わない — --limit は取得件数の上限で、
+              超えた分は黙って落ちる (既定 30 件) ため、ここで見落とすと
+              二重起票になる。gh api --paginate で全ページ取り切る:
+              gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?state=all&per_page=100"
+              --jq '.[] | {number, state, merged_at, url: .html_url, head_ref: .head.ref}'
+              | jq -s --arg p "improve/<target_skill>-<id>-"
+                   '[.[] | select(.head_ref | startswith($p))]
                     | sort_by(.number) | reverse'
               improve/** を作れるのはこの workflow の App だけ (ruleset A) なので、
               作者で絞る必要は無い。新しい順の 1 件目で決着させる — open なら link-pr
@@ -398,9 +402,15 @@ jobs:
               → set-status --status rejected --notes に閉じた PR の URL を書く。
               1 件も無ければ proposed のまま残す (finding を出し直せる状態にして
               次回に回す)
-            - あわせて open な improve/* PR を列挙し (gh pr list --state open
-              --search 'head:improve/')、各 head ブランチの improvements/ledger.jsonl を
-              取り出して ledger.py list --ledger <tmp> で読む。**pending と数えるのは
+            - あわせて open な improve/* PR を列挙する。ここも打ち切りの無い
+              gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100"
+              --jq '.[] | select(.head.ref | startswith("improve/"))
+                    | {number, url: .html_url, head_ref: .head.ref}'
+              を使い、各 head ブランチの improvements/ledger.jsonl を取り出して
+              ledger.py list --ledger <tmp>/pr-<PR 番号>.jsonl で読む。**取り出し先は
+              PR 番号で名付ける** — ブランチ名には / が入るので
+              <tmp>/<head_ref>.jsonl は存在しないディレクトリへのリダイレクトになり、
+              台帳を 1 件も読めないまま「pending 無し」と読んでしまう。**pending と数えるのは
               (a) status が pr_open の行と (b) status が proposed でも pr に開ける
               PR URL が入っている行の 2 つだけ** — ledger.py の is_pending_row() と
               同じ条件で、判定を変えるときは必ずそちらに合わせる。(b) は link-pr の
@@ -554,6 +564,9 @@ jobs:
       # job の GITHUB_TOKEN には書き込みを持たせない。push に使うのは、下で
       # **走査を通してから**発行する App の write トークンだけ。
       contents: read
+      # PR index (verify が台帳の pr を突き合わせる信用できる入力) を GitHub API
+      # から作るためだけの読み取り権限。書き込みは足さない。
+      pull-requests: read
     # verify は候補 1 件につき 1 job にする (matrix)。その添字リストをここから渡す。
     outputs:
       indexes: ${{ steps.push.outputs.indexes }}
@@ -569,6 +582,7 @@ jobs:
       WORK: ${{ runner.temp }}/stage
       BUNDLE_REFS: ${{ runner.temp }}/stage/bundle-refs.tsv
       MANIFEST: ${{ runner.temp }}/stage/prs.jsonl
+      PR_INDEX: ${{ runner.temp }}/stage/pr-index.json
       GUARD: .github/scripts/manifest_guard.py
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -693,6 +707,34 @@ jobs:
           fi
           rm -f "$raw"
 
+      # 台帳の突き合わせ (reconcile ブランチ) を検証するための **信用できる PR index**。
+      # verify は候補ブランチの台帳が指す PR URL の **形**しか見られず、API を引き
+      # 直さない。そのままだと「整った形の、別リポジトリの / 無関係な PR」を書いて
+      # proposed → merged / rejected に進める経路が残る。index はこの job
+      # (候補コードを 1 行も動かさない runner) が API から作り、manifest artifact に
+      # 載せて verify に渡す。作れなければ fail-closed で落とす — index 無しで
+      # verify を通すと、形だけの検査に静かに戻ってしまう。
+      - name: Build the trusted PR index
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          mkdir -p "$WORK"
+          # --paginate は Link ヘッダを辿り切る (gh pr list の --limit は打ち切り)。
+          # --jq はページごとに適用されるので、まとめるのは jq -s の側。
+          if ! gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?state=all&per_page=100" \
+                 --jq '.[] | select(.head.ref | startswith("improve/"))
+                       | {number, html_url, head_ref: .head.ref, state, merged_at}' \
+               | jq -s '.' > "$PR_INDEX"; then
+            echo "::error::PR index を作れなかった (verify の台帳検査が成立しない)"
+            exit 1
+          fi
+          if ! jq -e 'type == "array"' "$PR_INDEX" > /dev/null; then
+            echo "::error::PR index が JSON 配列になっていない"
+            exit 1
+          fi
+          echo "PR index: $(jq 'length' "$PR_INDEX") 件の \`improve/*\` PR" >> "$GITHUB_STEP_SUMMARY"
+
       # 書き込みトークンはこの runner で初めて発行する。**agent が走った runner
       # には最初から最後まで存在しない**ので、agent が残したプロセスからは
       # /proc/<pid>/environ でも届かない。発行を走査より前に置くのは、この
@@ -733,6 +775,12 @@ jobs:
           stage="$(mktemp -d "$RUNNER_TEMP/si-stage-XXXXXX")"
           mkdir -p "$stage/bodies"
           echo "dir=$stage" >> "$GITHUB_OUTPUT"
+          # 候補が 0 件でも index は artifact に載せる (verify は index が無ければ
+          # 落ちるので、載せ忘れを「形だけ検査」に落とさない)
+          if ! cp -- "$PR_INDEX" "$stage/pr-index.json"; then
+            echo "::error::PR index を staging にコピーできなかった"
+            exit 1
+          fi
           bodies_real="$(realpath -e "$HANDOFF_BODIES" 2>/dev/null || true)"
           scan_diff() {
             # 値ではなく環境変数名を渡す (コマンドラインは他プロセスから見える)
@@ -1047,13 +1095,19 @@ jobs:
           base_ledger="$(mktemp)"; head_ledger="$(mktemp)"
           git show "origin/$DEFAULT_BRANCH:improvements/ledger.jsonl" > "$base_ledger" 2>/dev/null || : > "$base_ledger"
           git show "$head_sha:improvements/ledger.jsonl" > "$head_ledger" 2>/dev/null || : > "$head_ledger"
+          # --pr-index は **必須**。reconcile ブランチの台帳が指す PR URL を、
+          # stage が API から作った信用できる index と突き合わせる (実在する / この
+          # finding のブランチの PR である / status が PR の状態と一致する)。
+          # ファイルが無ければ ledger.py が落ちるので、載せ忘れは fail-closed になる。
+          [ -f "$PR_INDEX" ] || reject "PR index が manifest artifact に無い"
           diff_ok=0
           if [ -n "$ledger_id" ]; then
             python3 "$TRUSTED_LEDGER" verify-diff --base "$base_ledger" \
-              --head "$head_ledger" --mode candidate --ledger-id "$ledger_id" && diff_ok=1
+              --head "$head_ledger" --mode candidate --ledger-id "$ledger_id" \
+              --pr-index "$PR_INDEX" && diff_ok=1
           else
             python3 "$TRUSTED_LEDGER" verify-diff --base "$base_ledger" \
-              --head "$head_ledger" --mode reconcile && diff_ok=1
+              --head "$head_ledger" --mode reconcile --pr-index "$PR_INDEX" && diff_ok=1
           fi
           rm -f "$base_ledger" "$head_ledger"
           [ "$diff_ok" -eq 1 ] || reject "台帳の差分が許された範囲を超えている (verify-diff)"

@@ -214,8 +214,8 @@ run」を押すまで走らない** ([GITHUB_TOKEN のドキュメント](https:
 | job | 権限 | 持つ資格情報 | 役割 |
 |---|---|---|---|
 | `improve` | **`contents: read` のみ** | App の read トークン、App の preflight トークン (agent より**前**の step だけ)、`CLAUDE_CODE_OAUTH_TOKEN`、この job の `ACTIONS_RUNTIME_TOKEN`。**書き込みトークンは一切持たない** | ruleset の preflight、agent 実行。実行後は untrusted な hand-off artifact を上げるだけで、**job output も持たない** |
-| `stage` (**信用の境界**) | `contents: read` (job の `GITHUB_TOKEN`) + この job で発行する App の **write** トークン | App の秘密鍵、`CLAUDE_CODE_OAUTH_TOKEN` (走査用)、自分で発行した write トークン。**`improve` 側のトークンは知らない** | hand-off の取り込み (`git bundle verify` → `refs/candidates/*`)、manifest の組み直しと bundle との突き合わせ、本文の検証と走査、**パスの allow-list ゲート**、**差分のシークレット走査**、通った候補の push、検証済み manifest の artifact 化。**候補コードは実行しない** |
-| `verify` (**候補 1 件につき 1 job**) | `contents: read` のみ (`persist-credentials: false`、`GH_TOKEN` もシークレットも渡さない) | **無し** | manifest の値の検証、パスの allow-list ゲート、**台帳差分のゲート (`ledger.py verify-diff`)**、メタスキル対象の拒否、ブランチ上で `unittest` / `check_trigger_evals.py` / `rulesync-sync.mjs --check`。**artifact は上げない** |
+| `stage` (**信用の境界**) | `contents: read` + `pull-requests: read` (job の `GITHUB_TOKEN`。後者は PR index の作成だけに使う) + この job で発行する App の **write** トークン | App の秘密鍵、`CLAUDE_CODE_OAUTH_TOKEN` (走査用)、自分で発行した write トークン。**`improve` 側のトークンは知らない** | hand-off の取り込み (`git bundle verify` → `refs/candidates/*`)、manifest の組み直しと bundle との突き合わせ、本文の検証と走査、**パスの allow-list ゲート**、**差分のシークレット走査**、通った候補の push、**PR index の作成**、検証済み manifest の artifact 化。**候補コードは実行しない** |
+| `verify` (**候補 1 件につき 1 job**) | `contents: read` のみ (`persist-credentials: false`、`GH_TOKEN` もシークレットも渡さない) | **無し** | manifest の値の検証、パスの allow-list ゲート、**台帳差分のゲート (`ledger.py verify-diff --pr-index`)**、メタスキル対象の拒否、ブランチ上で `unittest` / `check_trigger_evals.py` / `rulesync-sync.mjs --check`。**artifact は上げない** |
 | `collect` | `actions: read` のみ | この job の `GITHUB_TOKEN` (jobs API の読み取りだけ) | 各 `verify (<idx>)` の conclusion と stage の manifest から合格記録を組み立てて artifact に上げる。候補コードは動かさない |
 | `publish` | `contents: read` / `pull-requests: write` | App の PR トークン (この job で発行。**contents は read**) | 合格記録にある候補の `gh pr create` と起票後の head 照合。**push も台帳の書き込みもしない** — `improve/**` は作成後に凍結されていて commit を積めないので、この job から改善ブランチを動かす能力そのものを外してある |
 
@@ -256,6 +256,17 @@ job 中に追加のネットワークアクセス (= 資格情報) が要らな�
 ブランチのコピーではない) で `verify-diff` を実行し、改善ブランチには「自分の 1 行の
 追加だけ」、突き合わせブランチには「決着した行の `status` / `pr` / `after` / `notes`
 を許された遷移で進めるだけ」を要求する (詳細は `references/ledger.md`)。
+
+その `pr` は **形だけでなく実在まで**照合する。`verify` は PR API を引き直さないので、
+形の検査だけだと「整った形の、別リポジトリの / 無関係な PR」を指して
+`proposed` → `merged` / `rejected` に進める経路が残る。そこで `stage` (候補コードを
+動かさない runner) が job の `GITHUB_TOKEN` (`pull-requests: read`) と
+`gh api --paginate` でこのリポジトリの `improve/*` PR を全件取り、`pr-index.json` として
+manifest artifact に載せる。`verify` はそれを `verify-diff --pr-index` に渡し、触った行の
+`pr` が (1) index にある = このリポジトリの PR (2) head ref が
+`improve/<target_skill>-<id>-` で始まる = その finding のブランチ (3) status が PR の
+状態と一致する、の 3 つを満たすことを求める。index が読めなければ `ledger.py` が
+exit 1 するので、載せ忘れは**形だけの検査に落ちるのではなく不合格になる**。
 
 **パスの allow-list ゲート**: 同じ検査を `stage` (push の前) と `verify` (実行の前)
 の**両方**が持つ。allow-list を外れるブランチは `stage` がそもそも push しないので
@@ -347,11 +358,16 @@ ruleset B が動かさせない)。
 Step 0 は head branch の**接頭辞**で PR を引く (ブランチ名が run ごとに変わるため
 完全一致では引けない):
 
+列挙は `gh pr list` ではなく **`gh api --paginate`** で行う — `--limit` は取得件数の
+上限で、超えた分は黙って落ちるため (既定 30 件)、`improve/**` PR が増えると
+「起票済みの PR を見落として二重起票する」という、この節が塞いでいる事故そのものを
+列挙側が作る:
+
 ```bash
-gh pr list --state all --limit 200 \
-  --json number,state,mergedAt,url,headRefName \
-  | jq --arg p "improve/<target_skill>-<id>-" \
-       '[.[] | select(.headRefName | startswith($p))] | sort_by(.number) | reverse'
+gh api --paginate "repos/<owner>/<repo>/pulls?state=all&per_page=100" \
+  --jq '.[] | {number, state, merged_at, url: .html_url, head_ref: .head.ref}' \
+  | jq -s --arg p "improve/<target_skill>-<id>-" \
+       '[.[] | select(.head_ref | startswith($p))] | sort_by(.number) | reverse'
 ```
 
 **作者で絞る必要は無い** — `improve/**` を作れるのは App だけ (ruleset A) なので、
@@ -498,10 +514,28 @@ Actions を使わない (使えない) 環境では、Routine に週次で登録
 > **この repo のように ruleset を入れている環境では、Routine / 対話セッションは
 > `gh workflow run skill-improver.yml` で workflow を起動する**のが正しい経路で、
 > 自分で push するのは ruleset が無い (consumer) 環境に限られる。どちらの環境でも
-> 手順は同じ: 改善はローカルに commit し切ってから **1 度だけ** push し、
-> 台帳の `link-pr` は次回実行の Step 0 に任せる。
+> 台帳の `link-pr` は次回実行の Step 0 に任せる点は変わらない。
 
-登録するプロンプト:
+したがって登録するプロンプトは環境で 2 通りになる。**この repo (ruleset あり)** では
+Routine がするのは起動と結果の報告だけで、push も起票も App token を持つ
+`stage` / `publish` が行う:
+
+```text
+kanade0404/skills で skill-improver を 1 周回してください。
+
+1. gh workflow run skill-improver.yml で workflow を起動する (対象を絞るなら
+   -f focus=<skill>)。**自分で improve/** ブランチを作らない・push しない** —
+   improve/** を作れるのは workflow の GitHub App だけで (ruleset A)、人間や
+   Routine の資格情報では初回 push がサーバ側で弾かれる。人間の bypass を
+   足して解決しようとしないこと
+2. gh run watch で完了まで見て、job summary (起票した PR・push できなかった
+   候補・シークレット検出) をそのまま報告する
+3. run が赤いときは summary の「手動対応が必要」を優先して報告する — ruleset が
+   外れている疑いを含むため、勝手に再実行しない
+```
+
+**ruleset の無い (consumer) 環境**では Actions ごと無い前提なので、Routine 自身が
+検証も起票も行う。登録するプロンプト:
 
 ```text
 kanade0404/skills で skill-improver を 1 周回してください。
@@ -518,9 +552,13 @@ kanade0404/skills で skill-improver を 1 周回してください。
    "chore(ledger): reconcile <date>" として PR を出す (default branch には push
    しない)。そのうえで ledger.py report を読み、revert candidate があれば
    新規候補より先に報告する
-2.5. open な improve/* PR (gh pr list --state open --search 'head:improve/') の
-   head ブランチにある improvements/ledger.jsonl も
-   ledger.py list --ledger <tmp> で読む。pending と数えるのは (a) status が
+2.5. open な improve/* PR の head ブランチにある improvements/ledger.jsonl も読む。
+   列挙は打ち切りの無い gh api --paginate
+   "repos/<owner>/<repo>/pulls?state=open&per_page=100" で行い (gh pr list の
+   --limit は取得件数の上限で、超えた分は黙って落ちる)、head.ref が improve/ で
+   始まるものに絞る。台帳の取り出し先は <tmp>/pr-<PR 番号>.jsonl のように
+   **PR 番号**で名付けて ledger.py list --ledger で読む — ブランチ名には / が
+   入るので <tmp>/<head ref>.jsonl は存在しないディレクトリへのリダイレクトになる。pending と数えるのは (a) status が
    pr_open の行と (b) status が proposed でも `pr` に**開ける PR URL** が入って
    いる行の 2 つだけで、これは `ledger.py` の `is_pending_row()` と同じ条件
    (`references/ledger.md`)。(b) は PR 起票の後 `set-status` の前に落ちた残骸で、
@@ -572,6 +610,12 @@ kanade0404/skills で skill-improver を 1 周回してください。
 「agent-feedback を取り込んで」「改善ループ回して」
 
 特定の finding だけ回すときは finding id (`IMP-20260910-4ce5643613`) か対象 skill 名を添える。
+
+**この repo では、その依頼を受けた対話セッションがすることは `gh workflow run
+skill-improver.yml` の起動である** (`-f focus=<skill>` で対象を絞る)。自分で
+`improve/**` を切って push する経路は ruleset A が塞いでいるので、手元で回そうとすると
+初回 push で落ちる。ブランチの作成・検証・起票は上の 5 job が行い、対話セッションは
+起動と結果の報告に徹する。自分で回すのは ruleset の無い consumer 環境だけ。
 
 ## 実行間隔を変えるときの判断材料
 
