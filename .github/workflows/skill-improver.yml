@@ -174,9 +174,13 @@ jobs:
             - メタスキル (SKILL.md の除外リスト) は編集せず、improvements/ledger.jsonl に
               excluded_meta で記録して実行レポートで報告する
             - **PR は作らない** (workflow モードでは gh pr create は使えない)。
-              改善ブランチを push したら、環境変数 MANIFEST のファイルに 1 行 1 JSON で
+              改善ブランチを push したら、**push 後に git rev-parse origin/<branch> で
+              先端の SHA を取り**、環境変数 MANIFEST のファイルに 1 行 1 JSON で
               追記する: {"branch": "improve/<skill>-<finding-id>", "title": "<PR title>",
-              "body_file": "<PR 本文のパス>", "ledger_id": "<IMP-...>"}。
+              "body_file": "<PR 本文のパス>", "ledger_id": "<IMP-...>",
+              "head_sha": "<40 桁の SHA>"}。後続 job はブランチ名ではなくこの SHA を
+              検証・起票の対象にする (検証後に押された commit が「検証済み」として
+              PR に載らないようにするため) — 記録した後にそのブランチへ push しない。
               **本文ファイルは環境変数 BODIES のディレクトリの直下にだけ置く**
               (別の場所を指したエントリは検証で落ちる)。検証・PR 起票・link-pr の
               commit は後続 job が行う
@@ -255,6 +259,7 @@ jobs:
             title="$(printf '%s' "$line" | jq -r '.title // ""')"
             body_file="$(printf '%s' "$line" | jq -r '.body_file // ""')"
             ledger_id="$(printf '%s' "$line" | jq -r '.ledger_id // ""')"
+            head_sha="$(printf '%s' "$line" | jq -r '.head_sha // ""')"
             echo "::group::verify ${branch:-<no branch>}"
             reject() {
               echo "- \`${branch:-<no branch>}\`: $1 — PR は作らない ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
@@ -291,6 +296,17 @@ jobs:
             if ! git rev-parse --verify --quiet "origin/$branch" > /dev/null; then
               reject "origin にそのブランチが無い"; continue
             fi
+            # 以降はブランチ名ではなく **検証した SHA** を対象にする。ブランチ名で
+            # 追い続けると、検証と起票の間に押された commit が「検証済み」として
+            # 通ってしまう (TOCTOU)。
+            if ! printf '%s' "$head_sha" | grep -Eq '^[0-9a-f]{40}$'; then
+              reject "head_sha の形式が不正"; continue
+            fi
+            actual_sha="$(git rev-parse "origin/$branch")"
+            if [ "$actual_sha" != "$head_sha" ]; then
+              reject "manifest の head_sha ($head_sha) と origin/$branch ($actual_sha) が不一致"
+              continue
+            fi
 
             # --- 台帳の該当行を読み、allow-list の対象 skill を決める ---
             # jq は JSON Lines をストリームとして読めるので、行ごとの分解は要らない。
@@ -298,7 +314,7 @@ jobs:
             # 行や merged の行を材料に allow-list を広げられないように)。
             target=""
             if [ -n "$ledger_id" ]; then
-              target="$(git show "origin/$branch:improvements/ledger.jsonl" 2>/dev/null \
+              target="$(git show "$head_sha:improvements/ledger.jsonl" 2>/dev/null \
                 | jq -r --arg id "$ledger_id" '
                     select(.id == $id and .status == "proposed" and (.pr == null))
                     | .target_skill // empty
@@ -315,7 +331,7 @@ jobs:
             # ブランチの中身を実行するのはこのゲートを通った後だけ。tests/ や
             # 検査スクリプトを書き換えたブランチはここで落ちる。
             changed="$(mktemp)"
-            if ! git diff --name-only "origin/$DEFAULT_BRANCH...origin/$branch" > "$changed"; then
+            if ! git diff --name-only "origin/$DEFAULT_BRANCH...$head_sha" > "$changed"; then
               rm -f "$changed"; reject "diff を取れなかった"; continue
             fi
             bad=""
@@ -338,8 +354,8 @@ jobs:
             fi
 
             # --- ここで初めてブランチの中身を実行する (資格情報の無い job) ---
-            git checkout --force --detach "origin/$branch" || {
-              reject "ブランチを checkout できなかった"; continue
+            git checkout --force --detach "$head_sha" || {
+              reject "検証対象の SHA を checkout できなかった"; continue
             }
             ok=1
             for cmd in "python3 -m unittest discover tests" \
@@ -353,7 +369,7 @@ jobs:
             done
             if [ "$ok" -eq 1 ]; then
               printf '%s\n' "$line" >> "$PASSED"
-              echo "- \`$branch\`: 検証 OK" >> "$GITHUB_STEP_SUMMARY"
+              echo "- \`$branch\` (\`${head_sha}\`): 検証 OK" >> "$GITHUB_STEP_SUMMARY"
               echo "::endgroup::"
             fi
           done < "$MANIFEST"
@@ -424,6 +440,7 @@ jobs:
             title="$(printf '%s' "$line" | jq -r '.title // ""')"
             body_file="$(printf '%s' "$line" | jq -r '.body_file // ""')"
             ledger_id="$(printf '%s' "$line" | jq -r '.ledger_id // ""')"
+            head_sha="$(printf '%s' "$line" | jq -r '.head_sha // ""')"
             echo "::group::publish ${branch:-<no branch>}"
 
             # verify を通った行だが、artifact 経由で渡ってくる以上ここでも検証する
@@ -446,13 +463,26 @@ jobs:
               echo "- \`$branch\`: ledger_id の形式が不正 ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
               failed=1; echo "::endgroup::"; continue
             fi
+            if ! printf '%s' "$head_sha" | grep -Eq '^[0-9a-f]{40}$'; then
+              echo "- \`$branch\`: head_sha の形式が不正 ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
+              failed=1; echo "::endgroup::"; continue
+            fi
+
+            # 検証したのは head_sha であってブランチ名ではない。起票の直前に
+            # remote の先端を取り直して一致を確かめる — 検証後に push された
+            # commit を「検証済み」として PR に載せないため。
+            remote_sha="$(git ls-remote origin "refs/heads/$branch" | cut -f1)"
+            if [ "$remote_sha" != "$head_sha" ]; then
+              echo "- \`$branch\`: verified SHA と remote HEAD が不一致 (検証後に更新された) — PR は作らない ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
+              failed=1; echo "::endgroup::"; continue
+            fi
 
             if ! pr_url="$(gh pr create --base "$BASE_BRANCH" --head "$branch" \
                  --title "$title" --body-file "$body_path")"; then
               echo "- \`$branch\`: 検証 OK だが PR 起票に失敗 ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
               failed=1; echo "::endgroup::"; continue
             fi
-            echo "- \`$branch\`: 検証 OK → $pr_url" >> "$GITHUB_STEP_SUMMARY"
+            echo "- \`$branch\` (\`${head_sha}\`): 検証 OK → $pr_url" >> "$GITHUB_STEP_SUMMARY"
 
             if [ -z "$ledger_id" ]; then
               echo "::endgroup::"; continue
@@ -460,7 +490,22 @@ jobs:
             # 台帳の PR 紐付けも同じブランチに載せる。ここで commit しないと
             # ledger.jsonl の pr / status が誰の PR にも入らず、次回の Step 0 が
             # 突き合わせる相手を失う (改善ループが閉じない)。
-            if git checkout --force -B "$branch" "origin/$branch" &&
+            # commit を積む前にもう一度先端を確かめる (起票との間にも窓がある)。
+            remote_sha="$(git ls-remote origin "refs/heads/$branch" | cut -f1)"
+            if [ "$remote_sha" != "$head_sha" ]; then
+              failed=1
+              echo "- \`$branch\`: link-pr 直前に verified SHA と remote HEAD が不一致 (検証後に更新された) ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
+              if gh pr close "$pr_url" --comment \
+                   "検証済み SHA とブランチ先端が一致しないため自動的に閉じました — 実行ログ: $RUN_URL"; then
+                echo "  - 補償: $pr_url を閉じた" >> "$GITHUB_STEP_SUMMARY"
+              else
+                echo "  - **補償に失敗: $pr_url が open のまま。手で閉じること**" >> "$GITHUB_STEP_SUMMARY"
+              fi
+              echo "::endgroup::"; continue
+            fi
+            # 検証した SHA の上に commit する (ブランチ名から辿り直さない)。
+            # push は非 force なので、remote が動いていればここでも弾かれる。
+            if git checkout --force -B "$branch" "$head_sha" &&
                python3 "$TRUSTED_LEDGER" link-pr --ledger improvements/ledger.jsonl \
                  --id "$ledger_id" --pr "$pr_url" &&
                git -c user.name="github-actions[bot]" \

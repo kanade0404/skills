@@ -90,12 +90,27 @@ job 中に追加のネットワークアクセス (= 資格情報) が要らな�
 あればそのブランチは実行せず、PR にもしない。
 
 **manifest の値は agent が書いたデータ**として扱い、特権的に使う前に検証する:
-`branch` は `^improve/[A-Za-z0-9._-]+$` で origin に実在すること、`body_file` は
-`bodies/` 直下の通常ファイル (symlink・`..`・別ディレクトリは不可) であること、
-`ledger_id` は `^IMP-[0-9]{8}-[0-9a-f]{10}$` かつそのブランチの台帳に `proposed` /
-`pr == null` の行として実在すること。`publish` は artifact 経由で受け取った値を
-自分でもう一度検証する。落ちた行は PR にならず job summary に出て job が赤になる
-(ブランチは調査用に残る)。
+`branch` は `^improve/[A-Za-z0-9._-]+$` で origin に実在すること、`head_sha` は
+`^[0-9a-f]{40}$` であること、`body_file` は `bodies/` 直下の通常ファイル
+(symlink・`..`・別ディレクトリは不可) であること、`ledger_id` は
+`^IMP-[0-9]{8}-[0-9a-f]{10}$` かつそのブランチの台帳に `proposed` / `pr == null` の
+行として実在すること。`publish` は artifact 経由で受け取った値を自分でもう一度検証する。
+落ちた行は PR にならず job summary に出て job が赤になる (ブランチは調査用に残る)。
+
+**検証も起票もブランチ名ではなく `head_sha` を対象にする**。`improve` は push 直後の
+`git rev-parse origin/<branch>` を manifest に書き、`verify` は `origin/<branch>` が
+その SHA と一致することを確かめてから **SHA を checkout** して allow-list ゲートと
+検査を回す。`publish` は `gh pr create` の直前と `link-pr` の push 直前に
+`git ls-remote origin refs/heads/<branch>` で remote の先端を取り直し、`head_sha` と
+一致しなければそのブランチを起票しない (起票後に判明した場合は PR を閉じて補償する)。
+ブランチ名で追い続けると、検証と起票の間に押された commit が「検証済み」として PR に
+載る (TOCTOU)。
+
+> **残る窓と、その塞ぎ方**: 最後の照合と `gh pr create` の間はごく短いが 0 ではない。
+> `link-pr` の push は非 force なので remote が動いていればそこでも弾かれるが、
+> 窓そのものを消すには **`improve/**` への push を Actions integration だけに制限する
+> ruleset** が要る (Rulesets → `improve/**` を target に Restrict updates、bypass に
+> Actions のみ)。repo 設定の変更なのでコード側では閉じられない — PR の Follow-ups 参照。
 
 **PR 起票後に `link-pr` が落ちた場合の補償**: 台帳から辿れない PR をレビュー待ちに
 残さないため、`publish` はその PR を `gh pr close` して閉じる。補償自体が失敗したら

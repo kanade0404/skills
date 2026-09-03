@@ -267,13 +267,17 @@ workflow モードは job を 3 つに割ってある。**候補ブランチの�
 | `verify` | `contents: read` のみ | manifest の検証、allow-list diff ゲート、ブランチ上での Step 5 の検査 |
 | `publish` | `contents: write` / `pull-requests: write` | 通ったブランチの `gh pr create`、`link-pr` の commit / push、失敗時の補償 |
 
-workflow モードでは `gh pr create` が使えない。改善ブランチを push したら、環境変数 `MANIFEST` のファイルに 1 行 1 JSON で追記して終わる:
+workflow モードでは `gh pr create` が使えない。改善ブランチを push したら、**push 後に `git rev-parse origin/<branch>` で先端の SHA を取り**、環境変数 `MANIFEST` のファイルに 1 行 1 JSON で追記して終わる:
 
 ```json
-{"branch": "improve/<skill>-<finding-id>", "title": "<PR title>", "body_file": "<BODIES 直下のパス>", "ledger_id": "<IMP-...>"}
+{"branch": "improve/<skill>-<finding-id>", "title": "<PR title>", "body_file": "<BODIES 直下のパス>", "ledger_id": "<IMP-...>", "head_sha": "<40 桁の SHA>"}
 ```
 
-**PR 本文は環境変数 `BODIES` のディレクトリ直下にだけ書き出す**。後段はそのディレクトリ配下の通常ファイルしか読まず、symlink・`..`・別ディレクトリを指したエントリは検証で落ちる (任意のファイルを PR 本文に載せてトークンを漏らす経路を塞ぐため)。`branch` は `^improve/[A-Za-z0-9._-]+$`、`ledger_id` は `^IMP-[0-9]{8}-[0-9a-f]{10}$` に合致し、かつそのブランチの台帳に `proposed` / `pr == null` の行として実在することまで検査される。
+**検証も起票もブランチ名ではなく `head_sha` を対象にする**。ブランチ名で追い続けると、検証が終わってから起票までの間に押された commit が「検証済み」として PR に載る (TOCTOU)。`verify` は `origin/<branch>` が `head_sha` と一致することを確かめてからその SHA を checkout し、`publish` は `gh pr create` の直前と `link-pr` の push 直前に `git ls-remote` で remote の先端を取り直して再確認する。不一致ならそのブランチは起票しない (起票後に判明した場合は PR を閉じて補償する)。**manifest に記録した後、そのブランチに push しないこと**。
+
+> 残る窓: 最後の照合と `gh pr create` の間はごく短いが 0 ではない。塞ぎ切るには `improve/**` への push を Actions integration だけに制限する ruleset が要る (repo 設定なのでコード側では閉じられない — `references/scheduling.md`)。
+
+**PR 本文は環境変数 `BODIES` のディレクトリ直下にだけ書き出す**。後段はそのディレクトリ配下の通常ファイルしか読まず、symlink・`..`・別ディレクトリを指したエントリは検証で落ちる (任意のファイルを PR 本文に載せてトークンを漏らす経路を塞ぐため)。`branch` は `^improve/[A-Za-z0-9._-]+$`、`head_sha` は `^[0-9a-f]{40}$`、`ledger_id` は `^IMP-[0-9]{8}-[0-9a-f]{10}$` に合致し、`ledger_id` はそのブランチの台帳に `proposed` / `pr == null` の行として実在することまで検査される。
 
 **ブランチの差分は allow-list で制限される**。`skills/<target_skill>/**`、`.claude/skills/<target_skill>/**`、`.agents/skills/<target_skill>/**`、`improvements/ledger.jsonl` 以外を含むブランチは検査を実行する前に落とす (reconcile ブランチは `improvements/ledger.jsonl` のみ)。
 
