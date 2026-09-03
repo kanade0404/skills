@@ -1213,6 +1213,129 @@ jobs:
               origin "$verified:refs/heads/$branch"
           }
 
+          # 起票の **後に** 候補ブランチへ commit する経路は、すべてこの関数を通す。
+          # 該当するのは (a) 起票直後の head 再照合で不一致だったとき、(b) link-pr の
+          # 直前の再照合で不一致だったとき、(c) link-pr の commit / push が落ちたとき
+          # の 3 つ。手順を枝ごとに書くと片方だけが直り、**未検証の commit を指した PR
+          # を open のまま残す**枝が生き残る (実際に (b) がそうなっていた) ため、順序と
+          # 判定はここ 1 か所に集約する。
+          #
+          # 引数: branch pr_url head_sha ledger_id observed_hint
+          #       ledger_notes commit_subject close_comment
+          # observed_hint は「呼び出し側が既に観測していた先端」(無ければ空)。
+          # remote は必ずこの関数の中で取り直し、hint はそれが読めなかったときだけ使う。
+          #
+          # 段取り (各段は job summary に記録され、どの段もシークレットを出力しない):
+          #   (1) remote の先端を取り直す。`head_sha` と違えば、**いま観測した値**に
+          #       lease を張って書き戻す。lease が弾かれたときだけ remote を 1 度
+          #       読み直して 1 度だけ再試行する (動かし続ける相手を無限に追いかけて
+          #       force push を繰り返さないため)
+          #   (2) **先端が `head_sha` に戻っているときだけ**、その上に台帳行を 1 commit
+          #       積んで **fast-forward で** push する (force は使わない)。戻せていない
+          #       なら remote は未検証 commit を指したままで、そこへ安全に載せる方法が
+          #       無いので台帳 push ごと飛ばし、その旨を summary に出す
+          #   (3) `gh pr close` を 3 回まで再試行する。**台帳を記録できたかに関わらず
+          #       閉じる** — 未検証の commit を指した PR をレビュー面に残す方が高くつく。
+          #       台帳が `proposed` のまま残っても、次回の Step 0 が head branch の
+          #       **全状態検索**でその PR を見つけて決着させる
+          #   (4) それでも open で、head が `head_sha` でも (2) で積んだ先端でもないなら
+          #       「手動対応が必要」として summary に出し、1 を返す
+          # **台帳を先に push してはいけない**: それ自体が remote の先端を動かすので
+          # (1) の lease が必ず弾かれ、復旧の道が閉じる。逆に (2) の push は自分で
+          # 動かした先端なので、(4) では `head_sha` と並べて受け入れる側に置く。
+          #
+          # restored / ledger_tip は呼び出しの後からも読めるようあえて local にしない
+          # (毎回この関数の先頭で初期化するので前の候補の値は残らない)。
+          compensate_after_create() {
+            local branch="$1" pr_url="$2" head_sha="$3" ledger_id="$4"
+            local observed_hint="$5" ledger_notes="$6" commit_subject="$7" close_comment="$8"
+            local observed_sha fresh_sha pr_head_oid head_is_verified=0
+            restored=0
+            ledger_tip=""
+
+            # 補償(1) 復旧。lease は「いま読んだ先端」に張る — 呼び出し側が観測した
+            # 値は既に古い可能性があるし、経路によってはそもそも観測していない。
+            observed_sha="$(git ls-remote origin "refs/heads/$branch" | cut -f1)" || observed_sha=""
+            [ -n "$observed_sha" ] || observed_sha="$observed_hint"
+            if [ "$observed_sha" = "$head_sha" ]; then
+              restored=1
+              echo "  - 補償(1) 復旧: remote 先端は検証済み SHA (\`$head_sha\`) のまま — 書き戻しは不要" >> "$GITHUB_STEP_SUMMARY"
+            elif restore_branch_to_verified "$branch" "$observed_sha" "$head_sha"; then
+              restored=1
+              echo "  - 補償(1) 復旧: \`$branch\` を \`$head_sha\` へ戻した" >> "$GITHUB_STEP_SUMMARY"
+            else
+              fresh_sha="$(git ls-remote origin "refs/heads/$branch" | cut -f1)" || fresh_sha=""
+              if [ -n "$fresh_sha" ] && [ "$fresh_sha" != "$observed_sha" ] &&
+                 restore_branch_to_verified "$branch" "$fresh_sha" "$head_sha"; then
+                restored=1
+                observed_sha="$fresh_sha"
+                echo "  - 補償(1) 復旧: lease が古かったため remote を読み直して再試行し、\`$head_sha\` へ戻した (\`$fresh_sha\`)" >> "$GITHUB_STEP_SUMMARY"
+              else
+                echo "  - 補償(1) 復旧: **書き戻せなかった** (読み直した後もさらに動いた可能性)" >> "$GITHUB_STEP_SUMMARY"
+              fi
+            fi
+
+            # 補償(2) 台帳。復旧できたときだけ、検証済み SHA の上に 1 commit 積む。
+            if [ "$restored" != 1 ]; then
+              echo "  - 補償(2) 台帳: 復旧できていないため台帳 commit は push しない" \
+                   "(未検証の先端の上に載せない)。**次回の Step 0 が head branch の" \
+                   "全状態検索で決着させる**" >> "$GITHUB_STEP_SUMMARY"
+            elif [ -z "$ledger_id" ]; then
+              echo "  - 補償(2) 台帳: 対象行なし (台帳行を持たない候補)" >> "$GITHUB_STEP_SUMMARY"
+            elif git checkout --force -B "$branch" "$head_sha" &&
+               python3 "$TRUSTED_LEDGER" --ledger improvements/ledger.jsonl link-pr \
+                 --id "$ledger_id" --pr "$pr_url" --keep-status &&
+               python3 "$TRUSTED_LEDGER" --ledger improvements/ledger.jsonl set-status \
+                 --id "$ledger_id" --status rejected --notes "$ledger_notes" &&
+               git -c user.name="github-actions[bot]" \
+                   -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+                   commit -m "$commit_subject" improvements/ledger.jsonl &&
+               git push origin "$branch"; then
+              ledger_tip="$(git rev-parse HEAD)"
+              echo "  - 補償(2) 台帳: rejected を記録した (先端 \`$ledger_tip\`)" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "  - 補償(2) 台帳: **記録できなかった。次回の Step 0 が head branch の" \
+                   "全状態検索で決着させる** (それでも下の close は行う)" >> "$GITHUB_STEP_SUMMARY"
+            fi
+
+            # 補償(3) close。一過性の API エラーで「検証していない commit を指した
+            # PR が open のまま」になるのを避けるため、短い backoff で 3 回まで試す。
+            close_pr_with_retry "$pr_url" "$close_comment" || true
+
+            # 補償(4) 最終状態を確定する。PR head を読み直し、**検証済み SHA か、
+            # その上に台帳行だけを積んだ先端 (ledger_tip)** なら「検証済みの中身を
+            # 指している」として扱う。取得できない場合は不一致として扱う
+            # (fail-closed)。
+            pr_head_oid="$(gh pr view "$pr_url" --json headRefOid --jq '.headRefOid')" || pr_head_oid=""
+            if [ -n "$pr_head_oid" ] && { [ "$pr_head_oid" = "$head_sha" ] \
+               || { [ -n "$ledger_tip" ] && [ "$pr_head_oid" = "$ledger_tip" ]; }; }; then
+              head_is_verified=1
+            fi
+            # ここまでで open かつ未検証の commit を指したままなら、自動では
+            # 手が尽きている。人間が閉じられるように URL と両方の SHA を summary に出す。
+            if pr_is_open "$pr_url" && [ "$head_is_verified" != 1 ]; then
+              {
+                echo "#### 手動対応が必要 (unverified PR left open)"
+                echo ""
+                echo "- PR: $pr_url"
+                echo "- 観測した先端: \`${observed_sha:-取得できず}\` (**検証していない commit**)"
+                echo "- 補償後の PR head: \`${pr_head_oid:-取得できず}\`"
+                echo "- 検証済み SHA: \`$head_sha\`"
+                echo "- ブランチ: \`$branch\` / 実行ログ: $RUN_URL"
+                echo ""
+                echo "検証済み SHA への書き戻しと close の両方が失敗した。**この PR を手で閉じ**、" \
+                     "improve/** を動かせた経路 (ruleset の bypass actor / App の鍵) を調べること。"
+              } >> "$GITHUB_STEP_SUMMARY"
+              return 1
+            fi
+            if pr_is_open "$pr_url"; then
+              echo "  - $pr_url は open のまま残ったが、head (\`$pr_head_oid\`) は検証済みの内容を指している (手で閉じること)" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "  - 補償: $pr_url を閉じた" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            return 0
+          }
+
           while IFS= read -r line; do
             [ -n "$line" ] || continue
             branch="$(printf '%s' "$line" | jq -r '.branch // ""')"
@@ -1288,16 +1411,11 @@ jobs:
             # improve/** への push は ruleset でこの App 1 件だけに絞られ、workflow
             # レベルの concurrency (group: skill-improver) が同じ App の run 同士の
             # 重なりも塞ぐ。したがってここでブランチが動いたということは、**App の鍵で
-            # 手動 push した運用者がいる**ことをほぼ意味する。下の補償はその 1 ケースを
-            # 前提に、**復旧 → 台帳 → close** の順で進める:
-            #   (1) 観測した先端に lease を張ってブランチを検証済み SHA へ戻す
-            #       (lease が古ければ remote を 1 度読み直して 1 度だけ再試行)
-            #   (2) 戻せたときだけ、その上に台帳行を 1 commit 積んで fast-forward で push
-            #   (3) close を 3 回まで再試行
-            #   (4) それでも open かつ head が「検証済み SHA でも (2) の先端でも」ない
-            #       なら summary に「手動対応が必要」として出す
-            # **台帳を先に push してはいけない**: それ自体が remote 先端を動かすので、
-            # 起票直後に観測した SHA に張った lease が必ず弾かれ、復旧が毎回失敗する。
+            # 手動 push した運用者がいる**ことをほぼ意味する。補償はその 1 ケースを
+            # 前提に **復旧 → 台帳 → close → 最終判定** の順で進む —
+            # 手順そのものは compensate_after_create に集約してあり、起票後に候補
+            # ブランチへ commit する 3 経路 (ここ / link-pr 直前の再照合 / link-pr の
+            # commit・push 失敗) がすべて同じ関数を通る。
             # **窓そのものは残る**: ls-remote / gh pr create / gh pr view は 3 つの
             # 別々の API 呼び出しで、その隙間を GitHub 側で原子化する手段は無い。
             # PR head に SHA や tag のような不変 ref を指定できない以上、この窓を
@@ -1306,103 +1424,13 @@ jobs:
             if [ "$pr_head_oid" != "$head_sha" ]; then
               failed=1
               head_moved=$((head_moved + 1))
-              observed_sha="$pr_head_oid"
-              echo "- \`$branch\`: 起票後の PR head (\`${observed_sha:-取得できず}\`) が検証済み SHA (\`$head_sha\`) と不一致 — 補償に入る ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
-              close_comment="検証済み SHA ($head_sha) と PR の head (${observed_sha:-取得できず}) が一致しないため自動的に閉じました。検証後にブランチが動いています — 実行ログ: $RUN_URL"
-
-              # 補償(1) 復旧。**まずブランチの中身を検証済みに戻す**。PR head は必ず
-              # 可変な branch なので、close が落ちても「PR が指す中身」が検証済みで
-              # あれば未検証 commit をレビュー面に晒さずに済む。書き戻す先は
-              # workflow 自身が作った improve/* ブランチだけで、lease は観測した
-              # 先端に張る (その後さらに動いていれば失敗して、知らない commit を
-              # 握り潰さない)。lease が弾かれた場合だけ remote を 1 度読み直し、
-              # 新しい値で 1 度だけ再試行する — 無限に追いかけると、動かし続ける
-              # 相手に対して force push を繰り返すことになるため 1 回で止める。
-              restored=0
-              if restore_branch_to_verified "$branch" "$observed_sha" "$head_sha"; then
-                restored=1
-              else
-                fresh_sha="$(git ls-remote origin "refs/heads/$branch" | cut -f1)" || fresh_sha=""
-                if [ -n "$fresh_sha" ] && [ "$fresh_sha" != "$observed_sha" ] &&
-                   restore_branch_to_verified "$branch" "$fresh_sha" "$head_sha"; then
-                  restored=1
-                  echo "  - 補償(1) 復旧: lease が古かったため remote を読み直して再試行した (\`$fresh_sha\`)" >> "$GITHUB_STEP_SUMMARY"
-                fi
-              fi
-              if [ "$restored" = 1 ]; then
-                echo "  - 補償(1) 復旧: \`$branch\` を \`$head_sha\` へ戻した" >> "$GITHUB_STEP_SUMMARY"
-              else
-                echo "  - 補償(1) 復旧: **書き戻せなかった** (読み直した後もさらに動いた可能性)" >> "$GITHUB_STEP_SUMMARY"
-              fi
-
-              # 補償(2) 台帳。**復旧できたときだけ**行う。remote 先端が検証済み SHA に
-              # 戻っている状態でその上に 1 commit 積むので、push は通常の
-              # fast-forward で足りる (force は使わない)。復旧できていないなら
-              # remote は未検証 commit を指したままで、そこへ安全に載せる方法が
-              # 無いので台帳 push ごと飛ばす — 台帳が proposed のまま残っても、
-              # 次回の Step 0 が head branch の全状態検索で決着させられる。
-              # 積んだ先端 (ledger_tip) は「検証済みの中身 + 台帳行」なので、
-              # 下の最終判定では head_sha と同じく受け入れる (自分の push を
-              # 「head が動いた」と読み違えないため)。
-              ledger_tip=""
-              if [ "$restored" != 1 ]; then
-                echo "  - 補償(2) 台帳: 復旧できていないため台帳 commit は push しない" \
-                     "(未検証の先端の上に載せない)。**次回の Step 0 が head branch の" \
-                     "全状態検索で決着させる**" >> "$GITHUB_STEP_SUMMARY"
-              elif [ -z "$ledger_id" ]; then
-                echo "  - 補償(2) 台帳: 対象行なし (台帳行を持たない候補)" >> "$GITHUB_STEP_SUMMARY"
-              elif git checkout --force -B "$branch" "$head_sha" &&
-                 python3 "$TRUSTED_LEDGER" --ledger improvements/ledger.jsonl link-pr \
-                   --id "$ledger_id" --pr "$pr_url" --keep-status &&
-                 python3 "$TRUSTED_LEDGER" --ledger improvements/ledger.jsonl set-status \
-                   --id "$ledger_id" --status rejected \
-                   --notes "PR head moved after verification in $RUN_URL; PR closed by compensation" &&
-                 git -c user.name="github-actions[bot]" \
-                     -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-                     commit -m "chore(ledger): record moved PR head for $ledger_id" \
-                     improvements/ledger.jsonl &&
-                 git push origin "$branch"; then
-                ledger_tip="$(git rev-parse HEAD)"
-                echo "  - 補償(2) 台帳: rejected を記録した (先端 \`$ledger_tip\`)" >> "$GITHUB_STEP_SUMMARY"
-              else
-                echo "  - 補償(2) 台帳: **記録できなかった。次回の Step 0 が head branch の" \
-                     "全状態検索で決着させる** (それでも下の close は行う)" >> "$GITHUB_STEP_SUMMARY"
-              fi
-
-              # 補償(3) close。一過性の API エラーで「検証していない commit を指した
-              # PR が open のまま」になるのを避けるため、短い backoff で 3 回まで試す。
-              close_pr_with_retry "$pr_url" "$close_comment" || true
-
-              # 補償(4) 最終状態を確定する。PR head を読み直し、**検証済み SHA か、
-              # その上に台帳行だけを積んだ先端 (ledger_tip)** なら「検証済みの中身を
-              # 指している」として扱う。取得できない場合は不一致として扱う
-              # (fail-closed)。
-              pr_head_oid="$(gh pr view "$pr_url" --json headRefOid --jq '.headRefOid')" || pr_head_oid=""
-              head_is_verified=0
-              if [ -n "$pr_head_oid" ] && { [ "$pr_head_oid" = "$head_sha" ] \
-                 || { [ -n "$ledger_tip" ] && [ "$pr_head_oid" = "$ledger_tip" ]; }; }; then
-                head_is_verified=1
-              fi
-              # ここまでで open かつ未検証の commit を指したままなら、自動では
-              # 手が尽きている。人間が閉じられるように URL と両方の SHA を summary に出す。
-              if pr_is_open "$pr_url" && [ "$head_is_verified" != 1 ]; then
-                {
-                  echo "#### 手動対応が必要 (unverified PR left open)"
-                  echo ""
-                  echo "- PR: $pr_url"
-                  echo "- 観測した PR head: \`${observed_sha:-取得できず}\` (**検証していない commit**)"
-                  echo "- 補償後の PR head: \`${pr_head_oid:-取得できず}\`"
-                  echo "- 検証済み SHA: \`$head_sha\`"
-                  echo "- ブランチ: \`$branch\` / 実行ログ: $RUN_URL"
-                  echo ""
-                  echo "検証済み SHA への書き戻しと close の両方が失敗した。**この PR を手で閉じ**、" \
-                       "improve/** を動かせた経路 (ruleset の bypass actor / App の鍵) を調べること。"
-                } >> "$GITHUB_STEP_SUMMARY"
-              elif pr_is_open "$pr_url"; then
-                echo "  - $pr_url は open のまま残ったが、head (\`$pr_head_oid\`) は検証済みの内容を指している (手で閉じること)" >> "$GITHUB_STEP_SUMMARY"
-              else
-                echo "  - 補償: $pr_url を閉じた" >> "$GITHUB_STEP_SUMMARY"
-              fi
+              echo "- \`$branch\`: 起票後の PR head (\`${pr_head_oid:-取得できず}\`) が検証済み SHA (\`$head_sha\`) と不一致 — 補償に入る ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
+              compensate_after_create "$branch" "$pr_url" "$head_sha" "$ledger_id" \
+                "$pr_head_oid" \
+                "PR head moved after verification in $RUN_URL; PR closed by compensation" \
+                "chore(ledger): record moved PR head for $ledger_id" \
+                "検証済み SHA ($head_sha) と PR の head (${pr_head_oid:-取得できず}) が一致しないため自動的に閉じました。検証後にブランチが動いています — 実行ログ: $RUN_URL" \
+                || true
               echo "::endgroup::"; continue
             fi
 
@@ -1415,34 +1443,21 @@ jobs:
             # ledger.jsonl の pr / status が誰の PR にも入らず、次回の Step 0 が
             # 突き合わせる相手を失う (改善ループが閉じない)。
             # commit を積む前にもう一度先端を確かめる (起票との間にも窓がある)。
-            # 不一致でも「閉じるだけ」にはしない — 台帳に記録できたときだけ閉じる
-            # (link-pr 失敗時と同じ規律。PR からも台帳からも辿れない状態を作らない)。
+            # 不一致なら、**起票直後に head が動いていた場合とまったく同じ補償**に
+            # 入る (compensate_after_create)。以前はここだけが「検証していない remote の
+            # 上へ台帳 commit を non-fast-forward で push しようとし、失敗したら
+            # close もしない」経路になっていて、未検証の head を指した PR が open の
+            # まま残りえた — 復旧を先に置き、close まで必ず通す。
             remote_sha="$(git ls-remote origin "refs/heads/$branch" | cut -f1)"
             if [ "$remote_sha" != "$head_sha" ]; then
               failed=1
-              echo "- \`$branch\`: link-pr 直前に verified SHA と remote HEAD が不一致 (検証後に更新された) ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
-              if [ -n "$ledger_id" ] &&
-                 git checkout --force -B "$branch" "$head_sha" &&
-                 python3 "$TRUSTED_LEDGER" --ledger improvements/ledger.jsonl link-pr \
-                   --id "$ledger_id" --pr "$pr_url" --keep-status &&
-                 python3 "$TRUSTED_LEDGER" --ledger improvements/ledger.jsonl set-status \
-                   --id "$ledger_id" --status rejected \
-                   --notes "remote head moved after verification in $RUN_URL; PR closed by compensation" &&
-                 git -c user.name="github-actions[bot]" \
-                     -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-                     commit -m "chore(ledger): record moved head for $ledger_id" \
-                     improvements/ledger.jsonl &&
-                 git push origin "$branch"; then
-                if gh pr close "$pr_url" --comment \
-                     "検証済み SHA とブランチ先端が一致しないため自動的に閉じました。台帳には rejected として記録済みです — 実行ログ: $RUN_URL"; then
-                  echo "  - 補償: 台帳に rejected を記録して $pr_url を閉じた" >> "$GITHUB_STEP_SUMMARY"
-                else
-                  echo "  - **補償の close に失敗: $pr_url が open のまま (台帳は rejected)。手で閉じること**" >> "$GITHUB_STEP_SUMMARY"
-                fi
-              else
-                echo "  - **台帳に記録できなかったため $pr_url は open のまま残す (修復対象)。" \
-                     "次回の Step 0 が proposed / pr=null の行として拾う**" >> "$GITHUB_STEP_SUMMARY"
-              fi
+              echo "- \`$branch\`: link-pr 直前に verified SHA と remote HEAD が不一致 (検証後に更新された) — 補償に入る ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
+              compensate_after_create "$branch" "$pr_url" "$head_sha" "$ledger_id" \
+                "$remote_sha" \
+                "remote head moved after verification in $RUN_URL; PR closed by compensation" \
+                "chore(ledger): record moved head for $ledger_id" \
+                "検証済み SHA ($head_sha) とブランチ先端 (${remote_sha:-取得できず}) が一致しないため自動的に閉じました。検証後にブランチが動いています — 実行ログ: $RUN_URL" \
+                || true
               echo "::endgroup::"; continue
             fi
             # 検証した SHA の上に commit する (ブランチ名から辿り直さない)。
@@ -1459,35 +1474,18 @@ jobs:
             fi
 
             # 紐付けに失敗したまま PR を残すと、台帳から辿れない PR がレビュー待ちに
-            # 積まれる。ただし **PR を閉じる前に、閉じたという事実を台帳に載せる** —
-            # 先に close だけすると「PR は closed、台帳は proposed / pr=null」という、
-            # どちらからも辿れない状態が残る。台帳への記録が push できたときだけ
-            # close し、できなければ PR は open のまま修復対象として残す。
+            # 積まれる。ここも他の 2 経路と同じ補償を通す — remote が動いていれば
+            # まず検証済み SHA へ書き戻し、戻せたときだけ台帳を fast-forward で積み、
+            # **台帳を記録できたかに関わらず close する**。台帳が proposed のまま
+            # 残っても、次回の Step 0 が head branch の全状態検索で決着させる。
             failed=1
-            echo "- \`$branch\`: link-pr の commit / push に失敗 ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
-            remote_sha="$(git ls-remote origin "refs/heads/$branch" | cut -f1)"
-            if [ "$remote_sha" = "$head_sha" ] &&
-               git checkout --force -B "$branch" "$head_sha" &&
-               python3 "$TRUSTED_LEDGER" --ledger improvements/ledger.jsonl link-pr \
-                 --id "$ledger_id" --pr "$pr_url" --keep-status &&
-               python3 "$TRUSTED_LEDGER" --ledger improvements/ledger.jsonl set-status \
-                 --id "$ledger_id" --status rejected \
-                 --notes "link-pr failed in $RUN_URL; PR closed by compensation" &&
-               git -c user.name="github-actions[bot]" \
-                   -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-                   commit -m "chore(ledger): record failed link-pr for $ledger_id" \
-                   improvements/ledger.jsonl &&
-               git push origin "$branch"; then
-              if gh pr close "$pr_url" --comment \
-                   "台帳への link-pr が失敗したため自動的に閉じました。台帳には rejected として記録済みです。ブランチは残っています — 実行ログ: $RUN_URL"; then
-                echo "  - 補償: 台帳に rejected を記録して $pr_url を閉じた" >> "$GITHUB_STEP_SUMMARY"
-              else
-                echo "  - **補償の close に失敗: $pr_url が open のまま (台帳は rejected)。手で閉じること**" >> "$GITHUB_STEP_SUMMARY"
-              fi
-            else
-              echo "  - **台帳に記録できなかったため $pr_url は open のまま残す (修復対象)。" \
-                   "次回の Step 0 が proposed / pr=null の行として拾う**" >> "$GITHUB_STEP_SUMMARY"
-            fi
+            echo "- \`$branch\`: link-pr の commit / push に失敗 — 補償に入る ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
+            compensate_after_create "$branch" "$pr_url" "$head_sha" "$ledger_id" \
+              "" \
+              "link-pr failed in $RUN_URL; PR closed by compensation" \
+              "chore(ledger): record failed link-pr for $ledger_id" \
+              "台帳への link-pr が失敗したため自動的に閉じました。ブランチは残っています — 実行ログ: $RUN_URL" \
+              || true
             echo "::endgroup::"
           done < "$PASSED"
           echo "head_moved=$head_moved" >> "$GITHUB_OUTPUT"

@@ -310,30 +310,50 @@ commit SHA のような不変 ref を渡すことはできず、PR は常に「�
 `concurrency` (`group: skill-improver` / `cancel-in-progress: false`) が同じ App の
 run 同士の重なりも塞ぐ。したがって公開中にブランチが動いたということは、**App の鍵で
 手動 push した運用者がいる**ことをほぼ意味する。`publish` はその 1 ケースを前提に、
-**復旧 → 台帳 → close** の順で補償する (各段は job summary に記録され、**どの段も
-トークンやシークレットを出力しない** — 扱うのは PR の URL と SHA だけ):
+**復旧 → 台帳 → close → 最終判定** の順で補償する。
 
-1. **まずブランチの側を検証済みの内容に戻す** —
-   `git push --force-with-lease=refs/heads/<branch>:<観測した SHA> origin <head_sha>:refs/heads/<branch>`。
+**起票の後に候補ブランチへ commit する経路は、すべてこの 1 つの手順を通る**
+(`publish` step の `compensate_after_create` 関数)。該当するのは 3 つ:
+
+| 経路 | 入口 | run を赤にする出口 |
+|---|---|---|
+| (a) 起票直後の head 再照合で不一致 | `gh pr view --json headRefOid` != `head_sha` | `head_moved` output |
+| (b) `link-pr` の直前の再照合で不一致 | `git ls-remote` != `head_sha` | publish step の終了コード |
+| (c) `link-pr` の commit / push が失敗 | commit / push が非 0 | publish step の終了コード |
+
+**枝ごとに手順を書かない**。分けて書くと片方だけが直り、**未検証の commit を指した
+PR を open のまま残す**枝が生き残る — 実際に (b) は「検証していない remote の上へ
+台帳 commit を non-fast-forward で push しようとし、失敗したら close もしない」経路に
+なっていた。各段は job summary に記録され、**どの段もトークンやシークレットを
+出力しない** (扱うのは PR の URL と SHA だけ):
+
+1. **まずブランチの側を検証済みの内容に戻す** — 補償に入った時点で
+   `git ls-remote origin refs/heads/<branch>` を**引き直し**、`head_sha` と違えば
+   `git push --force-with-lease=refs/heads/<branch>:<いま読んだ SHA> origin <head_sha>:refs/heads/<branch>`。
    書き戻す先は **この workflow 自身が作った `improve/*` ブランチだけ**で、lease を
-   「起票直後に観測した先端」に張るので、**その後さらに動いていれば push は失敗し、
-   知らない commit を握り潰さない**。lease が弾かれたときだけ `git ls-remote` で
-   remote の先端を **1 度だけ**読み直し、新しい値で **1 度だけ**再試行する (動かし
-   続ける相手を無限に追いかけて force push を繰り返さないため)
+   「いま読んだ先端」に張るので、**その後さらに動いていれば push は失敗し、
+   知らない commit を握り潰さない**。lease が弾かれたときだけ remote の先端を
+   **1 度だけ**読み直し、新しい値で **1 度だけ**再試行する (動かし続ける相手を
+   無限に追いかけて force push を繰り返さないため)。`ls-remote` 自体が読めなければ
+   呼び出し側が既に観測していた SHA (a なら `headRefOid`) を使い、それも無ければ
+   lease を張れないので復旧は失敗として扱う。先端が既に `head_sha` なら
+   ((c) の典型) 書き戻しは不要で、そのまま 2 へ進む
 2. **戻せたときだけ、台帳に `rejected` を記録する** — `link-pr --keep-status` +
-   `set-status --status rejected --notes "PR head moved after verification in <run>"`
-   を `head_sha` の上に 1 commit 積み、**通常の fast-forward で push する** (1 で
-   remote は `head_sha` に戻っているので force は要らない)。1 が失敗したなら remote は
-   未検証 commit を指したままで、そこへ安全に載せる方法が無いので **台帳 push ごと
-   飛ばす** — その旨を summary に出し、台帳が `proposed` のまま残っても次回の Step 0 が
-   head branch の全状態検索で決着させる
+   `set-status --status rejected --notes "<経路ごとの理由> in <run>"` を `head_sha` の
+   上に 1 commit 積み、**通常の fast-forward で push する** (1 で remote は `head_sha`
+   に戻っているので force は要らない)。1 が失敗したなら remote は未検証 commit を
+   指したままで、そこへ安全に載せる方法が無いので **台帳 push ごと飛ばす** — その旨を
+   summary に出し、台帳が `proposed` のまま残っても次回の Step 0 が head branch の
+   全状態検索で決着させる
 3. **`gh pr close` を最大 3 回、5 秒 / 10 秒の backoff で試す** — 一過性の API
    エラーで未検証の PR が open のまま残るのを防ぐ。`gh pr close` は既に閉じている
-   PR には成功を返すので、再試行しても二重には閉じない
+   PR には成功を返すので、再試行しても二重には閉じない。**2 を記録できたかに関わらず
+   閉じる**: 台帳が `proposed` のまま残っても Step 0 の全状態検索が回収できるのに対し、
+   未検証の commit を指した PR をレビュー面に残す方が高くつくため
 4. **それでも open で、かつ `headRefOid` が `head_sha` でも 2 で積んだ先端でもない
    なら**、PR URL・観測した SHA・補償後の SHA・検証済み SHA・ブランチ名を job summary の
    「手動対応が必要 (unverified PR left open)」見出しに書き出す。加えて (1〜3 の成否に
-   関わらず) `head_moved` を立てて run を赤で終える
+   関わらず) run は赤で終わる (上の表の出口)
 
 **台帳 commit を先に push してはいけない** — それ自体が remote の先端を動かすので、
 起票直後に観測した SHA に張った lease が必ず弾かれ、1 の復旧が毎回失敗する。逆に
@@ -347,20 +367,12 @@ ruleset と `concurrency` で「動かせる者」を App 1 件に絞り、動�
 かけるところが上限である。ここまで来た run は必ず赤になるので、窓が実際に踏まれたか
 どうかは run の色と summary で分かる。
 
-**PR 起票後に `link-pr` が落ちた場合の補償**: 台帳から辿れない PR をレビュー待ちに
-残さないため `publish` がその PR を閉じるが、**閉じる前に「閉じた」という事実を台帳に
-載せる** — 先に close だけすると「PR は closed、台帳は `proposed` / `pr == null`」と
-いう、どちらからも辿れない状態が残る。順序は (1) そのブランチで `link-pr` と
-`set-status --status rejected --notes "link-pr failed: ..."` を commit / push、
-(2) 成功したときだけ `gh pr close`。(1) が失敗したら **PR は open のまま残し**、
-job summary に修復対象として記録する (次回の Step 0 が head branch
-`improve/<skill>-<id>` の PR を**全状態で**引いて回収する)。
-
-**head の不一致だけは順序が違う**: 台帳より先にブランチの復旧をやる。PR head は必ず
+**台帳より先にブランチの復旧をやる**のは 3 経路すべてで共通である。PR head は必ず
 可変な branch なので、**中身を検証済みに戻せていれば close が落ちても未検証 commit を
-レビュー面に晒さずに済む**からで、逆に台帳を先に push すると lease が壊れて復旧の道が
-閉じる。台帳が `proposed` のまま残っても、Step 0 の全状態検索がその PR を見つけて
-`rejected` として決着させられる (`references/ledger.md`)。
+レビュー面に晒さずに済む**。逆に台帳を先に push すると lease が壊れて復旧の道が閉じる。
+台帳が `proposed` / `pr == null` のまま残っても、Step 0 の全状態検索がその PR を
+見つけて `rejected` として決着させられる (`references/ledger.md`) — 補償で閉じた PR は
+後から人間に reopen / merge されうるので、**open な PR の一覧だけを見ると取りこぼす**。
 
 CI runner は `trigger-evals.yml` と同じく `python3` を直接呼ぶ (`uv` が無い runner
 前提) — ローカル / agent 実行 (Step 5 やこの下の Route 2) では `uv run python3` を使う。
