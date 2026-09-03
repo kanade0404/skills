@@ -19,6 +19,8 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 
+import yaml
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 GATE = REPO_ROOT / ".github" / "workflows" / "review-response-gate.yml"
 HEARTBEAT = REPO_ROOT / ".github" / "workflows" / "gate-heartbeat.yml"
@@ -389,6 +391,29 @@ class SkillImproverRulesetPreflightTest(unittest.TestCase):
         # mistaken for B (and vice versa).
         self.assertFalse(self.accepts_freeze(self.create_ruleset()))
         self.assertFalse(self.accepts_create(self.freeze_ruleset()))
+
+
+class SkillImproverJobEnvContextTest(unittest.TestCase):
+    """`jobs.<job_id>.env` only has github/inputs/matrix/needs/secrets/
+    strategy/vars available — runner, steps, env and job are not, and
+    GitHub rejects the whole workflow at load time if any job-level env
+    value references one of them (as `runner.temp` did for 24 keys across
+    all five jobs, before they moved into a first `Resolve scratch paths`
+    step)."""
+
+    FORBIDDEN = ("${{ runner.", "${{ steps.", "${{ env.", "${{ job.")
+
+    def test_job_level_env_never_references_unavailable_contexts(self) -> None:
+        workflow = yaml.safe_load(SKILL_IMPROVER.read_text(encoding="utf-8"))
+        for job_id, job in workflow["jobs"].items():
+            for key, value in job.get("env", {}).items():
+                if not isinstance(value, str):
+                    continue
+                for forbidden in self.FORBIDDEN:
+                    self.assertNotIn(
+                        forbidden, value,
+                        f"jobs.{job_id}.env.{key} references a context "
+                        f"unavailable at job-level env: {value!r}")
 
 
 if __name__ == "__main__":

@@ -128,14 +128,19 @@ jobs:
       contents: read
       # id-token は付けない: 認証は claude_code_oauth_token 経由で、OIDC は使わない
 
-    env:
-      # agent が「検証待ちのブランチ」を書き出す先
-      WORKDIR: ${{ runner.temp }}/skill-improver
-      MANIFEST: ${{ runner.temp }}/skill-improver/prs.jsonl
-      PR_INDEX: ${{ runner.temp }}/skill-improver/pr-index.json
-      BODIES: ${{ runner.temp }}/skill-improver/bodies
-
     steps:
+      # runner context は jobs.<job_id>.env では参照できないため、この job の
+      # env が使っていたパスは最初の step で $GITHUB_ENV に書き出す
+      # (以降の step からは今まで通り env.WORKDIR 等 / $WORKDIR 等で読める)。
+      - name: Resolve scratch paths
+        run: |
+          {
+            echo "WORKDIR=$RUNNER_TEMP/skill-improver"
+            echo "MANIFEST=$RUNNER_TEMP/skill-improver/prs.jsonl"
+            echo "PR_INDEX=$RUNNER_TEMP/skill-improver/pr-index.json"
+            echo "BODIES=$RUNNER_TEMP/skill-improver/bodies"
+          } >> "$GITHUB_ENV"
+
       # --- 実行アイデンティティ (GitHub App 必須) ---------------------------
       # ブランチの作成と PR 起票は専用の GitHub App として行う。GITHUB_TOKEN は
       # ruleset の bypass actor になれないため、GITHUB_TOKEN で走らせる限り
@@ -575,19 +580,27 @@ jobs:
       secret_hit: ${{ steps.push.outputs.secret_hit }}
 
     env:
-      HANDOFF: ${{ runner.temp }}/handoff
-      HANDOFF_MANIFEST: ${{ runner.temp }}/handoff/prs.jsonl
-      HANDOFF_BODIES: ${{ runner.temp }}/handoff/bodies
-      BUNDLE: ${{ runner.temp }}/handoff/candidates.bundle
-      WORK: ${{ runner.temp }}/stage
-      BUNDLE_REFS: ${{ runner.temp }}/stage/bundle-refs.tsv
-      MANIFEST: ${{ runner.temp }}/stage/prs.jsonl
-      PR_INDEX: ${{ runner.temp }}/stage/pr-index.json
       GUARD: .github/scripts/manifest_guard.py
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
     steps:
+      # runner context は jobs.<job_id>.env では参照できないため、この job の
+      # env が使っていたパスは最初の step で $GITHUB_ENV に書き出す
+      # (以降の step からは今まで通り env.HANDOFF 等 / $HANDOFF 等で読める)。
+      - name: Resolve scratch paths
+        run: |
+          {
+            echo "HANDOFF=$RUNNER_TEMP/handoff"
+            echo "HANDOFF_MANIFEST=$RUNNER_TEMP/handoff/prs.jsonl"
+            echo "HANDOFF_BODIES=$RUNNER_TEMP/handoff/bodies"
+            echo "BUNDLE=$RUNNER_TEMP/handoff/candidates.bundle"
+            echo "WORK=$RUNNER_TEMP/stage"
+            echo "BUNDLE_REFS=$RUNNER_TEMP/stage/bundle-refs.tsv"
+            echo "MANIFEST=$RUNNER_TEMP/stage/prs.jsonl"
+            echo "PR_INDEX=$RUNNER_TEMP/stage/pr-index.json"
+          } >> "$GITHUB_ENV"
+
       - name: Checkout the triggering commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -993,16 +1006,24 @@ jobs:
     name: verify (${{ matrix.idx }})
 
     env:
-      WORKDIR: ${{ runner.temp }}/skill-improver
-      MANIFEST: ${{ runner.temp }}/skill-improver/prs.jsonl
-      PR_INDEX: ${{ runner.temp }}/skill-improver/pr-index.json
-      BODIES: ${{ runner.temp }}/skill-improver/bodies
-      TRUSTED_LEDGER: ${{ runner.temp }}/trusted-ledger.py
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       IDX: ${{ matrix.idx }}
 
     steps:
+      # runner context は jobs.<job_id>.env では参照できないため、この job の
+      # env が使っていたパスは最初の step で $GITHUB_ENV に書き出す
+      # (以降の step からは今まで通り env.WORKDIR 等 / $WORKDIR 等で読める)。
+      - name: Resolve scratch paths
+        run: |
+          {
+            echo "WORKDIR=$RUNNER_TEMP/skill-improver"
+            echo "MANIFEST=$RUNNER_TEMP/skill-improver/prs.jsonl"
+            echo "PR_INDEX=$RUNNER_TEMP/skill-improver/pr-index.json"
+            echo "BODIES=$RUNNER_TEMP/skill-improver/bodies"
+            echo "TRUSTED_LEDGER=$RUNNER_TEMP/trusted-ledger.py"
+          } >> "$GITHUB_ENV"
+
       # fetch-depth: 0 で全 remote head を取り込むので、この job 中に追加の
       # ネットワークアクセス (= 資格情報) は要らない。origin/* のローカル ref だけで
       # 候補ブランチを checkout できる。
@@ -1157,12 +1178,20 @@ jobs:
       actions: read
 
     env:
-      WORKDIR: ${{ runner.temp }}/skill-improver
-      MANIFEST: ${{ runner.temp }}/skill-improver/prs.jsonl
-      PASSED: ${{ runner.temp }}/skill-improver/passed.jsonl
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
     steps:
+      # runner context は jobs.<job_id>.env では参照できないため、この job の
+      # env が使っていたパスは最初の step で $GITHUB_ENV に書き出す
+      # (以降の step からは今まで通り env.WORKDIR 等 / $WORKDIR 等で読める)。
+      - name: Resolve scratch paths
+        run: |
+          {
+            echo "WORKDIR=$RUNNER_TEMP/skill-improver"
+            echo "MANIFEST=$RUNNER_TEMP/skill-improver/prs.jsonl"
+            echo "PASSED=$RUNNER_TEMP/skill-improver/passed.jsonl"
+          } >> "$GITHUB_ENV"
+
       # stage が上げた manifest (= 候補コードが 1 行も動く前の状態)。
       # bodies/ もこちらから取る — verify 側の成果物は信用しない。
       - name: Download the manifest
@@ -1263,14 +1292,22 @@ jobs:
       pull-requests: write
 
     env:
-      WORKDIR: ${{ runner.temp }}/skill-improver
-      BODIES: ${{ runner.temp }}/skill-improver/bodies
-      PASSED: ${{ runner.temp }}/skill-improver/passed.jsonl
-      TRUSTED_GUARD: ${{ runner.temp }}/trusted-guard.py
       BASE_BRANCH: ${{ github.event.repository.default_branch }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
     steps:
+      # runner context は jobs.<job_id>.env では参照できないため、この job の
+      # env が使っていたパスは最初の step で $GITHUB_ENV に書き出す
+      # (以降の step からは今まで通り env.WORKDIR 等 / $WORKDIR 等で読める)。
+      - name: Resolve scratch paths
+        run: |
+          {
+            echo "WORKDIR=$RUNNER_TEMP/skill-improver"
+            echo "BODIES=$RUNNER_TEMP/skill-improver/bodies"
+            echo "PASSED=$RUNNER_TEMP/skill-improver/passed.jsonl"
+            echo "TRUSTED_GUARD=$RUNNER_TEMP/trusted-guard.py"
+          } >> "$GITHUB_ENV"
+
       # --- 実行アイデンティティ (GitHub App 必須) ---------------------------
       # ブランチの作成と PR 起票は専用の GitHub App として行う。GITHUB_TOKEN は
       # ruleset の bypass actor になれないため、GITHUB_TOKEN で走らせる限り
