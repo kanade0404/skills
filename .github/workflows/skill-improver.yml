@@ -109,9 +109,16 @@ jobs:
             - **PR は作らない** (workflow モードでは gh pr create は使えない)。
               改善ブランチを push したら、環境変数 MANIFEST のファイルに 1 行 1 JSON で
               追記する: {"branch": "improve/<skill>-<finding-id>", "title": "<PR title>",
-              "body_file": "<PR 本文を書き出したファイルの絶対パス>"}。本文ファイルは
-              MANIFEST と同じディレクトリに置く。検証と PR 起票は後続ステップが行う
+              "body_file": "<PR 本文を書き出したファイルの絶対パス>",
+              "ledger_id": "<IMP-...>"}。本文ファイルは MANIFEST と同じディレクトリに
+              置く。検証・PR 起票・link-pr の commit は後続ステップが行う
+            - Step 0 の突き合わせ結果 (set-status / record-metrics --phase after) も
+              default branch には直接書かない。improve/ledger-reconcile-<YYYYMMDD>
+              ブランチに commit して push し、title "chore(ledger): reconcile <date>"
+              の MANIFEST エントリとして登録する (ledger_id は空文字)
             - default branch への push と PR の merge はしない。承認は PR レビューで行う
+            - 収集や台帳操作のような機械的作業は model-policy に従って subagent に
+              委譲する (main は意思決定に徹する)
             - 候補が 0 件なら MANIFEST を空のまま「今週は改善なし」と報告して終了する
 
       # 検証してから PR を作る。GITHUB_TOKEN 起点のイベントは pull_request
@@ -136,6 +143,7 @@ jobs:
             branch="$(printf '%s' "$line" | jq -r '.branch')"
             title="$(printf '%s' "$line" | jq -r '.title')"
             body_file="$(printf '%s' "$line" | jq -r '.body_file')"
+            ledger_id="$(printf '%s' "$line" | jq -r '.ledger_id // ""')"
             echo "::group::verify $branch"
             git fetch origin "$branch" && git checkout --force "$branch" || {
               echo "- \`$branch\`: ブランチを取得できなかった" >> "$GITHUB_STEP_SUMMARY"
@@ -151,9 +159,22 @@ jobs:
               fi
             done
             if [ "$ok" -eq 1 ]; then
-              if gh pr create --base "$BASE_BRANCH" --head "$branch" \
-                   --title "$title" --body-file "$body_file"; then
-                echo "- \`$branch\`: 検証 OK → PR 起票" >> "$GITHUB_STEP_SUMMARY"
+              if pr_url="$(gh pr create --base "$BASE_BRANCH" --head "$branch" \
+                   --title "$title" --body-file "$body_file")"; then
+                echo "- \`$branch\`: 検証 OK → $pr_url" >> "$GITHUB_STEP_SUMMARY"
+                # 台帳の PR 紐付けも同じブランチに載せる。ここで commit しないと
+                # ledger.jsonl の pr / status が誰の PR にも入らず、次回の Step 0 が
+                # 突き合わせる相手を失う (改善ループが閉じない)。
+                if [ -n "$ledger_id" ]; then
+                  python3 skills/skill-improver/scripts/ledger.py \
+                    link-pr --id "$ledger_id" --pr "$pr_url" &&
+                  git -c user.name="github-actions[bot]" \
+                      -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+                      commit -m "chore(ledger): link $ledger_id to $pr_url" \
+                      improvements/ledger.jsonl &&
+                  git push origin "$branch" ||
+                  { echo "- \`$branch\`: link-pr の commit に失敗 ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"; failed=1; }
+                fi
               else
                 echo "- \`$branch\`: 検証 OK だが PR 起票に失敗 ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
                 failed=1

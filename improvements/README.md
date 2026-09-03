@@ -21,10 +21,10 @@
 1 エントリ = 1 行 (改行なし):
 
 ```json
-{"id":"IMP-20260910-4ce564","created":"2026-09-10","source":"agent-feedback","evidence":["https://github.com/kanade0404/skills/pull/123#issuecomment-1","session_01ABC"],"target_skill":"ci-self-heal","finding":"3 連続失敗の停止条件が「同一エラー」限定と読まれ、別エラーで再試行が続いた","finding_class":"stop-condition","lever":"skill-edit","status":"merged","pr":"https://github.com/kanade0404/skills/pull/130","before":{"ci_fix_iterations":6},"after":{"ci_fix_iterations":3},"recurrence":2,"notes":""}
+{"id":"IMP-20260910-4ce5643613","created":"2026-09-10","source":"agent-feedback","evidence":["https://github.com/kanade0404/skills/pull/123#issuecomment-1","session_01ABC"],"target_skill":"ci-self-heal","finding":"3 連続失敗の停止条件が「同一エラー」限定と読まれ、別エラーで再試行が続いた","finding_class":"stop-condition","lever":"skill-edit","status":"merged","pr":"https://github.com/kanade0404/skills/pull/130","before":{"ci_fix_iterations":6},"after":{"ci_fix_iterations":3},"recurrence":2,"notes":""}
 ```
 
-- `id`: `IMP-<作成日 YYYYMMDD>-<sha1(target_skill + 改行 + 再発クラスキー) の先頭 6 桁>`。
+- `id`: `IMP-<作成日 YYYYMMDD>-<sha1(target_skill + 改行 + 再発クラスキー) の先頭 10 桁>`。
   台帳の既存行を読まずに決まるので、複数の finding を別ブランチで並行に処理しても
   採番が衝突しない (連番だと枝ごとに同じ番号を採る)。同じ日・同じ skill・同じクラスの
   2 度目の登録は同じ id になり、`add` が重複として拒否する

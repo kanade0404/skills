@@ -63,6 +63,21 @@ CI runner は `trigger-evals.yml` と同じく `python3` を直接呼ぶ (`uv` �
 `concurrency: skill-improver` で直列化しているのは、同時実行が同じ
 `improve/<skill>-<finding-id>` ブランチを取り合うのを防ぐため。
 
+### ブランチと PR の種別
+
+台帳の書き込みは**すべて PR 経由**で default branch に入る (Iron Law: default branch に
+直接 push しない)。1 回の実行が作りうるのは次の 2 種類:
+
+| ブランチ | PR タイトル | 中身 |
+|---|---|---|
+| `improve/<skill>-<finding-id>` | 改善差分に応じた title | 対象 skill の差分 + その finding の台帳行 (1 commit 目) + `link-pr` (2 commit 目) |
+| `improve/ledger-reconcile-<YYYYMMDD>` | `chore(ledger): reconcile <date>` | Step 0 の突き合わせ結果 (`set-status` / `record-metrics --phase after`) だけ |
+
+次の実行は **default branch の台帳**を読む。したがって突き合わせが効くのは reconcile PR が
+merge された後で、それまで同じエントリが再び `pr_open` として並ぶ。これは承認ゲートを
+PR レビューに置いたことの代償として受け入れる遅延で、既に PR が出ている突き合わせは
+重複起票せずレポートに書く。
+
 手動起動:
 
 ```bash
@@ -78,12 +93,16 @@ Actions を使わない (使えない) 環境では、Routine に週次で登録
 ```text
 kanade0404/skills で skill-improver を 1 周回してください。
 
-1. skills/skill-improver/SKILL.md を読み、その手順に従う
+1. skills/skill-improver/SKILL.md を読み、その手順に従う。モデル配分は model-policy に
+   従い、収集・台帳操作のような機械的作業は subagent に委譲して自分は判断に徹する
 2. まず Step 0 (reconcile): ledger.py list --status pr_open で未決着のエントリを
    列挙し、各 PR の現在の状態 (merged / closed / open) を確認して台帳を更新する。
    merged なら set-status --status merged と、取れる after メトリクスの
-   record-metrics --phase after。closed (未 merge) なら rejected。そのうえで
-   ledger.py report を読み、revert candidate があれば新規候補より先に報告する
+   record-metrics --phase after。closed (未 merge) なら rejected。更新は
+   improve/ledger-reconcile-<YYYYMMDD> ブランチに commit し、
+   "chore(ledger): reconcile <date>" として PR を出す (default branch には push
+   しない)。そのうえで ledger.py report を読み、revert candidate があれば
+   新規候補より先に報告する
 3. 入力は 3 系統: (a) 直近 1 週の retro / session-retro finding のうち lever が
    skill edit / ept-handoff のもの (台帳には ept として保存される)
    (b) agent-feedback ラベルの issue / PR で、author association が
@@ -102,7 +121,9 @@ kanade0404/skills で skill-improver を 1 周回してください。
    uv run python3 -m unittest discover -s tests / node scripts/rulesync-sync.mjs --check
    を通す (検証に使うのは --check。引数なしは生成物を書き込むので検証にならない)。
    Routine は workflow の外なので、検証も PR 起票も自分で行う
-7. 起票した PR・除外・見送り・revert candidate を SKILL.md の実行レポート形式で報告する
+7. PR を作ったら ledger.py link-pr で紐付け、その差分を同じブランチに commit して
+   push する (紐付けを commit しないと次回の Step 0 が突き合わせる相手を失う)
+8. 起票した PR・除外・見送り・revert candidate を SKILL.md の実行レポート形式で報告する
 8. 候補が 0 件なら PR を作らず「今週は改善なし」と報告して終了する
 ```
 
@@ -113,7 +134,7 @@ kanade0404/skills で skill-improver を 1 周回してください。
 「skill 改善 PR 出して」「retro の finding を skill に反映して」
 「agent-feedback を取り込んで」「改善ループ回して」
 
-特定の finding だけ回すときは finding id (`IMP-20260910-4ce564`) か対象 skill 名を添える。
+特定の finding だけ回すときは finding id (`IMP-20260910-4ce5643613`) か対象 skill 名を添える。
 
 ## 実行間隔を変えるときの判断材料
 

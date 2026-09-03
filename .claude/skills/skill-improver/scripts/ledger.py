@@ -84,8 +84,11 @@ EXIT_META = 2
 #: 連番にすると、同じ週に複数 finding を処理する実行で「台帳を読んで次番号を決める」
 #: 経路が枝ごとに並走し、default branch を見ていない枝が同じ番号を採ってしまう
 #: (1 finding = 1 PR で台帳行も PR ごとに append されるため、採番は必ず衝突する)。
-ID_RE = re.compile(r"^IMP-(\d{8})-([0-9a-f]{6})$")
+ID_RE = re.compile(r"^IMP-(\d{8})-([0-9a-f]{10})$")
 CREATED_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+#: hash 部の桁数。日付が前置されるので衝突は「同じ日の別 finding どうし」でしか
+#: 起きないが、6 桁 (24 bit) だと運用年数ぶん積み上げたときに無視できない。
+ID_HASH_LEN = 10
 
 
 # --- pure functions (単体テスト対象) --------------------------------------
@@ -223,7 +226,7 @@ def recurrence_for(
 
 
 def derive_id(target_skill: str, class_key: str, created: str) -> str:
-    """内容由来の id `IMP-<YYYYMMDD>-<sha1 先頭 6 桁>` を返す (純関数)。
+    """内容由来の id `IMP-<YYYYMMDD>-<sha1 先頭 10 桁>` を返す (純関数)。
 
     材料は作成日と `target_skill` + 改行 + 再発クラスキーだけ。台帳の既存行を
     読まないので、複数の finding を別ブランチで並行に処理しても採番が競合しない
@@ -233,9 +236,15 @@ def derive_id(target_skill: str, class_key: str, created: str) -> str:
     """
     if not CREATED_RE.match(created):
         raise ValueError(f"created は YYYY-MM-DD 形式で指定する: {created!r}")
+    # 形式が合っていても存在しない日付 (2026-99-99) は通さない。id に埋まると
+    # 「いつの finding か」が読めなくなり、日付順の突き合わせも壊れる。
+    try:
+        _dt.date.fromisoformat(created)
+    except ValueError as exc:
+        raise ValueError(f"created が実在しない日付: {created!r}") from exc
     digest = hashlib.sha1(  # noqa: S324 - 衝突耐性ではなく短い安定 id が目的
         f"{target_skill}\n{class_key}".encode()
-    ).hexdigest()[:6]
+    ).hexdigest()[:ID_HASH_LEN]
     return f"IMP-{created.replace('-', '')}-{digest}"
 
 
@@ -488,7 +497,7 @@ def cmd_add(args: argparse.Namespace) -> int:
     if not ID_RE.match(entry_id):
         print(
             f"error: id {entry_id!r} が形式に合わない (IMP-YYYYMMDD-xxxxxx、"
-            "末尾は 16 進 6 桁)",
+            "末尾は 16 進 10 桁)",
             file=sys.stderr,
         )
         return EXIT_FAIL
@@ -783,7 +792,7 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument(
         "--id",
         help=(
-            "id を明示する (既定: IMP-<YYYYMMDD>-<target_skill+クラスの sha1 先頭 6 桁>)。"
+            "id を明示する (既定: IMP-<YYYYMMDD>-<target_skill+クラスの sha1 先頭 10 桁>)。"
             "形式違反と重複は拒否する"
         ),
     )

@@ -152,15 +152,15 @@ class TestRevertCandidates(unittest.TestCase):
     def test_only_merged_entries_are_reported_as_revert_candidates(self) -> None:
         regressed = {"before": {"trigger_f1": 0.9}, "after": {"trigger_f1": 0.7}}
         entries = [
-            {"id": "IMP-20260903-aaaaaa", "status": "merged", **regressed},
+            {"id": "IMP-20260903-aaaaaaaaaa", "status": "merged", **regressed},
             # 既に取り消した / 却下した差分を毎回 revert 候補に出し続けない
-            {"id": "IMP-20260903-bbbbbb", "status": "reverted", **regressed},
-            {"id": "IMP-20260903-cccccc", "status": "rejected", **regressed},
-            {"id": "IMP-20260903-dddddd", "status": "pr_open", **regressed},
+            {"id": "IMP-20260903-bbbbbbbbbb", "status": "reverted", **regressed},
+            {"id": "IMP-20260903-cccccccccc", "status": "rejected", **regressed},
+            {"id": "IMP-20260903-dddddddddd", "status": "pr_open", **regressed},
         ]
         report = ledger.build_report(entries)
         self.assertEqual(
-            [item["id"] for item in report["revert_candidates"]], ["IMP-20260903-aaaaaa"]
+            [item["id"] for item in report["revert_candidates"]], ["IMP-20260903-aaaaaaaaaa"]
         )
         # delta 自体は status を問わず出す (観測結果は隠さない)
         self.assertEqual(len(report["deltas"]), 4)
@@ -225,8 +225,10 @@ class TestRecurrence(unittest.TestCase):
         self.assertNotEqual(first, ledger.derive_id("tdd", "stop-condition", "2026-09-10"))
 
     def test_derive_id_rejects_malformed_created(self) -> None:
-        with self.assertRaises(ValueError):
-            ledger.derive_id("tdd", "c", "2026/09/03")
+        # 形式違反も、形式は合っていて実在しない日付も通さない
+        for created in ("2026/09/03", "20260903", "2026-99-99", "2026-02-30"):
+            with self.subTest(created=created), self.assertRaises(ValueError):
+                ledger.derive_id("tdd", "c", created)
 
     def test_summary_recounts_recurrence_and_uses_stored_only_as_tiebreak(self) -> None:
         entries = [
@@ -565,10 +567,10 @@ class TestCliRoundTrip(unittest.TestCase):
         )
         self.assertEqual(self.entries(), [])
         self.assertEqual(
-            run(self.base(*base_argv, "--id", "IMP-20260903-abc123"))[0], 0
+            run(self.base(*base_argv, "--id", "IMP-20260903-abc1234567"))[0], 0
         )
         self.assertEqual(
-            run(self.base(*base_argv, "--id", "IMP-20260903-abc123", "--class", "other"))[0],
+            run(self.base(*base_argv, "--id", "IMP-20260903-abc1234567", "--class", "other"))[0],
             ledger.EXIT_FAIL,
         )
         self.assertEqual(len(self.entries()), 1)
@@ -662,7 +664,7 @@ class TestCliRoundTrip(unittest.TestCase):
         self.assertEqual(self.entries()[0]["status"], "merged")
         self.assertEqual(
             run(
-                self.base("set-status", "--id", "IMP-20260101-abcdef", "--status", "merged")
+                self.base("set-status", "--id", "IMP-20260101-abcdef0123", "--status", "merged")
             )[0],
             ledger.EXIT_FAIL,
         )

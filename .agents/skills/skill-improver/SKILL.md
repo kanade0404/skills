@@ -105,6 +105,20 @@ $LEDGER report                            # revert candidate をここで確認�
 
 revert candidate が出たら、**新しい改善を重ねる前に**その差分の revert PR を提案する (`retro` の roll-back 規律)。ここまで終えてから Step 1 の収集に入る。
 
+**突き合わせの結果も default branch には直接書かない** (Iron Law)。専用ブランチに載せて PR にする:
+
+```bash
+git switch <default branch> && git pull --ff-only
+git switch -c improve/ledger-reconcile-<YYYYMMDD>
+# ... list / gh pr view / set-status / record-metrics --phase after ...
+git commit improvements/ledger.jsonl -m "chore(ledger): reconcile <date>"
+git push -u origin improve/ledger-reconcile-<YYYYMMDD>
+```
+
+PR タイトルは `chore(ledger): reconcile <date>`。workflow モードでは他の候補と同じく MANIFEST の 1 エントリとして登録する (`ledger_id` は空)。
+
+**次回の実行は default branch の台帳を読む**。つまり突き合わせが実際に効くのは reconcile PR が merge された後で、それまでは同じエントリが再び `pr_open` として並ぶ。この遅延は**承認ゲートを PR レビューに置いた代償として受け入れる** — 台帳だけ人間のレビュー無しに書き換えられる経路を作る方が、Iron Law の穴として高くつく。既に PR が出ている突き合わせは重複起票せず、その旨をレポートに書く。
+
 ### Step 1 — 収集と分類 (main が実行)
 
 3 系統から候補 finding を集め、それぞれに `target_skill` / `lever` / `evidence` (URL・session id・ファイルパス) を付ける。1 週分の候補が 0 件なら「今週は改善なし」で正常終了してよい (無理に絞り出すと、根拠の薄い PR がレビューコストだけ増やす)。
@@ -149,7 +163,7 @@ uv run python3 skills/skill-builder/scripts/score_triggers.py \
   --cases skills/<skill>/evals/<skill>-trigger.json \
   --preds skills/<skill>/evals/<skill>-trigger-results-<最新日付>.jsonl
 uv run python3 skills/skill-improver/scripts/ledger.py record-metrics \
-  --id <IMP-YYYYMMDD-xxxxxx> --phase before --metric trigger_f1=<F1>
+  --id <IMP-YYYYMMDD-xxxxxxxxxx> --phase before --metric trigger_f1=<F1>
 ```
 
 `ci_fix_iterations` / `review_cycles` / `escalations` は loop-metrics (`.github/workflows/loop-metrics.yml` が送る `pr_closed` イベント) 側にあるため、参照できる環境でだけ記録する。
@@ -221,11 +235,15 @@ workflow モードでは `gh pr create` が使えない。改善ブランチを 
 
 (任意) PR 作成の資格情報を GitHub App トークン / PAT に替えれば `pull_request` の run が普通に発火する。その場合もこの「検証してから起票」の順序は変えない。
 
-PR 本文は下記フォーマット固定。作成後:
+PR 本文は下記フォーマット固定。作成後、**紐付けを同じブランチの 2 つ目の commit として載せる** — ここで commit せずローカルに置いたままだと、`pr` も `status` もどの PR にも入らず、次回の Step 0 が突き合わせる相手を失う (台帳が実行の中だけで完結して消える):
 
 ```bash
-uv run python3 skills/skill-improver/scripts/ledger.py link-pr --id <IMP-YYYYMMDD-xxxxxx> --pr <PR URL>
+uv run python3 skills/skill-improver/scripts/ledger.py link-pr --id <IMP-YYYYMMDD-xxxxxxxxxx> --pr <PR URL>
+git commit improvements/ledger.jsonl -m "chore(ledger): link <IMP-...> to <PR URL>"
+git push origin improve/<skill>-<finding-id>
 ```
+
+workflow モードではこの link-pr → commit → push を PR 起票ステップが続けて実行する。
 
 ここで実行は終わるが、台帳のエントリは `pr_open` のまま残る。その決着 (merged → `set-status --status merged` + `record-metrics --phase after`、closed → `rejected`) は **次回実行の Step 0** が行う — この実行に「PR が閉じられるまで待つ」経路は無いので、突き合わせを次の実行の入口に置くことでループを閉じる。
 
@@ -238,7 +256,7 @@ uv run python3 skills/skill-improver/scripts/ledger.py link-pr --id <IMP-YYYYMMD
 ### PR 本文
 
 ```markdown
-## Finding <IMP-YYYYMMDD-xxxxxx> (<source>)
+## Finding <IMP-YYYYMMDD-xxxxxxxxxx> (<source>)
 <finding 1 文>
 
 ## Evidence
@@ -254,7 +272,7 @@ uv run python3 skills/skill-improver/scripts/ledger.py link-pr --id <IMP-YYYYMMD
 | trigger_f1 | <値 or n/a> |
 
 ## Ledger
-`improvements/ledger.jsonl` の `<IMP-YYYYMMDD-xxxxxx>` (recurrence: <n>)
+`improvements/ledger.jsonl` の `<IMP-YYYYMMDD-xxxxxxxxxx>` (recurrence: <n>)
 
 ## Checks (PR 作成前に実行済み — `GITHUB_TOKEN` 起点のイベントは repo の `pull_request` run を作らない)
 <!-- 実際の結果で置き換える。チェックボックスは使わない (未チェックが「未実施」に読める) -->
@@ -280,7 +298,7 @@ uv run python3 skills/skill-improver/scripts/ledger.py link-pr --id <IMP-YYYYMMD
 - <候補と理由 (妥当性検証で否定 / 重複 / 矛盾するフィードバック)>
 
 ## Revert candidates (前回以前の適用分)
-- <IMP-YYYYMMDD-xxxxxx>: <指標> が悪化 (<before> → <after>)
+- <IMP-YYYYMMDD-xxxxxxxxxx>: <指標> が悪化 (<before> → <after>)
 ```
 
 ## メタスキル除外の理由

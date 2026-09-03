@@ -8,11 +8,24 @@
 consumer 側が `rulesync fetch --features skills` で持っていくのは skill ディレクトリ
 だけで、台帳は**この repo の運用データ**だからである。
 
+## 台帳の書き込みは PR を通る
+
+`ledger.py` の書き込みはファイルを丸ごと書き直す (一時ファイル + `os.replace`) ため、
+1 回の書き込みが途中で壊れることは無い。一方で「読んで書く」の粒度でのロックは持って
+いない — それを支えているのは **書き込みが直列化されていること**である: workflow は
+`concurrency: skill-improver` で 1 実行ずつしか走らず、手動実行を跨いだ競合は git が
+受け止める (台帳への追記は必ずブランチ + PR 経由で default branch に入るので、
+衝突する追記は merge conflict として人間の目の前に出る)。
+
+その帰結として、**台帳の更新が次の実行から見えるのは PR が merge された後**である。
+実行中に書いた行はそのブランチにしか無く、次回の実行は default branch の台帳を読む。
+この遅延は承認ゲートを PR レビューに置いたことの代償として受け入れる。
+
 ## エントリのフィールド
 
 | field | 型 | 内容 |
 |---|---|---|
-| `id` | string | `IMP-<YYYYMMDD>-<hash>` 形式 (例: `IMP-20260910-4ce564`)。`ledger.py add` が **内容から** 決める — 作成日 + `sha1(target_skill + "\n" + 再発クラスキー)` の先頭 6 桁 |
+| `id` | string | `IMP-<YYYYMMDD>-<hash>` 形式 (例: `IMP-20260910-4ce5643613`)。`ledger.py add` が **内容から** 決める — 作成日 + `sha1(target_skill + "\n" + 再発クラスキー)` の先頭 10 桁 |
 | `created` | string | `YYYY-MM-DD` (UTC) |
 | `source` | enum | `retro` / `session-retro` / `agent-feedback` / `trigger-eval` |
 | `evidence` | string[] | 証跡。PR / issue の URL、session id、`skills/x/evals/...` のようなファイルパス |
@@ -44,7 +57,7 @@ NFKC + casefold し、空白と記号を落としたものをクラスキーに�
 ## id が内容由来である理由
 
 `add` は台帳の既存行を読まずに id を決める: `IMP-<作成日 YYYYMMDD>-<sha1(target_skill
-+ 改行 + 再発クラスキー) の先頭 6 桁>`。連番にすると、1 実行で複数 finding を処理する
++ 改行 + 再発クラスキー) の先頭 10 桁>`。連番にすると、1 実行で複数 finding を処理する
 ときに枝ごとの `add` が「自分の見た台帳の最大値 + 1」を採り、台帳行が PR ごとに
 append される以上必ず衝突する。内容由来なら、どの枝で採番しても同じ finding には
 同じ id が付く。
@@ -61,7 +74,7 @@ id の一意性と両立する。
 ### 例 (1 行に収める。ここでは可読性のため折り返している)
 
 ```json
-{"id":"IMP-20260910-4ce564","created":"2026-09-10","source":"agent-feedback",
+{"id":"IMP-20260910-4ce5643613","created":"2026-09-10","source":"agent-feedback",
  "evidence":["https://github.com/kanade0404/skills/pull/123#issuecomment-1",
              "session_01ABC"],
  "target_skill":"ci-self-heal","finding":"3 連続失敗の停止条件が「同一エラー」に
@@ -86,7 +99,7 @@ cwd から見た repo root。規約外の場所に台帳を置くときは `--sk
 
 | サブコマンド | 用途 |
 |---|---|
-| `add --source --target --finding --lever [--class] [--evidence ...] [--status] [--notes] [--id] [--created]` | finding を 1 件記録。`recurrence` を自動計算し、`id` を内容から決める。`--class` は再発クラスキーの明示。`--id` は形式 (`IMP-YYYYMMDD-xxxxxx`) と重複を検査する。対象がメタスキルなら `--status` を無視して `excluded_meta` で記録し、**exit 2** を返す |
+| `add --source --target --finding --lever [--class] [--evidence ...] [--status] [--notes] [--id] [--created]` | finding を 1 件記録。`recurrence` を自動計算し、`id` を内容から決める。`--class` は再発クラスキーの明示。`--id` は形式 (`IMP-YYYYMMDD-xxxxxxxxxx`) と重複を検査する。対象がメタスキルなら `--status` を無視して `excluded_meta` で記録し、**exit 2** を返す |
 | `set-status --id --status [--notes]` | status を更新 |
 | `link-pr --id --pr [--keep-status]` | PR URL を紐付け、既定で `status=pr_open` にする |
 | `record-metrics --id --phase before\|after --metric KEY=VALUE [--metric ...]` | 指標を記録。両相が揃うと delta を表示する。非有限値 (`nan` / `inf`) は拒否 |
@@ -126,10 +139,10 @@ $LEDGER list --status pr_open --json                   # Step 0: 未決着の PR
 $LEDGER check-target ci-self-heal                      # exit 2 ならここで終了
 $LEDGER add --source agent-feedback --target ci-self-heal --lever skill-edit \
   --finding "..." --evidence "https://.../pull/123#issuecomment-1"
-$LEDGER record-metrics --id IMP-20260910-4ce564 --phase before --metric ci_fix_iterations=6
-$LEDGER link-pr --id IMP-20260910-4ce564 --pr https://.../pull/130
-$LEDGER set-status --id IMP-20260910-4ce564 --status merged
-$LEDGER record-metrics --id IMP-20260910-4ce564 --phase after --metric ci_fix_iterations=3
+$LEDGER record-metrics --id IMP-20260910-4ce5643613 --phase before --metric ci_fix_iterations=6
+$LEDGER link-pr --id IMP-20260910-4ce5643613 --pr https://.../pull/130
+$LEDGER set-status --id IMP-20260910-4ce5643613 --status merged
+$LEDGER record-metrics --id IMP-20260910-4ce5643613 --phase after --metric ci_fix_iterations=3
 $LEDGER report                                         # 再発と revert candidate を確認
 ```
 
