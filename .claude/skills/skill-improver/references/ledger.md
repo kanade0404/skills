@@ -1,0 +1,115 @@
+# improvements/ledger.jsonl — スキーマと操作
+
+改善台帳。**1 行 1 JSON オブジェクト** の JSON Lines で、リポジトリ root の
+`improvements/ledger.jsonl` に置く。finding が PR になり merge / revert されるまでの
+一生を 1 エントリで追跡し、「同じ改善を何回やり直しているか」を可視化する。
+
+台帳を skill ディレクトリではなく repo root に置くのは、対象が複数 skill に跨るのと、
+consumer 側が `rulesync fetch --features skills` で持っていくのは skill ディレクトリ
+だけで、台帳は**この repo の運用データ**だからである。
+
+## エントリのフィールド
+
+| field | 型 | 内容 |
+|---|---|---|
+| `id` | string | `IMP-0001` 形式。`ledger.py add` が連番を採番する |
+| `created` | string | `YYYY-MM-DD` (UTC) |
+| `source` | enum | `retro` / `session-retro` / `agent-feedback` / `trigger-eval` |
+| `evidence` | string[] | 証跡。PR / issue の URL、session id、`skills/x/evals/...` のようなファイルパス |
+| `target_skill` | string | 改善対象の skill 名 |
+| `finding` | string | **1 文**。長い説明は PR 本文に書く |
+| `finding_class` | string | 再発クラスキー。空なら finding 本文の正規化で代用する。agent が「同じ問題の再発」と判断したときに `add --class <key>` で明示する |
+| `lever` | enum | `skill-edit` / `ept` / `trigger` |
+| `status` | enum | `proposed` / `pr_open` / `merged` / `rejected` / `excluded_meta` / `reverted` |
+| `pr` | string \| null | PR URL |
+| `before` / `after` | object | 指標。キーは全て省略可: `trigger_f1` / `ci_fix_iterations` / `review_cycles` / `escalations` |
+| `recurrence` | int | 同一 `target_skill` × 同一 finding クラスの通算回数 (今回を含む)。`add` が自動計算する。`report` は台帳から数え直した値を正とし、保存値は数え直しより大きいときだけ tiebreak として採る |
+| `notes` | string | 補足 (見送り理由、人間への申し送り等) |
+
+`trigger_f1` だけ**大きいほど良い**。他の 3 つは小さいほど良い。この向きが
+`report` の `improved` / `worse` 判定と revert candidate の検出に使われる。
+
+**再発クラスは agent が決める**。`finding_class` が空のときスクリプトは finding 本文を
+NFKC + casefold し、空白と記号を落としたものをクラスキーにする — 吸収できるのは
+**表記揺れだけ** (`3 連続失敗` と `3連続失敗`、大文字小文字、句読点の有無)。日本語の
+言い換えや語順違いは別クラスに落ちる。文字列一致で意味の同一性を判定しようとすると
+無関係な finding を畳んで recurrence を水増しするため、そこは自動化しない。
+`report --skill <skill>` を読んで同じ問題の再発だと判断したら、`add --class <key>` で
+同じキーを渡して束ねる。
+
+指標は**取れたものだけ書く**。観測できなかった値を 0 で埋めると、after 比較で
+偽の「改善」が出る。
+
+### 例 (1 行に収める。ここでは可読性のため折り返している)
+
+```json
+{"id":"IMP-0001","created":"2026-09-10","source":"agent-feedback",
+ "evidence":["https://github.com/kanade0404/skills/pull/123#issuecomment-1",
+             "session_01ABC"],
+ "target_skill":"ci-self-heal","finding":"3 連続失敗の停止条件が「同一エラー」に
+ 限定されて読まれ、別エラーで無限に再試行した","finding_class":"stop-condition",
+ "lever":"skill-edit","status":"merged",
+ "pr":"https://github.com/kanade0404/skills/pull/130",
+ "before":{"ci_fix_iterations":6},"after":{"ci_fix_iterations":3},
+ "recurrence":2,"notes":""}
+```
+
+## scripts/ledger.py
+
+stdlib のみ。`uv run python3 skills/skill-improver/scripts/ledger.py <sub>` (追加の依存も
+仮想環境も要らない)。台帳のパスは `--ledger` で上書きでき、既定は cwd から上方向に
+`.git` を探して見つけた repo root の `improvements/ledger.jsonl`。
+
+| サブコマンド | 用途 |
+|---|---|
+| `add --source --target --finding --lever [--class] [--evidence ...] [--status] [--notes] [--id] [--created]` | finding を 1 件記録。`recurrence` と `id` を自動採番。`--class` は再発クラスキーの明示。対象がメタスキルなら `--status` を無視して `excluded_meta` で記録し、**exit 2** を返す |
+| `set-status --id --status [--notes]` | status を更新 |
+| `link-pr --id --pr [--keep-status]` | PR URL を紐付け、既定で `status=pr_open` にする |
+| `record-metrics --id --phase before\|after --metric KEY=VALUE [--metric ...]` | 指標を記録。両相が揃うと delta を表示する |
+| `report [--skill] [--json] [--fail-on-revert]` | skill 別の件数・再発回数・status 内訳、before→after の delta、**revert candidate** を出力 |
+| `check-target <skill>` | 改善対象にしてよいかの判定 |
+
+### exit code 契約
+
+| code | 意味 |
+|---|---|
+| 0 | 成功 / `check-target` が改善対象と判定 |
+| 1 | 検査で不合格 (`check-target` が未知の skill / skill ディレクトリを解決不能、`report --fail-on-revert` が revert candidate を検出) |
+| 2 | 対象が**メタスキル** (改善対象外)。`check-target` の判定、`add` の記録時、および `set-status` / `link-pr` / `record-metrics` のガード |
+
+argparse は usage エラーでも 2 を返すため、呼出側は stdout 1 行目の
+`classification: <ok|unknown|excluded_meta|unresolved>` で曖昧さを解消する
+(usage エラー時はこの行が出ない)。
+
+`check-target` は skill を `skills/`, `.claude/skills/`, `.agents/skills/` の順に
+探す (配布元カタログ形式と consumer 生成先の両方で動かすため)。どれも無い環境では
+`unresolved` で **exit 1** — 「見つからない = 対象外」と黙って扱わず fail-closed にする。
+
+メタスキル判定は skill 名を `Path(...).name` に落として casefold してから行うため、
+`Retro` や `skills/retro` のような書き方でも除外される (`--allow-unknown-target` でも
+外れない)。除外は `add` だけでなく `set-status` / `link-pr` / `record-metrics` にも
+かかる — 入口ひとつでしか効かないガードは、後から台帳を進めるだけで迂回できるため。
+メタスキルのエントリに許すのは `status` を `excluded_meta` / `rejected` にする更新
+だけ (記録と却下は除外と矛盾しない)。
+
+### 典型的な流れ
+
+```bash
+LEDGER="uv run python3 skills/skill-improver/scripts/ledger.py"
+$LEDGER check-target ci-self-heal                      # exit 2 ならここで終了
+$LEDGER add --source agent-feedback --target ci-self-heal --lever skill-edit \
+  --finding "..." --evidence "https://.../pull/123#issuecomment-1"
+$LEDGER record-metrics --id IMP-0001 --phase before --metric ci_fix_iterations=6
+$LEDGER link-pr --id IMP-0001 --pr https://.../pull/130
+$LEDGER set-status --id IMP-0001 --status merged
+$LEDGER record-metrics --id IMP-0001 --phase after --metric ci_fix_iterations=3
+$LEDGER report                                         # 再発と revert candidate を確認
+```
+
+## revert candidate の扱い
+
+`report` は before / after 双方に値がある指標を比較し、1 つでも悪化していれば
+その エントリを revert candidate として並べる。悪化を見つけたら、追加の改善を重ねる
+前に **その差分の revert PR を提案する** (`retro` の roll-back 規律と同じ)。revert したら
+`set-status --status reverted` にして、同じ finding が次に来たときに `recurrence` が
+「1 度失敗している」ことを伝えるようにする。

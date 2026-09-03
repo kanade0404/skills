@@ -127,6 +127,13 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prr" fetch <PR>   # → 正規化 JSON を std
 - 指摘の前提が誤り（コード読み違え、context window の境界で見えていない情報がある）
 - トレードオフの選択（パフォーマンス vs 可読性、等の意識的な選択）
 
+### 人間フィードバックの取り込み
+
+メンテナが agent 起票の PR/issue に「期待していたこと・その理由」を書いたコメントを
+残した場合、`agent-feedback` ラベルはそれを週次実行の `skill-improver` 向けにマークする
+だけの合図。本スキル自身はそのラベルを見てもセッション内で対応しない (対応は
+`skill-improver` の責務)。
+
 ### Phase C — 修正 (apply)
 
 `VALID` のみ対象。
