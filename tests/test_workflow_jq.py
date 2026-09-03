@@ -14,12 +14,11 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import subprocess
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
-
-import yaml
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 GATE = REPO_ROOT / ".github" / "workflows" / "review-response-gate.yml"
@@ -393,27 +392,108 @@ class SkillImproverRulesetPreflightTest(unittest.TestCase):
         self.assertFalse(self.accepts_create(self.freeze_ruleset()))
 
 
+_JOB_LINE_RE = re.compile(r"^  ([A-Za-z][A-Za-z0-9_-]*):$")
+_ENV_START_RE = re.compile(r"^    env:$")
+_ENV_ENTRY_RE = re.compile(r"^      ([A-Za-z_][A-Za-z0-9_]*):\s?(.*)$")
+_FORBIDDEN_CONTEXT_RE = re.compile(r"\$\{\{\s*(runner|steps|env|job)\.")
+
+
+def scan_job_level_env(text: str) -> dict[str, dict[str, tuple[int, str]]]:
+    """Indentation-based scan of `jobs.<id>.env` (no YAML parser — see the
+    class docstring below for why). Returns `{job_id: {key: (line_no,
+    value)}}`; a job with no `env:` block still gets an (empty) entry.
+
+    Only lines under a top-level `jobs:` key are considered. A job starts
+    at 2-space `name:`, its env block at 4-space `env:`, and the block ends
+    at the next line indented 4 spaces or less that isn't blank/comment.
+    Comments are only recognised as whole lines (`#` at the start after
+    stripping) — an inline `#` inside a value is treated as part of the
+    value, since no job-level env value in this workflow carries one."""
+    lines = text.splitlines()
+    result: dict[str, dict[str, tuple[int, str]]] = {}
+    in_jobs = False
+    current_job: str | None = None
+    in_env = False
+    for i, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if line == "jobs:":
+            in_jobs, current_job, in_env = True, None, False
+            continue
+        if not in_jobs:
+            continue
+        if stripped and not stripped.startswith("#") and not line[:1].isspace():
+            # Back to top-level indentation on a real line: jobs: is over.
+            in_jobs, current_job, in_env = False, None, False
+            continue
+        if in_env:
+            indent = len(line) - len(line.lstrip(" "))
+            if stripped and not stripped.startswith("#") and indent <= 4:
+                in_env = False  # block ended; fall through, re-check this line
+            else:
+                entry = _ENV_ENTRY_RE.match(line)
+                if entry:
+                    key, value = entry.groups()
+                    result[current_job][key] = (i, value)
+                continue
+        job = _JOB_LINE_RE.match(line)
+        if job:
+            current_job = job.group(1)
+            result.setdefault(current_job, {})
+            in_env = False
+            continue
+        if current_job is not None and _ENV_START_RE.match(line):
+            in_env = True
+    return result
+
+
 class SkillImproverJobEnvContextTest(unittest.TestCase):
     """`jobs.<job_id>.env` only has github/inputs/matrix/needs/secrets/
     strategy/vars available — runner, steps, env and job are not, and
     GitHub rejects the whole workflow at load time if any job-level env
     value references one of them (as `runner.temp` did for 24 keys across
     all five jobs, before they moved into a first `Resolve scratch paths`
-    step)."""
+    step).
 
-    FORBIDDEN = ("${{ runner.", "${{ steps.", "${{ env.", "${{ job.")
+    PyYAML is not a declared dependency (CI runs plain `python3 -m unittest
+    discover`, no pip install — see trigger-evals.yml and the verify job
+    here), so this reads the workflow as text with `scan_job_level_env`
+    rather than parsing it as YAML.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.jobs = scan_job_level_env(
+            SKILL_IMPROVER.read_text(encoding="utf-8"))
 
     def test_job_level_env_never_references_unavailable_contexts(self) -> None:
-        workflow = yaml.safe_load(SKILL_IMPROVER.read_text(encoding="utf-8"))
-        for job_id, job in workflow["jobs"].items():
-            for key, value in job.get("env", {}).items():
-                if not isinstance(value, str):
-                    continue
-                for forbidden in self.FORBIDDEN:
-                    self.assertNotIn(
-                        forbidden, value,
-                        f"jobs.{job_id}.env.{key} references a context "
-                        f"unavailable at job-level env: {value!r}")
+        # Self-check first: a scanner that matched nothing would make the
+        # loop below pass vacuously, so prove it actually saw job-level env.
+        for job_id in ("improve", "stage", "verify", "collect", "publish"):
+            self.assertIn(job_id, self.jobs)
+        all_keys = {key for env in self.jobs.values() for key in env}
+        self.assertTrue(
+            {"DEFAULT_BRANCH", "GUARD", "IDX"} & all_keys,
+            f"scanner found no job-level env keys at all: {self.jobs!r}")
+
+        for job_id, env in self.jobs.items():
+            for key, (line_no, value) in env.items():
+                match = _FORBIDDEN_CONTEXT_RE.search(value)
+                self.assertIsNone(
+                    match,
+                    f"jobs.{job_id}.env.{key} at line {line_no} references "
+                    f"a context unavailable at job-level env: {value!r}")
+
+    def test_scanner_detects_an_injected_violation(self) -> None:
+        """Negative self-test: prove the scanner actually flags a
+        `runner.` reference, so the assertion above is not vacuous."""
+        snippet = ("jobs:\n"
+                   "  faketask:\n"
+                   "    env:\n"
+                   "      X: ${{ runner.temp }}/x\n")
+        jobs = scan_job_level_env(snippet)
+        self.assertIn("X", jobs.get("faketask", {}))
+        _, value = jobs["faketask"]["X"]
+        self.assertRegex(value, _FORBIDDEN_CONTEXT_RE)
 
 
 if __name__ == "__main__":
