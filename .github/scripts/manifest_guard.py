@@ -13,8 +13,11 @@ agent が書いた manifest は **データ**であって、そのまま特権�
 3. `scan-diff` / `scan-files` — **候補ブランチの差分そのもの**と PR 本文ファイルを、
    この job が見えるシークレットの実値で走査する。manifest と本文だけを見ていても、
    agent は資格情報を `skills/<x>/**` や台帳の中に書いて push させられるため
-   (allow-list はパスしか見ない)。値は環境変数名で受け取り、**値も一致箇所も一切
-   出力しない** — 出るのはパスと理由だけ。
+   (allow-list はパスしか見ない)。値は環境変数名 (`--secret-env`) か、0600 の
+   ファイルのパス (`--secret-file NAME=PATH`) で受け取り、**値も一致箇所も一切
+   出力しない** — 出るのはパスと理由だけ。ファイル経由が要るのは
+   `ACTIONS_RUNTIME_TOKEN` のように **`run:` の step には注入されない**値がある
+   ため (JavaScript action の step で捕まえてファイルに落とす)。
 
 同じ走査を 2 か所に書き写すと片方だけ古くなるので、workflow の improve
 (staging) と publish (起票直前) の双方がこのファイルを呼ぶ。候補ブランチは
@@ -33,6 +36,7 @@ import binascii
 import json
 import os
 import re
+import stat
 import subprocess  # noqa: S404
 import sys
 from collections.abc import Mapping, Sequence
@@ -228,6 +232,15 @@ PREFIX_PATTERNS: tuple[tuple[str, re.Pattern[bytes]], ...] = (
     ("GitHub token", re.compile(rb"(?:ghs|ghp|ghu|gho)_[A-Za-z0-9]{16,}")),
     ("GitHub fine-grained PAT", re.compile(rb"github_pat_[A-Za-z0-9_]{16,}")),
     ("PEM private key", re.compile(rb"-----BEGIN(?: [A-Z0-9]+)* PRIVATE KEY-----")),
+    # run スコープの JWT (`ACTIONS_RUNTIME_TOKEN` 等)。base64url の 3 節で、
+    # 先頭 2 節は `{"` で始まる JSON なので `eyJ` になる。捕捉に失敗して実値を
+    # 知らないまま走査する場合でも、この形だけは拾えるようにしておく。
+    (
+        "run-scoped JWT",
+        re.compile(
+            rb"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"
+        ),
+    ),
 )
 
 #: 走査前に落とす「見た目だけの区切り」。改行で折り返したり JSON の `\n` に
@@ -259,8 +272,8 @@ def _encodings(raw: bytes) -> list[tuple[str, bytes]]:
     ]
 
 
-def secret_needles(name: str, value: str) -> list[tuple[str, bytes]]:
-    """シークレット 1 件から、探す文字列とそのラベルを並べる (純関数)。
+def secret_needles_bytes(name: str, raw: bytes) -> list[tuple[str, bytes]]:
+    """シークレット 1 件 (バイト列) から、探す文字列とそのラベルを並べる (純関数)。
 
     ラベルは**名前と符号化の種類だけ**で、値は含めない (ログに出す側で使う)。
     """
@@ -273,7 +286,6 @@ def secret_needles(name: str, value: str) -> list[tuple[str, bytes]]:
         seen.add(data)
         needles.append((f"{name} ({label})", data))
 
-    raw = value.encode("utf-8", errors="surrogateescape")
     for label, encoded in _encodings(raw):
         add(label, encoded)
     # PEM 秘密鍵のような複数行の値は、改行の扱いだけで姿が変わる。
@@ -289,6 +301,11 @@ def secret_needles(name: str, value: str) -> list[tuple[str, bytes]]:
                 continue
             add(f"line {lineno}", line)
     return needles
+
+
+def secret_needles(name: str, value: str) -> list[tuple[str, bytes]]:
+    """環境変数から取った文字列のシークレットを needle に落とす (純関数)。"""
+    return secret_needles_bytes(name, value.encode("utf-8", errors="surrogateescape"))
 
 
 def needles_from_env(
@@ -307,6 +324,70 @@ def needles_from_env(
             notes.append(f"{name}: 環境変数が空 — この値は走査しない")
             continue
         built = secret_needles(name, value)
+        if not built:
+            notes.append(f"{name}: 値が短すぎる — この値は走査しない")
+            continue
+        needles.extend(built)
+    return needles, notes
+
+
+class SecretFileError(RuntimeError):
+    """`--secret-file` の指定を受け付けられない (走査できないので落とす)。"""
+
+
+def parse_secret_file_spec(spec: str) -> tuple[str, Path]:
+    """`NAME=PATH` を分解する (純関数)。"""
+    name, sep, raw_path = spec.partition("=")
+    if not sep or not name or not raw_path:
+        msg = f"--secret-file の指定が NAME=PATH の形式でない: {name or spec!r}"
+        raise SecretFileError(msg)
+    return name, Path(raw_path)
+
+
+def read_secret_file(path: Path) -> bytes:
+    """0600 の実ファイルからだけシークレットを読む。末尾の改行 1 つは落とす。
+
+    symlink と owner-only でない mode を**拒否する**のは、規律を見えるままに
+    しておくため。置き場所を差し替えられる形 (symlink) や、他のプロセスから
+    読める形 (0644 等) で渡された値は「安全に受け取った」とは言えない。
+    """
+    if path.is_symlink():
+        msg = f"{path}: symlink — シークレットの受け渡しには使わない"
+        raise SecretFileError(msg)
+    try:
+        st = path.lstat()
+    except OSError as exc:
+        msg = f"{path}: 読めない ({exc.strerror})"
+        raise SecretFileError(msg) from exc
+    if not stat.S_ISREG(st.st_mode):
+        msg = f"{path}: 通常ファイルでない"
+        raise SecretFileError(msg)
+    mode = stat.S_IMODE(st.st_mode)
+    if mode != 0o600:
+        msg = f"{path}: mode が 0600 でない ({mode:04o})"
+        raise SecretFileError(msg)
+    return path.read_bytes().removesuffix(b"\n")
+
+
+def needles_from_files(
+    specs: Sequence[str],
+) -> tuple[list[tuple[str, bytes]], list[str]]:
+    """`NAME=PATH` の列から探索対象を組み立て、(needles, 注記) を返す。
+
+    値をコマンドラインにも環境変数にも載せられない場合の受け口
+    (`ACTIONS_RUNTIME_TOKEN` は JavaScript action の step にしか注入されないので、
+    trusted な JS step が 0600 のファイルに落としたものをここで読む)。
+    受け付けられない指定は注記ではなく **例外**にする — fail-closed。
+    """
+    needles: list[tuple[str, bytes]] = []
+    notes: list[str] = []
+    for spec in specs:
+        name, path = parse_secret_file_spec(spec)
+        raw = read_secret_file(path)
+        if not raw:
+            notes.append(f"{name}: ファイルが空 — この値は走査しない")
+            continue
+        built = secret_needles_bytes(name, raw)
         if not built:
             notes.append(f"{name}: 値が短すぎる — この値は走査しない")
             continue
@@ -393,23 +474,38 @@ def _report(hits: Sequence[str], notes: Sequence[str], label: str) -> int:
     return 0
 
 
-def _prepare(names: Sequence[str]) -> tuple[list[tuple[str, bytes]], list[str], bool]:
-    """走査対象を組み立てる。1 つも作れなければ「走査できなかった」とする。"""
-    needles, notes = needles_from_env(names, os.environ)
+def _prepare(
+    args: argparse.Namespace,
+) -> tuple[list[tuple[str, bytes]], list[str], bool]:
+    """走査対象を組み立てる。1 つも作れなければ「走査できなかった」とする。
+
+    環境変数経由 (`--secret-env`) とファイル経由 (`--secret-file`) を同じ器に
+    まとめるので、fail-closed の判定も両方をまたいで 1 か所で効く。
+    """
+    needles, notes = needles_from_env(args.secret_env, os.environ)
+    file_needles, file_notes = needles_from_files(args.secret_file)
+    needles.extend(file_needles)
+    notes.extend(file_notes)
     return needles, notes, bool(needles)
+
+
+def _unscannable(notes: Sequence[str]) -> int:
+    """走査対象を 1 つも組み立てられなかったときの出力 (値は出さない)。"""
+    for note in notes:
+        print(f"scan: {note}", file=sys.stderr)
+    print("scan: 走査できる値が 1 つも無い — 走査したことにはできない", file=sys.stderr)
+    return 1
 
 
 def cmd_scan_diff(args: argparse.Namespace) -> int:
     """候補ブランチの差分をシークレットで走査する (push の前に呼ぶ)。"""
-    needles, notes, usable = _prepare(args.secret_env)
-    if not usable:
-        for note in notes:
-            print(f"scan: {note}", file=sys.stderr)
-        print(
-            "scan: 走査できる値が 1 つも無い — 走査したことにはできない",
-            file=sys.stderr,
-        )
+    try:
+        needles, notes, usable = _prepare(args)
+    except SecretFileError as exc:
+        print(f"scan: {exc}", file=sys.stderr)
         return 1
+    if not usable:
+        return _unscannable(notes)
     try:
         hits = scan_repo_diff(args.repo, args.base, args.head, needles)
     except GitError as exc:
@@ -420,15 +516,13 @@ def cmd_scan_diff(args: argparse.Namespace) -> int:
 
 def cmd_scan_files(args: argparse.Namespace) -> int:
     """ファイルの中身をシークレットで走査する (PR 本文など)。"""
-    needles, notes, usable = _prepare(args.secret_env)
-    if not usable:
-        for note in notes:
-            print(f"scan: {note}", file=sys.stderr)
-        print(
-            "scan: 走査できる値が 1 つも無い — 走査したことにはできない",
-            file=sys.stderr,
-        )
+    try:
+        needles, notes, usable = _prepare(args)
+    except SecretFileError as exc:
+        print(f"scan: {exc}", file=sys.stderr)
         return 1
+    if not usable:
+        return _unscannable(notes)
     hits: list[str] = []
     for name in args.paths:
         path = Path(name)
@@ -441,14 +535,24 @@ def cmd_scan_files(args: argparse.Namespace) -> int:
     return _report(hits, notes, "対象ファイル")
 
 
-def add_secret_env_argument(parser: argparse.ArgumentParser) -> None:
-    """シークレットを **値ではなく環境変数名**で受け取る引数を足す。"""
+def add_secret_arguments(parser: argparse.ArgumentParser) -> None:
+    """シークレットを **値ではなく在り処**で受け取る引数を足す。"""
     parser.add_argument(
         "--secret-env",
         action="append",
         default=[],
         metavar="NAME",
         help="走査する値を持つ環境変数の名前 (値は渡さない)。複数指定可",
+    )
+    parser.add_argument(
+        "--secret-file",
+        action="append",
+        default=[],
+        metavar="NAME=PATH",
+        help=(
+            "走査する値を持つ 0600 のファイル (値は渡さない)。"
+            "`run:` の step に注入されない値の受け口。複数指定可"
+        ),
     )
 
 
@@ -473,13 +577,13 @@ def build_parser() -> argparse.ArgumentParser:
     scan_diff.add_argument("--repo", default=".")
     scan_diff.add_argument("--base", required=True)
     scan_diff.add_argument("--head", required=True)
-    add_secret_env_argument(scan_diff)
+    add_secret_arguments(scan_diff)
     scan_diff.set_defaults(func=cmd_scan_diff)
 
     scan_files = sub.add_parser(
         "scan-files", help="ファイルの中身をシークレットで走査する"
     )
-    add_secret_env_argument(scan_files)
+    add_secret_arguments(scan_files)
     scan_files.add_argument("paths", nargs="+")
     scan_files.set_defaults(func=cmd_scan_files)
     return parser

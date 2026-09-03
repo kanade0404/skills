@@ -73,21 +73,37 @@ workflow は起動しない。
 
 - **この job が見えるシークレットの実値** — `CLAUDE_CODE_OAUTH_TOKEN`、App の
   read / preflight / write トークン、`SKILL_IMPROVER_APP_PRIVATE_KEY`、job の
-  `GITHUB_TOKEN`。それぞれ **literal / base64 / base64url / hex** の姿で探し、
+  `GITHUB_TOKEN`、そして **`ACTIONS_RUNTIME_TOKEN`** (下記)。それぞれ
+  **literal / base64 / base64url / hex** の姿で探し、
   さらに**空白と `\n` `\r` `\t` エスケープを落とした姿**でも突き合わせる
   (折り返して埋め込むだけで一致を外せないため)。秘密鍵は**行単位**でも探す。
   `SKILL_IMPROVER_APP_ID` だけは短い数字列で誤検知にしかならないので対象外
 - **値を知らなくても拾う接頭辞** — `sk-ant-`、`ghs_` / `ghp_` / `ghu_` / `gho_`、
-  `github_pat_`、PEM 秘密鍵の `BEGIN ... PRIVATE KEY` 行
+  `github_pat_`、PEM 秘密鍵の `BEGIN ... PRIVATE KEY` 行、**run スコープの JWT**
+  (base64url 3 節で先頭 2 節が `eyJ` — 捕捉に失敗しても形だけで止まる)
 - **対象は差分テキストだけでなく、変更後ファイルの中身丸ごと** (`git show
   <sha>:<path>` の生 blob)。バイナリ扱いのファイルは差分に中身が出ないし、
   生 blob なら textconv / smudge フィルタで隠せない
 - **PR 本文ファイル**も同じ規則で走査する (`scan-files`)。OAuth トークンは
   `ghs_` 系の接頭辞に当たらないので、既存の接頭辞 grep だけでは足りない
 
+**`ACTIONS_RUNTIME_TOKEN` だけ受け渡しが違う**。これは artifact / cache API 用に
+GitHub Actions が **JavaScript action の step にだけ**注入する run スコープの JWT で、
+`claude-code-action` は JavaScript action なので agent のプロセスもこれを継承する
+(この workflow 自身、manifest の artifact upload / download でこのトークンに依存して
+いる)。漏れれば同じ run の artifact を差し替えられるので走査対象に入れたいが、
+`run:` の step にはそもそも注入されないため `SCAN_...: ${{ env.ACTIONS_RUNTIME_TOKEN }}`
+では空になる。そこで **agent の実行後に trusted な JavaScript action**
+(`actions/github-script`、full SHA で pin) を 1 つ走らせて `process.env` から捕まえ、
+`$RUNNER_TEMP` の 0700 ディレクトリに **0600 のファイル**として落とし、そのパスだけを
+走査 step に渡す (`manifest_guard.py --secret-file NAME=PATH`)。値は step output にも
+`GITHUB_ENV` にも載せない。**空なら step を落とす** — 見えない値を「走査した」ことには
+できない (fail-closed)。走査側も **symlink や 0600 でない mode のファイルは拒否**する。
+
 運用上の規律:
 
 - シークレットの値は**環境変数名で渡す** (コマンドラインは他プロセスから見える)。
+  環境変数に載らない値だけ、0600 のファイルのパスを `--secret-file` で渡す。
   検出しても**値も一致箇所も出力しない** — ログと summary に出るのはパスと
   「どの名前のシークレットか」だけ
 - 検査スクリプトは working tree からではなく **run を起動した commit の blob**
@@ -284,7 +300,8 @@ job の `GITHUB_TOKEN` は `improve` では **`contents: read` だけ**に絞っ
 **その `GITHUB_TOKEN` から書き込み能力を取り上げる**方で解いた: checkout は App の
 read トークン、preflight は App の preflight トークン、ブランチ push は App の write
 トークン、artifact は `ACTIONS_RUNTIME_TOKEN` を使うので、job の `GITHUB_TOKEN` に
-write が要る場面がそもそも無い。
+write が要る場面がそもそも無い (`ACTIONS_RUNTIME_TOKEN` 自体も agent に届くため、
+走査対象に入れてある — 上の「走査するもの」を参照)。
 
 **preflight トークンが `administration: write` を要る理由**: GitHub は ruleset の
 `bypass_actors` を **その ruleset への write 権限を持つ呼び出しにしか返さない**

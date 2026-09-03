@@ -358,6 +358,47 @@ jobs:
           chmod 0600 "$dest"
           echo "path=$dest" >> "$GITHUB_OUTPUT"
 
+      # `ACTIONS_RUNTIME_TOKEN` は artifact / cache API 用に GitHub Actions が
+      # **JavaScript action の step にだけ**注入する run スコープの JWT。
+      # `claude-code-action` は JavaScript action なので、そこから起動される agent の
+      # プロセスもこの値を継承する — つまり agent は `skills/<x>/**` や台帳に書ける。
+      # この workflow 自身が artifact のアップロード/ダウンロードでこのトークンに
+      # 依存している以上、漏れれば同じ run の artifact を差し替えられる。
+      #
+      # ところが `run:` の step にはそもそも注入されないので、
+      # `SCAN_...: ${{ env.ACTIONS_RUNTIME_TOKEN }}` では拾えない (空になる)。
+      # agent が終わった後に **trusted な JavaScript action** を 1 つ走らせて捕まえ、
+      # 0600 のファイルに落として走査スクリプトに渡す。値は step output にも
+      # `GITHUB_ENV` にも載せない (output はログにも後続 step にも広く出回る) —
+      # 後続に渡すのはファイルのパスだけ。空なら**走査できないので落とす**
+      # (fail-closed: 見えない値を「走査した」ことにはできない)。
+      - name: Capture ACTIONS_RUNTIME_TOKEN for the secret scan
+        id: runtime-token
+        if: steps.skill-improver.outcome == 'success'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const token = process.env.ACTIONS_RUNTIME_TOKEN || '';
+            if (!token) {
+              core.setFailed(
+                'ACTIONS_RUNTIME_TOKEN が空 — 走査できないので中止する (fail-closed)'
+              );
+              return;
+            }
+            // 固定パスは agent が先回りして symlink を置ける。毎回作り直す。
+            const dir = path.join(process.env.RUNNER_TEMP, 'si-runtime-token');
+            fs.rmSync(dir, { recursive: true, force: true });
+            fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+            fs.chmodSync(dir, 0o700);
+            const file = path.join(dir, 'actions-runtime-token');
+            fs.writeFileSync(file, token, { mode: 0o600 });
+            // mode は umask で削られることがあるので明示的に締め直す
+            // (走査スクリプトは 0600 でないファイルを受け付けない)。
+            fs.chmodSync(file, 0o600);
+            core.setOutput('path', file);
+
       # 書き込みトークンはここで初めて発行する。agent の実行中は runner のどこにも
       # 存在しないので、injection が成功しても持ち出せる write 権限が無い。
       - name: Mint a write-scoped App token
@@ -394,6 +435,8 @@ jobs:
           SCAN_PREFLIGHT_TOKEN: ${{ steps.preflight-token.outputs.token }}
           SCAN_WRITE_TOKEN: ${{ steps.write-token.outputs.token }}
           SCAN_JOB_GITHUB_TOKEN: ${{ github.token }}
+          # 環境変数では受け取れない値 (上の JS step が 0600 で落としたファイル)
+          RUNTIME_TOKEN_FILE: ${{ steps.runtime-token.outputs.path }}
         run: |
           set -uo pipefail
           failed=0
@@ -407,7 +450,8 @@ jobs:
               --secret-env SCAN_READ_TOKEN \
               --secret-env SCAN_PREFLIGHT_TOKEN \
               --secret-env SCAN_WRITE_TOKEN \
-              --secret-env SCAN_JOB_GITHUB_TOKEN
+              --secret-env SCAN_JOB_GITHUB_TOKEN \
+              --secret-file "SCAN_ACTIONS_RUNTIME_TOKEN=$RUNTIME_TOKEN_FILE"
           }
           emit_indexes() {
             # push できた行数から matrix の添字リストを作る (0 始まり)
@@ -488,6 +532,7 @@ jobs:
           SCAN_PREFLIGHT_TOKEN: ${{ steps.preflight-token.outputs.token }}
           SCAN_WRITE_TOKEN: ${{ steps.write-token.outputs.token }}
           SCAN_JOB_GITHUB_TOKEN: ${{ github.token }}
+          RUNTIME_TOKEN_FILE: ${{ steps.runtime-token.outputs.path }}
         run: |
           set -uo pipefail
           # mktemp -d で毎回別名にする (agent が先回りして作れる固定パスを使わない)
@@ -564,6 +609,7 @@ jobs:
                  --secret-env SCAN_PREFLIGHT_TOKEN \
                  --secret-env SCAN_WRITE_TOKEN \
                  --secret-env SCAN_JOB_GITHUB_TOKEN \
+                 --secret-file "SCAN_ACTIONS_RUNTIME_TOKEN=$RUNTIME_TOKEN_FILE" \
                  -- "$src"; then
               fail "にシークレットらしき値がある"; continue
             fi

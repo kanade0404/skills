@@ -7,6 +7,9 @@
 - 候補ブランチの差分と PR 本文が、この job の見えるシークレットの実値
   (literal / base64 / hex / 改行を挟んだ PEM) で走査され、検出時に**値そのものを
   出力しない**
+- 環境変数に載らない値 (`ACTIONS_RUNTIME_TOKEN`) は 0600 のファイル経由で渡せ、
+  symlink や owner-only でない mode のファイルは**受け付けない**
+- 値を知らない run スコープの JWT も接頭辞の網で拾う
 
 由来: agent は自分の GH_TOKEN を読めるため、manifest の任意の文字列フィールド
 (title 等) にトークンを載せられる。そこが PR のタイトルとして公開される経路を
@@ -79,7 +82,9 @@ class TestEntryValidation(unittest.TestCase):
         self.assertTrue(any("長すぎる" in p for p in problems), problems)
 
     def test_empty_title_and_bad_shapes_are_rejected(self) -> None:
-        self.assertTrue(any("title: 空" in p for p in guard.entry_problems(entry(title="  "))))
+        self.assertTrue(
+            any("title: 空" in p for p in guard.entry_problems(entry(title="  ")))
+        )
         self.assertTrue(
             any("branch" in p for p in guard.entry_problems(entry(branch="main")))
         )
@@ -87,7 +92,9 @@ class TestEntryValidation(unittest.TestCase):
             any("head_sha" in p for p in guard.entry_problems(entry(head_sha="abc")))
         )
         self.assertTrue(
-            any("ledger_id" in p for p in guard.entry_problems(entry(ledger_id="IMP-1")))
+            any(
+                "ledger_id" in p for p in guard.entry_problems(entry(ledger_id="IMP-1"))
+            )
         )
 
     def test_rebuild_drops_unknown_keys_and_normalises_body_file(self) -> None:
@@ -171,7 +178,9 @@ class TestDuplicateRejection(unittest.TestCase):
         code, err, wrote = self.sanitize(
             [
                 entry(ledger_id="", branch="improve/reconcile-a"),
-                entry(ledger_id="", branch="improve/reconcile-b", body_file="body-1.md"),
+                entry(
+                    ledger_id="", branch="improve/reconcile-b", body_file="body-1.md"
+                ),
             ]
         )
         self.assertEqual(code, 0, err)
@@ -200,6 +209,20 @@ FAKE_PEM = (
     + "\n".join("Zm9vYmFy" + str(i) + "K" * 55 for i in range(4))
     + "\n-----END RSA PRIVATE KEY-----\n"
 )
+#: ACTIONS_RUNTIME_TOKEN と同じ形 (base64url の 3 節、先頭 2 節は `eyJ`)。
+FAKE_JWT = (
+    "eyJ" + "hbGciOiJIUzI1NiJ9" + ".eyJ" + "zY3AiOiJBY3Rpb25zIn0" + "." + "c2ln" * 4
+)
+#: 接頭辞の網には当たらない、不透明なだけの値 (ファイル経由の受け渡し用)。
+FAKE_FILE_SECRET = "runtime-value-" + "q7" * 20
+
+
+def write_secret_file(directory: str, name: str, value: str, mode: int = 0o600) -> Path:
+    """走査対象を 0600 のファイルとして置く (JS step が作る形を再現する)。"""
+    path = Path(directory) / name
+    path.write_text(value, encoding="utf-8")
+    path.chmod(mode)
+    return path
 
 
 def scan_env(**values: str) -> dict[str, str]:
@@ -292,6 +315,57 @@ class TestNeedlesFromEnv(unittest.TestCase):
         self.assertTrue(any("走査しない" in note for note in notes))
 
 
+class TestSecretFiles(unittest.TestCase):
+    """`--secret-file` は 0600 の実ファイルからだけ値を読む。"""
+
+    def test_trailing_newline_is_stripped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_secret_file(tmp, "tok", FAKE_FILE_SECRET + "\n")
+            self.assertEqual(guard.read_secret_file(path), FAKE_FILE_SECRET.encode())
+
+    def test_symlink_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            real = write_secret_file(tmp, "real", FAKE_FILE_SECRET)
+            link = Path(tmp) / "link"
+            link.symlink_to(real)
+            with self.assertRaises(guard.SecretFileError) as ctx:
+                guard.read_secret_file(link)
+            self.assertIn("symlink", str(ctx.exception))
+
+    def test_world_readable_file_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_secret_file(tmp, "tok", FAKE_FILE_SECRET, mode=0o644)
+            with self.assertRaises(guard.SecretFileError) as ctx:
+                guard.read_secret_file(path)
+            self.assertIn("0600", str(ctx.exception))
+
+    def test_bad_spec_is_refused(self) -> None:
+        with self.assertRaises(guard.SecretFileError):
+            guard.parse_secret_file_spec("/tmp/no-name")
+
+    def test_needles_cover_literal_base64_and_hex(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_secret_file(tmp, "tok", FAKE_FILE_SECRET)
+            needles, notes = guard.needles_from_files([f"RT={path}"])
+        labels = [label for label, _ in needles]
+        self.assertIn("RT (literal)", labels)
+        self.assertIn("RT (base64)", labels)
+        self.assertIn("RT (hex)", labels)
+        self.assertEqual(notes, [])
+
+
+class TestJwtPrefixPattern(unittest.TestCase):
+    """実値を知らなくても run スコープの JWT の形は拾う。"""
+
+    def test_jwt_shape_is_caught_without_any_needle(self) -> None:
+        reasons = guard.scan_blob(f"token: {FAKE_JWT}\n".encode(), [])
+        self.assertTrue(any("JWT" in reason for reason in reasons))
+
+    def test_ordinary_dotted_text_is_not_flagged(self) -> None:
+        clean = "参考: skills/tdd/SKILL.md の Step 3.1.2 を見ること\n".encode()
+        self.assertEqual(guard.scan_blob(clean, []), [])
+
+
 class TestScanFilesCli(unittest.TestCase):
     def test_hit_reports_path_and_never_the_value(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -320,6 +394,68 @@ class TestScanFilesCli(unittest.TestCase):
                 code, err = run(["scan-files", "--secret-env", "SCAN_TOK", str(body)])
         self.assertEqual(code, 1)
         self.assertIn("走査", err)
+
+    def scan_with_file(self, tmp: str, payload: bytes) -> tuple[int, str]:
+        """0600 のファイルだけを走査対象にして本文を検査する。"""
+        secret = write_secret_file(tmp, "rt.token", FAKE_FILE_SECRET)
+        body = Path(tmp) / "body.md"
+        body.write_bytes(payload)
+        return run(
+            [
+                "scan-files",
+                "--secret-file",
+                f"SCAN_ACTIONS_RUNTIME_TOKEN={secret}",
+                str(body),
+            ]
+        )
+
+    def test_secret_from_file_is_caught_in_every_encoding(self) -> None:
+        for label, payload in (
+            ("literal", f"tok={FAKE_FILE_SECRET}\n".encode()),
+            ("base64", base64.b64encode(FAKE_FILE_SECRET.encode())),
+            ("hex", binascii.hexlify(FAKE_FILE_SECRET.encode())),
+        ):
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                code, err = self.scan_with_file(tmp, payload)
+                self.assertEqual(code, 1)
+                self.assertIn("SCAN_ACTIONS_RUNTIME_TOKEN", err)
+                # 報告に載るのは名前と符号化の種類だけ — 値そのものは出さない
+                self.assertNotIn(FAKE_FILE_SECRET, err)
+                self.assertNotIn(payload.decode(), err)
+
+    def test_clean_body_passes_with_a_secret_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            code, err = self.scan_with_file(tmp, "普通の本文\n".encode())
+        self.assertEqual(code, 0, err)
+
+    def test_symlinked_secret_file_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            real = write_secret_file(tmp, "real", FAKE_FILE_SECRET)
+            link = Path(tmp) / "link"
+            link.symlink_to(real)
+            body = Path(tmp) / "body.md"
+            body.write_text("ok\n", encoding="utf-8")
+            code, err = run(["scan-files", "--secret-file", f"RT={link}", str(body)])
+        self.assertEqual(code, 1)
+        self.assertIn("symlink", err)
+        self.assertNotIn(FAKE_FILE_SECRET, err)
+
+    def test_world_readable_secret_file_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            secret = write_secret_file(tmp, "rt", FAKE_FILE_SECRET, mode=0o644)
+            body = Path(tmp) / "body.md"
+            body.write_text("ok\n", encoding="utf-8")
+            code, err = run(["scan-files", "--secret-file", f"RT={secret}", str(body)])
+        self.assertEqual(code, 1)
+        self.assertIn("0600", err)
+        self.assertNotIn(FAKE_FILE_SECRET, err)
+
+    def test_jwt_shape_in_a_body_is_caught(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            code, err = self.scan_with_file(tmp, f"runtime: {FAKE_JWT}\n".encode())
+        self.assertEqual(code, 1)
+        self.assertIn("JWT", err)
+        self.assertNotIn(FAKE_JWT, err)
 
 
 class TestScanDiffCli(unittest.TestCase):
@@ -421,6 +557,83 @@ class TestScanDiffCli(unittest.TestCase):
         code, err = self.scan("does-not-exist")
         self.assertEqual(code, 1)
         self.assertIn("差分を読めなかった", err)
+
+    def scan_with_file(self, head: str, secret: Path) -> tuple[int, str]:
+        """環境変数を一切使わず、0600 のファイルだけで差分を走査する。"""
+        return run(
+            [
+                "scan-diff",
+                "--repo",
+                self.repo,
+                "--base",
+                "main",
+                "--head",
+                head,
+                "--secret-file",
+                f"SCAN_ACTIONS_RUNTIME_TOKEN={secret}",
+            ]
+        )
+
+    def test_secret_from_file_is_caught_in_every_encoding(self) -> None:
+        # ACTIONS_RUNTIME_TOKEN は `run:` の step に注入されないので、実運用でも
+        # 走査対象はこのファイル 1 本だけになる
+        with tempfile.TemporaryDirectory() as keydir:
+            secret = write_secret_file(keydir, "rt.token", FAKE_FILE_SECRET)
+            for name, blob in (
+                ("literal", f"tok={FAKE_FILE_SECRET}\n".encode()),
+                ("b64", base64.b64encode(FAKE_FILE_SECRET.encode())),
+                ("hex", binascii.hexlify(FAKE_FILE_SECRET.encode())),
+            ):
+                with self.subTest(name=name):
+                    self.git("switch", "-q", "main")
+                    self.commit_branch(name, f"skills/tdd/{name}.txt", blob)
+                    code, err = self.scan_with_file(name, secret)
+                    self.assertEqual(code, 1)
+                    self.assertIn(f"skills/tdd/{name}.txt", err)
+                    self.assertNotIn(FAKE_FILE_SECRET, err)
+                    self.assertNotIn(blob.decode(), err)
+
+    def test_clean_branch_passes_with_a_secret_file(self) -> None:
+        with tempfile.TemporaryDirectory() as keydir:
+            secret = write_secret_file(keydir, "rt.token", FAKE_FILE_SECRET)
+            self.commit_branch("clean-file", "skills/tdd/SKILL.md", "改善\n".encode())
+            code, err = self.scan_with_file("clean-file", secret)
+        self.assertEqual(code, 0, err)
+
+    def test_symlinked_secret_file_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as keydir:
+            real = write_secret_file(keydir, "real", FAKE_FILE_SECRET)
+            link = Path(keydir) / "link"
+            link.symlink_to(real)
+            self.commit_branch("sym", "skills/tdd/SKILL.md", "改善\n".encode())
+            code, err = self.scan_with_file("sym", link)
+        self.assertEqual(code, 1)
+        self.assertIn("symlink", err)
+        self.assertNotIn(FAKE_FILE_SECRET, err)
+
+    def test_world_readable_secret_file_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as keydir:
+            secret = write_secret_file(keydir, "rt", FAKE_FILE_SECRET, mode=0o644)
+            self.commit_branch("perm", "skills/tdd/SKILL.md", "改善\n".encode())
+            code, err = self.scan_with_file("perm", secret)
+        self.assertEqual(code, 1)
+        self.assertIn("0600", err)
+        self.assertNotIn(FAKE_FILE_SECRET, err)
+
+    def test_jwt_shape_in_a_branch_is_caught(self) -> None:
+        # 捕捉に失敗して実値を知らない場合でも、形だけで止まる
+        with tempfile.TemporaryDirectory() as keydir:
+            secret = write_secret_file(keydir, "rt.token", FAKE_FILE_SECRET)
+            self.commit_branch(
+                "jwt",
+                "improvements/ledger.jsonl",
+                f'{{"note": "{FAKE_JWT}"}}\n'.encode(),
+            )
+            code, err = self.scan_with_file("jwt", secret)
+        self.assertEqual(code, 1)
+        self.assertIn("improvements/ledger.jsonl", err)
+        self.assertIn("JWT", err)
+        self.assertNotIn(FAKE_JWT, err)
 
 
 if __name__ == "__main__":
