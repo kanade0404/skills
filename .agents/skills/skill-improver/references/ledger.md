@@ -70,22 +70,28 @@ open なら `set-status pr_open`、closed / merged なら `pr_open` の行と同
 finding は二度と提案されない。
 
 そこで書き込み側で塞ぐ。`add --status pr_open` は `--pr` を必須にし、
-`set-status --status pr_open` は行に `pr` があるか `--pr` が渡されたときだけ通し、
-`link-pr` は `--pr` が `https://.../pull/<番号>` の形であることを確かめる。
-`is_pending_row()` も `pr` が空の `pr_open` を pending にしない。
+`set-status --status pr_open` は行に `pr` があるか `--pr` が渡されたときだけ通す。
+さらに **status を問わず、保存する `pr` は `https://.../pull/<番号>` の形であること**を
+`add` / `set-status` / `link-pr` の全経路で検査する — 形の検査を `pr_open` にだけ
+掛けると、`proposed` + ブランチ名のような「開けない値を指す pending 行」が同じ袋小路を
+作る。`is_pending_row()` が pending と数えるのも `pr` がその形をしている行だけ。
 
 それでも過去の実行や手編集が残した行は入りうるので、`list --inconsistent` で
-列挙できるようにしてある (判定は `is_inconsistent_row()`)。Step 0 の修復は:
+列挙できるようにしてある (判定は `is_inconsistent_row()`)。拾うのは **`pr_open` なのに
+`pr` が空の行**と、**status を問わず `pr` が空でないのに PR URL の形をしていない行**の
+2 つ。Step 0 の修復はどちらも同じ:
 
 1. `improve/<target_skill>-<id>` という head branch の open PR を探す
    (ブランチ名が finding の id を含むので機械的に引ける)
 2. 見つかれば `link-pr` して紐付けを完成させる
-3. 見つからなければ `set-status --status proposed --notes "..."` で `pr` の無い
-   `proposed` に戻し、その finding を**出し直せる**状態にする
+3. 見つからなければ `set-status --status proposed --clear-pr --notes "..."` で
+   `pr` の無い `proposed` に戻し、その finding を**出し直せる**状態にする
 
 3 の遷移 (`pr_open → proposed`) は `verify-diff --mode reconcile` でも、
-**base 側の行の `pr` が空だった場合に限って**許す。`pr` が入っている `pr_open` を
-`proposed` に戻すのは、出した PR を「無かったこと」にする書き換えなので通さない。
+**base 側の行が辿れない場合 (`pr` が空、または PR URL の形をしていない) に限って**
+許す。開ける PR URL を持つ `pr_open` を `proposed` に戻すのは、出した PR を
+「無かったこと」にする書き換えなので通さない。reconcile モードは併せて、**触った行に
+開けない `pr` を残すこと**も拒否する。
 
 workflow 側の補償も同じ不変条件を守る: `link-pr` が落ちたとき、**台帳に
 `link-pr` + `set-status --status rejected --notes "link-pr failed: ..."` を
@@ -173,10 +179,10 @@ cwd から見た repo root。規約外の場所に台帳を置くときは `--sk
 | サブコマンド | 用途 |
 |---|---|
 | `add --source --target --finding --lever [--class] [--evidence ...] [--status] [--pr] [--notes] [--id] [--created]` | finding を 1 件記録。`recurrence` を自動計算し、`id` を内容から決める。`--class` は再発クラスキーの明示。`--id` は形式 (`IMP-YYYYMMDD-xxxxxxxxxx`) と重複を検査する。対象がメタスキルなら `--status` を無視して `excluded_meta` で記録し、**exit 2** を返す。`--status pr_open` には `--pr` が要る |
-| `set-status --id --status [--pr] [--notes]` | status を更新。`--status pr_open` は行に `pr` があるか `--pr` を渡したときだけ通る (辿れない `pr_open` を作らない) |
+| `set-status --id --status [--pr] [--clear-pr] [--notes]` | status を更新。`--status pr_open` は行に `pr` があるか `--pr` を渡したときだけ通る (辿れない `pr_open` を作らない)。`--pr` は status を問わず形を検査する。`--clear-pr` は Step 0 の修復経路が使う — 辿れない `pr` を空に戻す |
 | `link-pr --id --pr [--keep-status]` | PR URL を紐付け、既定で `status=pr_open` にする。`--pr` は `https://.../pull/<番号>` の形であること。`--keep-status` は補償経路が使う — `proposed` のまま `pr` だけ入れて「PR は実在する」ことを先に記録する |
 | `record-metrics --id --phase before\|after --metric KEY=VALUE [--metric ...]` | 指標を記録。両相が揃うと delta を表示する。非有限値 (`nan` / `inf`) は拒否 |
-| `list [--status ...] [--skill] [--missing-after] [--inconsistent] [--json]` | エントリを絞って列挙。Step 0 の突き合わせは `--status pr_open`、`--missing-after` (merged なのに `after` が空)、`--status proposed` (PR に紐付いていない = 修復対象)、`--inconsistent` (`pr_open` なのに `pr` が空 = 壊れた行) の 4 本を起点にする |
+| `list [--status ...] [--skill] [--missing-after] [--inconsistent] [--json]` | エントリを絞って列挙。Step 0 の突き合わせは `--status pr_open`、`--missing-after` (merged なのに `after` が空)、`--status proposed` (PR に紐付いていない = 修復対象)、`--inconsistent` (`pr_open` なのに `pr` が空、または `pr` が PR URL の形をしていない = 壊れた行) の 4 本を起点にする |
 | `report [--skill] [--json] [--fail-on-revert]` | skill 別の件数・**再発クラスキーとその件数**・status 内訳、before→after の delta、**merged without after metrics**、**revert candidate** を出力 |
 | `verify-diff --head <file> [--base <file>] --mode candidate\|reconcile [--ledger-id ID]` | ブランチの台帳差分が許された変更だけかを検査する (workflow の `verify` job 用) |
 | `check-target <skill>` | 改善対象にしてよいかの判定 |
@@ -231,7 +237,7 @@ added / removed / modified の 3 分類で行い、モードごとに許す形�
 |---|---|
 | `candidate` (改善ブランチ) | **追加 1 行だけ**。削除・既存行の変更は不可。追加行は `--ledger-id` と一致する id を持ち、`status` が `proposed`、`pr` が `null` であること |
 | 両モード共通 | **base / head のどちらかに id の重複があれば不合格**。重複があると id をキーにした差分計算が 2 行目以降を落とすので、同じ id を 2 行書くだけで「追加は 1 行だけ」の検査をすり抜けられる。base 側の重複は台帳自体が壊れている状態なのでこちらも通さない |
-| `reconcile` (突き合わせブランチ) | 削除は不可。既存行で変えてよいのは `status` / `pr` / `after` / `notes` だけで、`status` の遷移は `pr_open → merged`\|`rejected`、`merged → reverted`、`proposed` (pr 未設定) `→ pr_open`\|`rejected` (修復経路)、`pr_open` (pr が空) `→ proposed` (辿れない行を出し直す修復経路) のみ。追加行があれば `proposed` の形であること |
+| `reconcile` (突き合わせブランチ) | 削除は不可。既存行で変えてよいのは `status` / `pr` / `after` / `notes` だけで、`status` の遷移は `pr_open → merged`\|`rejected`、`merged → reverted`、`proposed` (pr 未設定) `→ pr_open`\|`rejected` (修復経路)、`pr_open` (pr が辿れない) `→ proposed` (辿れない行を出し直す修復経路) のみ。触った行の `pr` は空か、PR URL の形をしていること。追加行があれば `proposed` の形であること |
 
 `verify` job は **base (default branch) 側の `ledger.py`** でこの検査を実行する —
 候補ブランチのコピーを使ったら検査にならないため。違反があれば内容を並べて

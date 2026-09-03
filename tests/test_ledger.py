@@ -542,6 +542,77 @@ class TestCliRoundTrip(unittest.TestCase):
                     self.entries()[1]["pr"], "https://github.com/o/r/pull/8"
                 )
 
+    def test_malformed_pr_is_rejected_on_every_write_path_whatever_the_status(
+        self,
+    ) -> None:
+        """`proposed` でも開けない `pr` は保存させない。
+
+        形の検査を `pr_open` にだけ掛けると、`proposed` + ブランチ名という行が
+        作れてしまう。その行は Step 2.5 が pending として finding を抑止する
+        一方、指している先は PR ではない。
+        """
+        bad = "improve/tdd-IMP-20260903-aaaaaaaaaa"
+        # add --status proposed --pr <ブランチ名>
+        code, _ = run(
+            self.base(
+                "add", "--source", "retro", "--target", "tdd",
+                "--finding", "f", "--lever", "skill-edit", "--pr", bad,
+            )
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(self.entries(), [])
+
+        run(
+            self.base(
+                "add", "--source", "retro", "--target", "tdd",
+                "--finding", "f", "--lever", "skill-edit",
+            )
+        )
+        entry_id = self.only_id()
+
+        # set-status: status が pr_open でなくても形を検査する
+        code, _ = run(
+            self.base(
+                "set-status", "--id", entry_id, "--status", "proposed", "--pr", bad
+            )
+        )
+        self.assertEqual(code, 1)
+        self.assertIsNone(self.entries()[0]["pr"])
+
+        # link-pr も同じ値を拒否する
+        code, _ = run(self.base("link-pr", "--id", entry_id, "--pr", bad))
+        self.assertEqual(code, 1)
+        self.assertIsNone(self.entries()[0]["pr"])
+
+    def test_set_status_clear_pr_restores_a_repairable_row(self) -> None:
+        """Step 0 の修復経路: 辿れない pr を消して finding を出し直せる形に戻す。"""
+        run(
+            self.base(
+                "add", "--source", "retro", "--target", "tdd",
+                "--finding", "f", "--lever", "skill-edit",
+            )
+        )
+        entry_id = self.only_id()
+        entries = self.entries()
+        # 書き込み経路では作れないので、過去の実行が残した形を直接置く
+        entries[0]["pr"] = "improve/tdd-IMP-20260903-aaaaaaaaaa"
+        entries[0]["status"] = "pr_open"
+        ledger.save_entries(self.ledger_path, entries)
+        self.assertTrue(ledger.is_inconsistent_row(self.entries()[0]))
+
+        code, _ = run(
+            self.base(
+                "set-status", "--id", entry_id, "--status", "proposed",
+                "--clear-pr", "--notes", "対応する open PR が無い",
+            )
+        )
+        self.assertEqual(code, 0)
+        repaired = self.entries()[0]
+        self.assertIsNone(repaired["pr"])
+        self.assertEqual(repaired["status"], "proposed")
+        self.assertFalse(ledger.is_inconsistent_row(repaired))
+        self.assertFalse(ledger.is_pending_row(repaired))
+
     def test_set_status_pr_open_accepts_row_that_already_has_a_pr(self) -> None:
         run(
             self.base(
@@ -574,6 +645,15 @@ class TestCliRoundTrip(unittest.TestCase):
         entries[0]["status"] = "pr_open"
         ledger.save_entries(self.ledger_path, entries)
 
+        code, out = run(self.base("list", "--inconsistent", "--json"))
+        self.assertEqual(code, 0)
+        self.assertEqual([e["id"] for e in json.loads(out)], [entry_id])
+
+        # 開けない値を指す行も同じ列挙で拾う (status を問わない)
+        entries = self.entries()
+        entries[0]["status"] = "proposed"
+        entries[0]["pr"] = "improve/tdd-IMP-20260903-aaaaaaaaaa"
+        ledger.save_entries(self.ledger_path, entries)
         code, out = run(self.base("list", "--inconsistent", "--json"))
         self.assertEqual(code, 0)
         self.assertEqual([e["id"] for e in json.loads(out)], [entry_id])
@@ -943,6 +1023,20 @@ class TestPendingRow(unittest.TestCase):
                     ledger.is_pending_row({"status": status, "pr": "https://github.com/o/r/pull/1"})
                 )
 
+    def test_malformed_pr_is_not_pending(self) -> None:
+        """開けない値を指す行は pending にしない。
+
+        「空でない」だけを条件にすると、ブランチ名や書きかけの文字列でも
+        pending になり、Step 2.5 はその finding を抑止する一方 Step 0 はその値で
+        PR を引けない — 空の pr_open と同じ袋小路になる。
+        """
+        for status in ("pr_open", "proposed"):
+            for pr in ("improve/tdd-IMP-20260903-aaaaaaaaaa", "https://x/1", "not a url"):
+                with self.subTest(status=status, pr=pr):
+                    self.assertFalse(
+                        ledger.is_pending_row({"status": status, "pr": pr})
+                    )
+
     def test_pr_open_without_pr_is_not_pending(self) -> None:
         """辿れる PR が無い pr_open は pending に数えない。
 
@@ -968,6 +1062,14 @@ class TestInconsistentRow(unittest.TestCase):
         self.assertFalse(
             ledger.is_inconsistent_row({"status": "pr_open", "pr": "https://github.com/o/r/pull/1"})
         )
+
+    def test_malformed_pr_is_inconsistent_whatever_the_status(self) -> None:
+        # 空の pr_open だけを拾っていると、開けない値を持つ行が修復経路から漏れる
+        for status in ("pr_open", "proposed", "merged"):
+            with self.subTest(status=status):
+                self.assertTrue(
+                    ledger.is_inconsistent_row({"status": status, "pr": "improve/tdd-IMP-20260903-aaaaaaaaaa"})
+                )
 
     def test_other_statuses_are_not_inconsistent(self) -> None:
         for status in ("proposed", "merged", "rejected", "reverted", "excluded_meta"):
@@ -1084,7 +1186,7 @@ class TestVerifyDiff(unittest.TestCase):
     def test_reconcile_allows_settling_transitions(self) -> None:
         base = [
             self.entry("IMP-20260801-bbbbbbbbbb", status="pr_open", pr="https://github.com/o/r/pull/1"),
-            self.entry("IMP-20260701-dddddddddd", status="merged", pr="https://x/2"),
+            self.entry("IMP-20260701-dddddddddd", status="merged", pr="https://github.com/o/r/pull/2"),
         ]
         head = [
             dict(
@@ -1126,6 +1228,21 @@ class TestVerifyDiff(unittest.TestCase):
         head = [dict(base[0], status="proposed")]
         problems = ledger.check_reconcile_diff(base, head)
         self.assertTrue(any("許されない status 遷移" in p for p in problems), problems)
+
+    def test_reconcile_rejects_a_malformed_pr_on_a_touched_row(self) -> None:
+        # 突き合わせブランチにも開けない `pr` を書かせない
+        base = [self.entry("IMP-20260903-aaaaaaaaaa")]
+        head = [dict(base[0], status="pr_open", pr="improve/tdd-IMP-20260903-aaaaaaaaaa")]
+        problems = ledger.check_reconcile_diff(base, head)
+        self.assertTrue(any("PR URL の形" in p for p in problems), problems)
+
+    def test_reconcile_allows_clearing_a_malformed_pr(self) -> None:
+        # 修復経路: 辿れない値を空に戻して proposed へ返す
+        base = [
+            self.entry("IMP-20260903-aaaaaaaaaa", status="pr_open", pr="improve/tdd-IMP-20260903-aaaaaaaaaa")
+        ]
+        head = [dict(base[0], status="proposed", pr=None, notes="辿れないため戻した")]
+        self.assertEqual(ledger.check_reconcile_diff(base, head), [])
 
     def test_reconcile_rejects_illegal_field_and_transition(self) -> None:
         base = [self.entry("IMP-20260801-bbbbbbbbbb", status="pr_open", pr="https://github.com/o/r/pull/1")]

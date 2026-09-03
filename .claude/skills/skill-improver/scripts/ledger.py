@@ -440,6 +440,25 @@ def ledger_lock(path: Path) -> Iterator[None]:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+def pr_url_problem(pr: str) -> str | None:
+    """`pr` に保存してよい URL かを見て、駄目なら理由を返す (純関数)。"""
+    if not pr.strip():
+        return "pr が空"
+    if not PR_URL_RE.match(pr.strip()):
+        return f"pr {pr!r} が PR URL の形をしていない (https://.../pull/<番号>)"
+    return None
+
+
+def has_usable_pr(entry: dict[str, Any]) -> bool:
+    """その行の `pr` が実際に開ける PR URL かを返す (純関数)。
+
+    「空でない」だけでは足りない。ブランチ名や書きかけの文字列が入っていても
+    真になってしまい、Step 2.5 はそれを「PR が実在する」と読んで finding を
+    抑止する一方、Step 0 はその値で PR を引けない。
+    """
+    return pr_url_problem(str(entry.get("pr") or "")) is None
+
+
 def is_pending_row(entry: dict[str, Any]) -> bool:
     """その行が「もう PR として動いている finding」かを返す (純関数)。
 
@@ -451,40 +470,35 @@ def is_pending_row(entry: dict[str, Any]) -> bool:
       前に落ちた残骸 (`link-pr --keep-status` 直後の状態)。PR は実在するので、
       新規候補として二重に起票してはいけない
 
-    `proposed` かつ `pr` が空の行は「まだ PR が無い」ので pending ではない
-    (Step 0 の修復対象)。merged / rejected / reverted は過去の記録なので、
-    本当の再発を抑止しないよう pending に数えない。
+    どちらも **`pr` が実際に開ける PR URL であること**が条件。空でも、ブランチ名の
+    ような値でも pending にしない — 追える PR が無いのに pending として数えると、
+    Step 0 はその行を決着させる手段が無く、Step 2.5 は同じ finding を永久に抑止
+    する。そういう行は `is_inconsistent_row` で拾って修復する。
 
-    **`pr_open` でも `pr` が空なら pending にしない** — 追える PR が無いのに
-    pending として数えると、Step 0 はその行を決着させる手段が無く (URL が無い)、
-    Step 2.5 は同じ finding を永久に抑止する。`is_inconsistent_row` で拾って
-    修復する。
+    merged / rejected / reverted は過去の記録なので、本当の再発を抑止しないよう
+    pending に数えない。
     """
-    status = entry.get("status")
-    if status in ("pr_open", "proposed"):
-        return bool(str(entry.get("pr") or "").strip())
-    return False
+    if entry.get("status") not in ("pr_open", "proposed"):
+        return False
+    return has_usable_pr(entry)
 
 
 def is_inconsistent_row(entry: dict[str, Any]) -> bool:
-    """`pr_open` なのに `pr` が空、という辿れない行かを返す (純関数)。
+    """`pr` が辿れないのに PR があるかのように見える行かを返す (純関数)。
 
-    書き込み経路 (`add` / `set-status` / `link-pr`) はこの形を作らせないが、
+    2 つの形がある:
+
+    - `status == "pr_open"` なのに `pr` が空 — 決着させる URL が無い
+    - `pr` が空でないのに PR URL の形をしていない — 引けない値を指している
+
+    書き込み経路 (`add` / `set-status` / `link-pr`) はどちらも作らせないが、
     過去の実行が残した行や手編集で入り込みうる。放置すると finding が永久に
     抑止されるので、Step 0 が `list --inconsistent` で列挙して修復する。
     """
-    return entry.get("status") == "pr_open" and not str(
-        entry.get("pr") or ""
-    ).strip()
-
-
-def pr_url_problem(pr: str) -> str | None:
-    """`pr` に保存してよい URL かを見て、駄目なら理由を返す (純関数)。"""
-    if not pr.strip():
-        return "pr が空"
-    if not PR_URL_RE.match(pr.strip()):
-        return f"pr {pr!r} が PR URL の形をしていない (https://.../pull/<番号>)"
-    return None
+    pr = str(entry.get("pr") or "").strip()
+    if not pr:
+        return entry.get("status") == "pr_open"
+    return pr_url_problem(pr) is not None
 
 
 def missing_after(entries: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -619,14 +633,17 @@ def cmd_add(args: argparse.Namespace) -> int:
     # `pr_open` は「追える PR がある」ことを意味する status。URL 無しで記録すると
     # Step 0 は決着させる手段が無く、Step 2.5 はその finding を永久に抑止する。
     pr = (args.pr or "").strip()
-    if status == "pr_open":
+    # status を問わず、保存する `pr` は必ず開ける URL であること。`proposed` でも
+    # `pr` が入っていれば Step 2.5 は pending として finding を抑止するので、
+    # 形の検査を pr_open だけに掛けると同じ穴が残る。
+    if pr:
         problem = pr_url_problem(pr)
         if problem is not None:
-            print(
-                f"error: --status pr_open には --pr が要る ({problem})",
-                file=sys.stderr,
-            )
+            print(f"error: {problem}", file=sys.stderr)
             return EXIT_FAIL
+    elif status == "pr_open":
+        print("error: --status pr_open には --pr が要る (pr が空)", file=sys.stderr)
+        return EXIT_FAIL
 
     entry = new_entry(
         entry_id=entry_id,
@@ -665,6 +682,15 @@ def cmd_set_status(args: argparse.Namespace) -> int:
     if blocked is not None:
         return blocked
     pr = (args.pr or "").strip()
+    if pr and args.clear_pr:
+        print("error: --pr と --clear-pr は同時に使えない", file=sys.stderr)
+        return EXIT_FAIL
+    # status を問わず、保存する `pr` は必ず開ける URL であること。
+    if pr:
+        problem = pr_url_problem(pr)
+        if problem is not None:
+            print(f"error: {problem}", file=sys.stderr)
+            return EXIT_FAIL
     if args.status == "pr_open":
         # 既に紐付いているならそれを使い、無ければ --pr で渡させる。
         candidate = pr or str(entry.get("pr") or "")
@@ -678,6 +704,9 @@ def cmd_set_status(args: argparse.Namespace) -> int:
             return EXIT_FAIL
     if pr:
         entry["pr"] = pr
+    elif args.clear_pr:
+        # Step 0 の修復経路: 辿れない `pr` を消して finding を出し直せる形に戻す。
+        entry["pr"] = None
     entry["status"] = args.status
     if args.notes:
         entry["notes"] = args.notes
@@ -877,16 +906,24 @@ def check_reconcile_diff(
         illegal = sorted(changed - RECONCILE_MUTABLE_FIELDS)
         if illegal:
             problems.append(f"{entry_id}: 変更してはいけない項目 ({', '.join(illegal)})")
+        # 触った行に、開けない `pr` を残させない。空でない限り形を検査する
+        # (空に戻すのは辿れない行を出し直すための修復経路なので許す)。
+        head_pr = str(after.get("pr") or "").strip()
+        if head_pr:
+            problem = pr_url_problem(head_pr)
+            if problem is not None:
+                problems.append(f"{entry_id}: {problem}")
         old_status = str(before.get("status", ""))
         new_status = str(after.get("status", ""))
         if old_status != new_status:
             allowed = ALLOWED_STATUS_TRANSITIONS.get(old_status, frozenset())
             if old_status == "proposed" and before.get("pr") is not None:
                 allowed = frozenset()
-            # 追える PR が無い pr_open は決着させようがない。対応する open PR が
-            # 見つからなかった場合に限り、finding を出し直せるよう proposed へ
-            # 戻すことを許す (pr が入っている pr_open では許さない)。
-            if old_status == "pr_open" and not before.get("pr"):
+            # 追える PR が無い pr_open は決着させようがない (pr が空でも、
+            # 開けない値が入っていても同じ)。対応する open PR が見つからなかった
+            # 場合に限り、finding を出し直せるよう proposed へ戻すことを許す。
+            # 開ける PR URL を持つ pr_open では許さない。
+            if old_status == "pr_open" and not has_usable_pr(before):
                 allowed = allowed | {"proposed"}
             if new_status not in allowed:
                 problems.append(
@@ -1151,7 +1188,10 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument(
         "--pr",
         default="",
-        help="PR URL (--status pr_open で記録するときは必須)",
+        help=(
+            "PR URL (--status pr_open で記録するときは必須)。"
+            "status を問わず https://.../pull/<番号> の形であること"
+        ),
     )
     add.add_argument("--notes", default="")
     add.add_argument(
@@ -1176,6 +1216,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--pr",
         default="",
         help="PR URL を同時に紐付ける (pr_open にする行に PR URL が無いときは必須)",
+    )
+    set_status.add_argument(
+        "--clear-pr",
+        dest="clear_pr",
+        action="store_true",
+        help="紐付いている pr を空に戻す (Step 0 が辿れない行を修復するときに使う)",
     )
     set_status.add_argument("--notes", default="")
     set_status.set_defaults(func=cmd_set_status, locks=True)
