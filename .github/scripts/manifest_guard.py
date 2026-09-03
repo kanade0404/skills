@@ -7,8 +7,8 @@ agent が書いた manifest は **データ**であって、そのまま特権�
 
 1. `sanitize` — manifest を **許可したキーだけで組み直す**。未知のキーは落とし、
    各フィールドは形式・長さ・制御文字・トークン様文字列で検査する。さらに manifest
-   **全体**で `branch` と (空でない) `ledger_id` の一意性を見る — 行ごとの検査だけでは
-   同じ finding を 2 回起票する形が通ってしまう。
+   **全体**で `branch` と (空でない) `ledger_id` と `body_file` の一意性を見る —
+   行ごとの検査だけでは同じ finding を 2 回起票する形が通ってしまう。
 2. `check-text` — `gh pr create` に渡す直前の title / body を同じ規則で再検査する。
 3. `scan-diff` / `scan-files` — **候補ブランチの差分そのもの**と PR 本文ファイルを、
    呼び出し元の job が見えるシークレットの実値で走査する。manifest と本文だけを
@@ -128,13 +128,17 @@ def duplicate_problems(entries: Sequence[dict[str, str]]) -> list[str]:
     1 行ずつの検査は「同じ finding を 2 回起票する」形を通してしまう。publish は
     行ごとに `gh pr create` と `link-pr` を回すため、`branch` が重なれば同じ
     ブランチから 2 本の PR が立ち、`ledger_id` が重なれば 1 つの台帳行に 2 度
-    `link-pr` が走って先に書いた PR URL が消える。
+    `link-pr` が走って先に書いた PR URL が消える。`body_file` が重なれば、
+    stage job が両方の候補を同じ共有パス (`$stage/bodies/$body_base`) にコピーする
+    ため後勝ちで本文が上書きされ、publish は同じファイルを 2 行分読んで
+    先の candidate の PR に後の candidate の finding/evidence を貼り付けてしまう。
 
     `ledger_id` が空の行 (突き合わせ用の reconcile 行) は台帳の特定の行を指さない
-    ので、この一意性検査の対象外にする。
+    ので、この一意性検査の対象外にする。`body_file` はここに来る時点で
+    `rebuild_entry` により basename 化済みなので、その値をそのまま比較する。
     """
     problems: list[str] = []
-    for key in ("branch", "ledger_id"):
+    for key in ("branch", "ledger_id", "body_file"):
         seen: dict[str, int] = {}
         for lineno, entry in enumerate(entries, 1):
             value = entry.get(key, "")

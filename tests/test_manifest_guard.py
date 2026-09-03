@@ -186,6 +186,38 @@ class TestDuplicateRejection(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertTrue(wrote)
 
+    def test_duplicate_body_file_rejects_the_whole_manifest(self) -> None:
+        # branch / ledger_id は別々でも、body_file が同じなら stage job が
+        # 共有パスに後勝ちで上書きし、publish が同じ本文を 2 行に使ってしまう。
+        code, err, wrote = self.sanitize(
+            [
+                entry(),
+                entry(
+                    branch="improve/tdd-second",
+                    ledger_id="IMP-20260903-bbbbbbbbbb",
+                    title="別の title",
+                ),
+            ]
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("body_file", err)
+        self.assertFalse(wrote)
+
+    def test_distinct_body_files_pass(self) -> None:
+        code, err, wrote = self.sanitize(
+            [
+                entry(),
+                entry(
+                    branch="improve/tdd-second",
+                    ledger_id="IMP-20260903-bbbbbbbbbb",
+                    body_file="body-1.md",
+                    title="別の title",
+                ),
+            ]
+        )
+        self.assertEqual(code, 0, err)
+        self.assertTrue(wrote)
+
 
 class TestCheckTextCli(unittest.TestCase):
     def test_title_and_body_are_rechecked(self) -> None:
