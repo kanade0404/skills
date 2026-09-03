@@ -63,9 +63,9 @@ run」を押すまで走らない** ([GITHUB_TOKEN のドキュメント](https:
 
 そこで **workflow モードでは PR を作るのは agent ではない**。agent は改善ブランチを
 push し、環境変数 `MANIFEST` のファイルに 1 行 1 JSON
-(`{"branch":..., "title":..., "body_file":..., "ledger_id":..., "head_sha": "<40 桁の SHA>"}`)
-を追記するところまで (`head_sha` は push 直後の `git rev-parse origin/<branch>`)。
-`gh pr create` は allow-list から外してある。
+(`{"branch":..., "title":..., "body_file":..., "ledger_id":...}`) を追記するところまで。
+**`head_sha` は agent が書かない** — push を行う trusted step が、実際に push した
+ref から計算して manifest に足す。`gh pr create` は allow-list から外してある。
 
 ### job の分割 (権限の分離)
 
@@ -99,8 +99,8 @@ job 中に追加のネットワークアクセス (= 資格情報) が要らな�
 行として実在すること。`publish` は artifact 経由で受け取った値を自分でもう一度検証する。
 落ちた行は PR にならず job summary に出て job が赤になる (ブランチは調査用に残る)。
 
-**検証も起票もブランチ名ではなく `head_sha` を対象にする**。`improve` は push 直後の
-`git rev-parse origin/<branch>` を manifest に書き、`verify` は `origin/<branch>` が
+**検証も起票もブランチ名ではなく `head_sha` を対象にする**。`improve` の push step が
+push した ref の SHA を manifest に書き、`verify` は `origin/<branch>` が
 その SHA と一致することを確かめてから **SHA を checkout** して allow-list ゲートと
 検査を回す。`publish` は `gh pr create` の直前と `link-pr` の push 直前に
 `git ls-remote origin refs/heads/<branch>` で remote の先端を取り直し、`head_sha` と
@@ -114,9 +114,13 @@ job 中に追加のネットワークアクセス (= 資格情報) が要らな�
 > 「実行アイデンティティ」節。preflight がその存在を必須として検査する)。
 
 **PR 起票後に `link-pr` が落ちた場合の補償**: 台帳から辿れない PR をレビュー待ちに
-残さないため、`publish` はその PR を `gh pr close` して閉じる。補償自体が失敗したら
-その旨も job summary に出し、次回の Step 0 が「`proposed` かつ `pr == null` の行に
-対応する open PR」を修復対象として拾う。
+残さないため `publish` がその PR を閉じるが、**閉じる前に「閉じた」という事実を台帳に
+載せる** — 先に close だけすると「PR は closed、台帳は `proposed` / `pr == null`」と
+いう、どちらからも辿れない状態が残る。順序は (1) そのブランチで `link-pr` と
+`set-status --status rejected --notes "link-pr failed: ..."` を commit / push、
+(2) 成功したときだけ `gh pr close`。(1) が失敗したら **PR は open のまま残し**、
+job summary に修復対象として記録する (次回の Step 0 が「`proposed` かつ `pr == null` の
+行に対応する open PR」として拾う)。
 
 CI runner は `trigger-evals.yml` と同じく `python3` を直接呼ぶ (`uv` が無い runner
 前提) — ローカル / agent 実行 (Step 5 やこの下の Route 2) では `uv run python3` を使う。
@@ -138,18 +142,42 @@ CI runner は `trigger-evals.yml` と同じく `python3` を直接呼ぶ (`uv` �
 
 **前提条件 (すべて揃うまで workflow は起動しない)**:
 
-1. GitHub App を作る (権限: Contents read/write、Pull requests read/write)
+1. GitHub App を作る。権限は **Contents: read/write**、**Pull requests: read/write**、
+   **Issues: read** (`agent-feedback` ラベルの issue とそのコメントを読むため)
 2. その App をこのリポジトリにインストールする
 3. App ID と private key を repo secrets に置く
    (`SKILL_IMPROVER_APP_ID` / `SKILL_IMPROVER_APP_PRIVATE_KEY`)
 4. default branch の ruleset を作る (前節。`~DEFAULT_BRANCH` / enforcement=active /
    `pull_request` または `update` ルール / bypass に Integration を入れない)
 5. `improve/**` の ruleset を作る (`refs/heads/improve/**` / enforcement=active /
-   `update` ルール / **bypass はその App 1 件だけ**)
+   `update` ルール / **bypass はその App 1 件だけ**、bypass mode は
+   **「Always allow」** — `pull_request` モードでは直接 push を通せない)
 
 preflight は 3 と 5 を機械的に検査し (`actor_id` が `SKILL_IMPROVER_APP_ID` と一致し、
-`bypass_actors` がちょうど 1 件であることまで)、欠けていれば agent を起動せずに
-`exit 1` する。4 と 5 は repo 設定の変更なのでコード側では作れない。
+`bypass_mode` が `always` で、`bypass_actors` がちょうど 1 件であることまで)、欠けて
+いれば agent を起動せずに `exit 1` する。4 と 5 は repo 設定の変更なのでコード側では
+作れない。
+
+### トークンは 2 本に割る (agent は書き込みトークンを持たない)
+
+installation token は既定でインストール時の**全権限**を持つ。そのまま agent に渡すと、
+prompt injection が通ったときに書き込み権限ごと持っていかれる。そこで
+`permission-*` で明示的に絞ったうえで、**用途ごとに 2 本発行する**:
+
+| トークン | 権限 | 使う場所 |
+|---|---|---|
+| read | `contents: read` / `issues: read` / `pull-requests: read` | `improve` の checkout、preflight、**agent の `GH_TOKEN`** |
+| write | `contents: write` / `pull-requests: write` | agent の実行**後**の push step、`publish` job |
+
+さらに `improve` の checkout は `persist-credentials: false` にしてある。
+`.git/config` に資格情報を残さないので、agent が git 設定を読んでトークンを
+PR 本文に書き出す経路が無い。**書き込みトークンは agent の実行中に runner のどこにも
+存在しない** (実行後の step で初めて発行する)。
+
+その結果、**agent は push しない**: 改善ブランチにローカル commit するところまでで、
+push は後段の trusted step が行う。その step は manifest の `branch` を検証し、
+ローカル ref の存在を確かめ、**`head_sha` を push する ref から自分で計算して**
+manifest に書き戻す (agent の申告値は使わない)。
 
 `concurrency: skill-improver` で直列化しているのは、同時実行が同じ
 `improve/<skill>-<finding-id>` ブランチを取り合うのを防ぐため。

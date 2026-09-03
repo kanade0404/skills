@@ -28,6 +28,13 @@
 # push を 1 つのアイデンティティに絞れず、verify と publish の間に第三者が push できる
 # 窓が残るから。secrets か improve/** の ruleset が欠けていれば agent を起動せず落とす。
 #
+# **トークンは用途ごとに 2 本**。installation token は既定でインストール時の全権限を
+# 持つので permission-* で絞り、agent には read だけを渡す (checkout も
+# persist-credentials: false)。書き込みトークンは agent の実行後に初めて発行するので、
+# injection が通っても runner のどこにも write 権限が存在しない。その代わり agent は
+# push せず、ローカル commit までで止めて manifest に記録し、trusted step が
+# 検証してから push する (head_sha もそこで確定させる)。
+#
 # 人間の承認ゲートは PR レビュー。**手順として** default branch へ push も merge も
 # しない — contents: write は improve/* ブランチを push するために必要な権限であり、
 # それ自体は default branch への push を技術的に禁止できない。実効的な保証は default
@@ -91,22 +98,30 @@ jobs:
             exit 1
           fi
 
-      - name: Mint a GitHub App token
-        id: app-token
+      # agent に渡すのは **読み取り専用**のトークンだけ。installation token は
+      # 既定でインストール時の全権限を持つので、permission-* で明示的に絞る。
+      - name: Mint a read-only App token
+        id: read-token
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
         with:
           app-id: ${{ secrets.SKILL_IMPROVER_APP_ID }}
           private-key: ${{ secrets.SKILL_IMPROVER_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-issues: read
+          permission-pull-requests: read
 
-      # action は full commit SHA で固定する。この job は contents: write と
+      # action は full commit SHA で固定する。この job は
       # CLAUDE_CODE_OAUTH_TOKEN を持つため、可変タグを差し替えられると資格情報ごと
       # 奪われる。更新は SHA と併記コメントの両方を直す。
+      # persist-credentials: false — agent が .git/config からトークンを読み出して
+      # PR 本文などに書き出す経路を残さない (prompt injection の出口を塞ぐ)。
+      # push は agent ではなく後段の trusted step が行う。
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-          persist-credentials: true
-          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
+          token: ${{ steps.read-token.outputs.token }}
 
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -119,7 +134,7 @@ jobs:
       # (fail-closed)。ここで落ちたら ruleset を作ってから再実行する。
       - name: Require an active default-branch ruleset
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.read-token.outputs.token }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           APP_ID: ${{ secrets.SKILL_IMPROVER_APP_ID }}
         run: |
@@ -161,7 +176,9 @@ jobs:
                    and ((.rules // []) | any(.type == "update"))
                    and ((.bypass_actors // []) | length == 1)
                    and ((.bypass_actors // [])
-                        | any(.actor_type == "Integration" and .actor_id == $app_id))
+                        | any(.actor_type == "Integration"
+                              and .actor_id == $app_id
+                              and .bypass_mode == "always"))
                  ' > /dev/null; then
               echo "improve/** is restricted to the App by ruleset $id"
               improve_found=1
@@ -171,7 +188,8 @@ jobs:
           if [ "$improve_found" -ne 1 ]; then
             echo "::error::improve/** の ruleset が無いため中止する。" \
                  "refs/heads/improve/** を対象に enforcement=active / update ルール /" \
-                 "bypass_actors はこの App (Integration, actor_id=$APP_ID) 1 件だけ、" \
+                 "bypass_actors はこの App (Integration, actor_id=$APP_ID," \
+                 "bypass_mode=always) 1 件だけ、" \
                  "という ruleset を作ってから再実行すること" \
                  "— skills/skill-improver/references/scheduling.md"
             exit 1
@@ -190,6 +208,9 @@ jobs:
         # 指示文になる (prompt injection)。env で渡し、agent には data として読ませる
         env:
           FOCUS: ${{ inputs.focus }}
+          # 読み取り専用トークン。gh issue list / gh pr list / gh api の読み取りに使う。
+          # push 権限は持たせない — push は後段の trusted step が行う。
+          GH_TOKEN: ${{ steps.read-token.outputs.token }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # この job は untrusted な入力 (agent-feedback ラベルの issue / PR コメント) を
@@ -238,26 +259,76 @@ jobs:
               verify job の allow-list ゲートで落ちて PR にならない
             - メタスキル (SKILL.md の除外リスト) は編集せず、improvements/ledger.jsonl に
               excluded_meta で記録して実行レポートで報告する
-            - **PR は作らない** (workflow モードでは gh pr create は使えない)。
-              改善ブランチを push したら、**push 後に git rev-parse origin/<branch> で
-              先端の SHA を取り**、環境変数 MANIFEST のファイルに 1 行 1 JSON で
+            - **push も PR 作成もしない**。この job のトークンは読み取り専用で、
+              改善ブランチはローカルに commit するところまで (git switch -c → commit)。
+              push は後段の trusted step が、PR 起票は publish job が行う
+            - ローカルに commit したら、環境変数 MANIFEST のファイルに 1 行 1 JSON で
               追記する: {"branch": "improve/<skill>-<finding-id>", "title": "<PR title>",
-              "body_file": "<PR 本文のパス>", "ledger_id": "<IMP-...>",
-              "head_sha": "<40 桁の SHA>"}。後続 job はブランチ名ではなくこの SHA を
-              検証・起票の対象にする (検証後に押された commit が「検証済み」として
-              PR に載らないようにするため) — 記録した後にそのブランチへ push しない。
-              **本文ファイルは環境変数 BODIES のディレクトリの直下にだけ置く**
-              (別の場所を指したエントリは検証で落ちる)。検証・PR 起票・link-pr の
-              commit は後続 job が行う
+              "body_file": "<PR 本文のパス>", "ledger_id": "<IMP-...>"}。
+              **head_sha は書かない** — push した ref から trusted step が埋める
+            - **本文ファイルは環境変数 BODIES のディレクトリの直下にだけ置く**
+              (別の場所を指したエントリは検証で落ちる)
+            - **.git/config を読み書きしない**。資格情報は checkout に残していないが、
+              git の設定を触る必要はそもそも無い
             - Step 0 の突き合わせ結果 (set-status / record-metrics --phase after) も
               default branch には直接書かない。improve/ledger-reconcile-<YYYYMMDD>
-              ブランチに commit して push し、title "chore(ledger): reconcile <date>"
+              ブランチにローカル commit し、title "chore(ledger): reconcile <date>"
               の MANIFEST エントリとして登録する (ledger_id は空文字。このブランチは
               improvements/ledger.jsonl 以外を触らないこと)
             - default branch への push と PR の merge はしない。承認は PR レビューで行う
             - 収集や台帳操作のような機械的作業は model-policy に従って subagent に
               委譲する (main は意思決定に徹する)
             - 候補が 0 件なら MANIFEST を空のまま「今週は改善なし」と報告して終了する
+
+      # --- ここから trusted step (agent の出力を検証してから push する) --------
+      # 書き込みトークンはここで初めて発行する。agent の実行中は runner のどこにも
+      # 存在しないので、injection が成功しても持ち出せる write 権限が無い。
+      - name: Mint a write-scoped App token
+        id: write-token
+        if: steps.skill-improver.outcome == 'success'
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ secrets.SKILL_IMPROVER_APP_ID }}
+          private-key: ${{ secrets.SKILL_IMPROVER_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Push the improvement branches
+        if: steps.skill-improver.outcome == 'success'
+        env:
+          WRITE_TOKEN: ${{ steps.write-token.outputs.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          if [ ! -s "$MANIFEST" ]; then
+            echo "no improvement branch was recorded - nothing to push" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          remote="https://x-access-token:${WRITE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          failed=0
+          : > "$MANIFEST.new"
+          while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            branch="$(printf '%s' "$line" | jq -r '.branch // ""')"
+            if ! printf '%s' "$branch" | grep -Eq '^improve/[A-Za-z0-9._-]+$'; then
+              echo "- \`${branch:-<no branch>}\`: branch 名が不正 — push しない ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
+              failed=1; continue
+            fi
+            if ! git rev-parse --verify --quiet "refs/heads/$branch" > /dev/null; then
+              echo "- \`$branch\`: ローカルにそのブランチが無い — push しない ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
+              failed=1; continue
+            fi
+            # head_sha は agent の申告ではなく、いま push する ref から取る
+            head_sha="$(git rev-parse "refs/heads/$branch")"
+            if ! git push "$remote" "refs/heads/$branch:refs/heads/$branch" > /dev/null 2>&1; then
+              echo "- \`$branch\`: push に失敗 ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
+              failed=1; continue
+            fi
+            printf '%s' "$line" | jq -c --arg sha "$head_sha" '. + {head_sha: $sha}' >> "$MANIFEST.new"
+            echo "- \`$branch\` (\`$head_sha\`): push 済み" >> "$GITHUB_STEP_SUMMARY"
+          done < "$MANIFEST"
+          mv "$MANIFEST.new" "$MANIFEST"
+          exit "$failed"
 
       - name: Upload the manifest
         if: always() && steps.skill-improver.outcome == 'success'
@@ -490,12 +561,16 @@ jobs:
             exit 1
           fi
 
-      - name: Mint a GitHub App token
+      # installation token は既定でインストール時の全権限を持つ。この job が要るのは
+      # ブランチへの push と PR 起票だけなので permission-* で明示的に絞る。
+      - name: Mint a write-scoped App token
         id: app-token
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
         with:
           app-id: ${{ secrets.SKILL_IMPROVER_APP_ID }}
           private-key: ${{ secrets.SKILL_IMPROVER_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
 
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -549,6 +624,13 @@ jobs:
                || [ -L "$body_path" ] || [ ! -f "$body_path" ] \
                || [ "$(realpath "$body_path")" != "$bodies_real/$body_base" ]; then
               echo "- \`$branch\`: body_file が bodies/ 配下の通常ファイルでない ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
+              failed=1; echo "::endgroup::"; continue
+            fi
+            # 本文にトークンらしき文字列が混ざっていないか (多層防御)。
+            # agent は書き込みトークンを持たない設計だが、PR 本文は公開面なので
+            # 出口側でも見る。
+            if grep -Eq '(ghs_|ghp_|github_pat_|ghu_)[A-Za-z0-9_]{10,}' "$body_path"; then
+              echo "- \`$branch\`: 本文にトークンらしき文字列がある — PR は作らない ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
               failed=1; echo "::endgroup::"; continue
             fi
             if [ -n "$ledger_id" ] && \
@@ -609,15 +691,35 @@ jobs:
               echo "::endgroup::"; continue
             fi
 
-            # 紐付けに失敗したまま PR を残すと、台帳から辿れない PR が
-            # レビュー待ちに積まれる。作った PR を閉じて元に戻す。
+            # 紐付けに失敗したまま PR を残すと、台帳から辿れない PR がレビュー待ちに
+            # 積まれる。ただし **PR を閉じる前に、閉じたという事実を台帳に載せる** —
+            # 先に close だけすると「PR は closed、台帳は proposed / pr=null」という、
+            # どちらからも辿れない状態が残る。台帳への記録が push できたときだけ
+            # close し、できなければ PR は open のまま修復対象として残す。
             failed=1
             echo "- \`$branch\`: link-pr の commit / push に失敗 ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
-            if gh pr close "$pr_url" --comment \
-                 "台帳への link-pr が失敗したため自動的に閉じました。ブランチは残っています — 実行ログ: $RUN_URL"; then
-              echo "  - 補償: $pr_url を閉じた" >> "$GITHUB_STEP_SUMMARY"
+            remote_sha="$(git ls-remote origin "refs/heads/$branch" | cut -f1)"
+            if [ "$remote_sha" = "$head_sha" ] &&
+               git checkout --force -B "$branch" "$head_sha" &&
+               python3 "$TRUSTED_LEDGER" link-pr --ledger improvements/ledger.jsonl \
+                 --id "$ledger_id" --pr "$pr_url" --keep-status &&
+               python3 "$TRUSTED_LEDGER" set-status --ledger improvements/ledger.jsonl \
+                 --id "$ledger_id" --status rejected \
+                 --notes "link-pr failed in $RUN_URL; PR closed by compensation" &&
+               git -c user.name="github-actions[bot]" \
+                   -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+                   commit -m "chore(ledger): record failed link-pr for $ledger_id" \
+                   improvements/ledger.jsonl &&
+               git push origin "$branch"; then
+              if gh pr close "$pr_url" --comment \
+                   "台帳への link-pr が失敗したため自動的に閉じました。台帳には rejected として記録済みです。ブランチは残っています — 実行ログ: $RUN_URL"; then
+                echo "  - 補償: 台帳に rejected を記録して $pr_url を閉じた" >> "$GITHUB_STEP_SUMMARY"
+              else
+                echo "  - **補償の close に失敗: $pr_url が open のまま (台帳は rejected)。手で閉じること**" >> "$GITHUB_STEP_SUMMARY"
+              fi
             else
-              echo "  - **補償に失敗: $pr_url が未紐付けのまま open。手で閉じること**" >> "$GITHUB_STEP_SUMMARY"
+              echo "  - **台帳に記録できなかったため $pr_url は open のまま残す (修復対象)。" \
+                   "次回の Step 0 が proposed / pr=null の行として拾う**" >> "$GITHUB_STEP_SUMMARY"
             fi
             echo "::endgroup::"
           done < "$PASSED"

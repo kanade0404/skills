@@ -156,7 +156,7 @@ $LEDGER list --ledger "$tmp/<headRefName>.jsonl" --json
 
 同じ finding を追い直したい場合 (前の PR がレビューで方針変更になった等) は、その PR を閉じてから次の実行に回す — open な PR と競合する差分を並行して出さない。
 
-**`proposed` かつ `pr == null` のまま open PR がある行は、pending ではなく修復対象**。PR 起票の後に `link-pr` の commit / push が落ちるとこの形で残る (workflow は PR を閉じて補償するが、その補償自体が失敗した場合に残りうる)。新しい候補として拾い直さず、そのブランチで `link-pr` → commit → push を実行して紐付けを完成させる。
+**`proposed` かつ `pr == null` のまま open PR がある行は、pending ではなく修復対象**。PR 起票の後に `link-pr` の commit / push が落ちるとこの形で残る — workflow は「台帳に rejected を記録してから PR を閉じる」順で補償するが、**その記録自体が push できなかった場合は PR を open のまま残す** (どちらからも辿れない状態を作らないため)。新しい候補として拾い直さず、そのブランチで `link-pr` → commit → push を実行して紐付けを完成させる。
 
 ### Step 1 — 収集と分類 (main が実行)
 
@@ -269,17 +269,21 @@ workflow モードは job を 3 つに割ってある。**候補ブランチの�
 
 | job | 権限 | 役割 |
 |---|---|---|
-| `improve` | `contents: write` / `issues: read` | ruleset の preflight、agent 実行、ブランチ push、manifest の artifact 化 |
+| `improve` | `contents: write` / `issues: read` | ruleset の preflight、agent 実行 (読み取り専用トークン)、trusted step でのブランチ push、manifest の artifact 化 |
 | `verify` | `contents: read` のみ | manifest の検証、allow-list diff ゲート、ブランチ上での Step 5 の検査 |
 | `publish` | `contents: write` / `pull-requests: write` | 通ったブランチの `gh pr create`、`link-pr` の commit / push、失敗時の補償 |
 
-workflow モードでは `gh pr create` が使えない。改善ブランチを push したら、**push 後に `git rev-parse origin/<branch>` で先端の SHA を取り**、環境変数 `MANIFEST` のファイルに 1 行 1 JSON で追記して終わる:
+workflow モードでは **agent は push も PR 起票もしない**。agent が持つのは読み取り専用トークンだけで (checkout も `persist-credentials: false`)、改善ブランチにローカル commit するところまで。push は agent の実行後に発行される書き込みトークンで trusted step が行い、PR 起票は `publish` job が行う。書き込みトークンは agent の実行中に runner のどこにも存在しないので、injection が通っても持ち出せる write 権限が無い。
+
+agent が書くのは manifest の 1 行 1 JSON まで:
 
 ```json
-{"branch": "improve/<skill>-<finding-id>", "title": "<PR title>", "body_file": "<BODIES 直下のパス>", "ledger_id": "<IMP-...>", "head_sha": "<40 桁の SHA>"}
+{"branch": "improve/<skill>-<finding-id>", "title": "<PR title>", "body_file": "<BODIES 直下のパス>", "ledger_id": "<IMP-...>"}
 ```
 
-**検証も起票もブランチ名ではなく `head_sha` を対象にする**。ブランチ名で追い続けると、検証が終わってから起票までの間に押された commit が「検証済み」として PR に載る (TOCTOU)。`verify` は `origin/<branch>` が `head_sha` と一致することを確かめてからその SHA を checkout し、`publish` は `gh pr create` の直前と `link-pr` の push 直前に `git ls-remote` で remote の先端を取り直して再確認する。不一致ならそのブランチは起票しない (起票後に判明した場合は PR を閉じて補償する)。**agent (`improve` job) は manifest に記録した後、そのブランチに push しないこと** — 記録した SHA が動くと、そのブランチは検証済みとして扱えなくなる。`publish` が `link-pr` の commit を同じブランチに push するのは別で、直前の `git ls-remote` による再照合を通った後なので問題ない。
+**`head_sha` は agent が書かない** — push した ref から trusted step が計算して足す (agent の申告値を信用しない)。
+
+**検証も起票もブランチ名ではなく `head_sha` を対象にする**。ブランチ名で追い続けると、検証が終わってから起票までの間に押された commit が「検証済み」として PR に載る (TOCTOU)。`verify` は `origin/<branch>` が `head_sha` と一致することを確かめてからその SHA を checkout し、`publish` は `gh pr create` の直前と `link-pr` の push 直前に `git ls-remote` で remote の先端を取り直して再確認する。不一致ならそのブランチは起票しない (起票後に判明した場合は PR を閉じて補償する)。**agent (`improve` job) はそもそも push しない** (読み取り専用トークンしか持たない)。push 後にブランチが動くと検証済みとして扱えなくなるため、push は trusted step が 1 度だけ行う。`publish` が `link-pr` の commit を同じブランチに push するのは別で、直前の `git ls-remote` による再照合を通った後なので問題ない。
 
 > 最後の窓: 最後の照合と `gh pr create` の間はごく短いが 0 ではない。これを閉じるのは **`improve/**` への push を専用 GitHub App だけに制限する ruleset** の役目で、workflow の preflight がその存在を必須として検査する (`references/scheduling.md`)。
 
@@ -287,7 +291,7 @@ workflow モードでは `gh pr create` が使えない。改善ブランチを 
 
 **ブランチの差分は allow-list で制限される**。`skills/<target_skill>/**`、`.claude/skills/<target_skill>/**`、`.agents/skills/<target_skill>/**`、`improvements/ledger.jsonl` 以外を含むブランチは検査を実行する前に落とす (reconcile ブランチは `improvements/ledger.jsonl` のみ)。
 
-検証に落ちたブランチは PR にならず、失敗したコマンドと共に job summary に出て job が赤になる。ブランチは調査用に残る。PR を作った後で `link-pr` の commit / push に失敗した場合は、**その PR を自動的に閉じて補償する** (台帳から辿れない PR をレビュー待ちに残さない) — 補償自体が失敗したら job summary にその旨を出し、次回の Step 0 が修復対象として拾う。
+検証に落ちたブランチは PR にならず、失敗したコマンドと共に job summary に出て job が赤になる。ブランチは調査用に残る。PR を作った後で `link-pr` の commit / push に失敗した場合は、**まず台帳に「閉じた」事実を記録してから PR を閉じる** — 先に close だけすると「PR は closed、台帳は `proposed` / `pr == null`」というどちらからも辿れない状態が残るため。台帳への記録 (`link-pr` + `set-status --status rejected --notes`) が push できたときだけ `gh pr close` し、記録に失敗したら **PR は open のまま**残して次回の Step 0 の修復対象にする。
 
 workflow は **専用の GitHub App としてしか動かない**。`GITHUB_TOKEN` は ruleset の bypass actor になれず、`improve/**` への push を絞る ruleset を作れば workflow 自身の push が止まり、作らなければ検証と起票の間に第三者が push できる窓が残る — どちらも成立しないため、この経路は用意していない。App の secrets (`SKILL_IMPROVER_APP_ID` / `SKILL_IMPROVER_APP_PRIVATE_KEY`)、default branch の ruleset、`improve/**` の ruleset (bypass はその App 1 件だけ) が揃うまで preflight が `exit 1` する (セットアップは `references/scheduling.md`)。App として走るので `improve/*` PR の `pull_request` run も承認を挟まずに走るが、この「検証してから起票」の順序は変えない。
 

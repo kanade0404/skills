@@ -51,6 +51,12 @@ PR がある間じゅう同じ finding で PR を出し続ける。
 新しい候補として拾い直さず、そのブランチで `link-pr` → commit → push を実行して
 紐付けを完成させる。
 
+workflow 側の補償も同じ不変条件を守る: `link-pr` が落ちたとき、**台帳に
+`link-pr` + `set-status --status rejected --notes "link-pr failed: ..."` を
+push できたときだけ** PR を閉じる。台帳に書けなければ PR は open のまま残す —
+「PR は closed、台帳は `proposed` / `pr == null`」という、PR からも台帳からも
+辿れない状態を作らないため。
+
 ## エントリのフィールド
 
 | field | 型 | 内容 |
