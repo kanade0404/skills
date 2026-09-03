@@ -281,10 +281,28 @@ push した ref の SHA を manifest に書き、`verify` は `origin/<branch>` 
 ブランチ名で追い続けると、検証と起票の間に押された commit が「検証済み」として PR に
 載る (TOCTOU)。
 
-> **最後の窓**: 最後の照合と `gh pr create` の間はごく短いが 0 ではない。`link-pr` の
-> push は非 force なので remote が動いていればそこでも弾かれるが、窓そのものを消すのは
-> **`improve/**` への push をこの App だけに絞る ruleset** の役目である (下の
-> 「実行アイデンティティ」節。preflight がその存在を必須として検査する)。
+#### 検証済み SHA の不変条件は「不変な ref」では守れない
+
+**GitHub の PR head は必ず可変な branch である**。`gh pr create --head` に tag や
+commit SHA のような不変 ref を渡すことはできず、PR は常に「そのブランチの現在の
+先端」を指し続ける。つまり「検証した commit を指した PR を作る」ことを ref の性質で
+保証する手段は無い。この不変条件は**次の 3 つの重ね合わせ**で守る:
+
+1. **ruleset (`improve/**` の push をこの App 1 件に絞る)** — 第三者がブランチを
+   動かせる経路をそもそも塞ぐ。preflight がその存在を必須として検査する
+2. **workflow レベルの `concurrency` (`group: skill-improver` /
+   `cancel-in-progress: false`)** — 唯一の push 権限者である App 自身が、重なった
+   別 run から同じブランチを動かすことを防ぐ (2 つの run が同時に publish しない)
+3. **起票直後の head 再照合** — 上の 2 つを抜けた場合 (App の鍵の持ち主が手で
+   push した等) の最後の検出。`gh pr view <URL> --json headRefOid` を読み、
+   `head_sha` と一致しなければ **PR を閉じる**。取得に失敗した場合も不一致として
+   扱う (fail-closed)
+
+3 は `ledger_id` を持つ行だけの経路ではない。**台帳行を持たない候補 (reconcile
+ブランチ) も同じ照合と close を通る** — 台帳の書き込みだけを飛ばす。閉じた件数は
+`publish` step の `head_moved` output に載り、最終 step が run を赤にする
+(`secret_hit` / `push_failed` と同じ仕組み)。検証と起票の間にブランチが動いたこと
+自体が、1 か 2 が破れている証拠として調べるべき異常だから。
 
 **PR 起票後に `link-pr` が落ちた場合の補償**: 台帳から辿れない PR をレビュー待ちに
 残さないため `publish` がその PR を閉じるが、**閉じる前に「閉じた」という事実を台帳に
@@ -292,8 +310,13 @@ push した ref の SHA を manifest に書き、`verify` は `origin/<branch>` 
 いう、どちらからも辿れない状態が残る。順序は (1) そのブランチで `link-pr` と
 `set-status --status rejected --notes "link-pr failed: ..."` を commit / push、
 (2) 成功したときだけ `gh pr close`。(1) が失敗したら **PR は open のまま残し**、
-job summary に修復対象として記録する (次回の Step 0 が「`proposed` かつ `pr == null` の
-行に対応する open PR」として拾う)。
+job summary に修復対象として記録する (次回の Step 0 が head branch
+`improve/<skill>-<id>` の PR を**全状態で**引いて回収する)。
+
+**head の不一致だけは順序が逆**: 記録できなくても PR を閉じる。open のまま残すことは
+*検証していない commit を指した PR* をレビュー面に晒すことであり、辿れない台帳行より
+高くつく。台帳が `proposed` のまま残っても、Step 0 の全状態検索がその closed PR を
+見つけて `rejected` として決着させられる (`references/ledger.md`)。
 
 CI runner は `trigger-evals.yml` と同じく `python3` を直接呼ぶ (`uv` が無い runner
 前提) — ローカル / agent 実行 (Step 5 やこの下の Route 2) では `uv run python3` を使う。
@@ -378,8 +401,10 @@ agent の実行中も実行後も存在しない** (発行するのは別 runner
 その ref は bundle として `stage` に渡り、`stage` が検証・走査を通してから push する。
 `head_sha` は `stage` が **実際に push する ref から**取る (agent の申告値は使わない)。
 
-`concurrency: skill-improver` で直列化しているのは、同時実行が同じ
-`improve/<skill>-<finding-id>` ブランチを取り合うのを防ぐため。
+`concurrency: skill-improver` (`cancel-in-progress: false`) で直列化しているのは、
+同時実行が同じ `improve/<skill>-<finding-id>` ブランチを取り合うのを防ぐため。
+**唯一の push 権限者である App 自身が検証と起票の間にブランチを動かす経路**も
+これで塞がる (上の「検証済み SHA の不変条件」)。
 
 ### ブランチと PR の種別
 

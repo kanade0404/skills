@@ -102,15 +102,31 @@ $LEDGER list --inconsistent --json        # pr が辿れない壊れた行 (修�
 
 | 行 | 扱い |
 |---|---|
-| `pr` が入っている | **PR は実在する**。その PR の状態で決着させる — open なら `set-status --status pr_open`、closed / merged なら `pr_open` の行と同じく `rejected` / `merged` |
-| `pr` が空 | 対応する open PR があれば**修復対象** (そのブランチで `link-pr` → commit → push)。無ければ前回の実行が PR まで至らなかった候補なので、`notes` を見て再挑戦か `rejected` かを決める |
+| `pr` が入っている | **PR は実在する**。その PR の状態で決着させる — open なら `set-status --status pr_open`、merged なら `merged`、closed (未 merge) なら `rejected` |
+| `pr` が空 | 下記の**全状態の head branch 検索**で PR を回収する |
 
-**4 つ目の列挙も飛ばさない**。`pr` が辿れない行 — `pr_open` なのに `pr` が空、または status を問わず `pr` が PR URL の形をしていない (ブランチ名が入っている等) — は**どちらの経路からも動かせない** — Step 2.5 は pending としてその finding を抑止する一方、ここには決着させる URL が無いので、放置するとその finding は二度と提案されない。書き込み経路 (`add` / `set-status` / `link-pr`) はこの形を作らせないが、過去の実行や手編集が残した行は入りうる。見つけたら次の順で修復する:
+**4 つ目の列挙も飛ばさない**。`pr` が辿れない行 — `pr_open` なのに `pr` が空、または status を問わず `pr` が PR URL の形をしていない (ブランチ名が入っている等) — は**どちらの経路からも動かせない** — Step 2.5 は pending としてその finding を抑止する一方、ここには決着させる URL が無いので、放置するとその finding は二度と提案されない。書き込み経路 (`add` / `set-status` / `link-pr`) はこの形を作らせないが、過去の実行や手編集が残した行は入りうる。`pr` の空いた `proposed` と同じく、下記の**全状態の head branch 検索**で回収する。
 
-| 調べること | 扱い |
+#### head branch から PR を回収する (`pr` を持たない `proposed` / `pr` が辿れない行)
+
+ブランチ名は `improve/<target_skill>-<id>` で finding の id を含むので、PR は機械的に引ける。**`--state open` だけで引かない** — closed の PR は列挙から丸ごと落ち、merged の PR は `proposed` / `pr == null` の行を default branch に残す (突き合わせでは決着させられず、`--missing-after` は `merged` の行しか見ないので拾えない)。どちらもその finding を永久に抑止する:
+
+```bash
+branch="improve/<target_skill>-<id>"
+gh pr list --state all --head "$branch" --limit 20 \
+  --json number,state,mergedAt,url | jq 'sort_by(.number) | reverse'
+```
+
+新しい順に見て最初の 1 件で決着させる:
+
+| PR の状態 | 台帳の更新 |
 |---|---|
-| head branch が `improve/<target_skill>-<id>` の open PR がある | その URL で `link-pr` して紐付けを完成させる (ブランチ名が finding の id を含むので機械的に引ける) |
-| 対応する open PR が無い | `set-status --status proposed --clear-pr --notes "対応する PR が見つからない"` で `pr` の無い `proposed` に戻し、finding を**出し直せる**状態にする |
+| open | `link-pr --id <id> --pr <URL>` (`status` は `pr_open` になる) |
+| merged | `link-pr --id <id> --pr <URL> --keep-status` → `set-status --status merged` + 取れる after メトリクス |
+| closed (未 merge) | `link-pr --id <id> --pr <URL> --keep-status` → `set-status --status rejected --notes "<URL> は merge されずに閉じられた"` |
+| 1 件も無い | `proposed` のまま残す (`pr` に辿れない値が入っているなら `set-status --status proposed --clear-pr --notes "対応する PR が見つからない"`)。finding を**出し直せる**状態にして次回に回す |
+
+`verify-diff --mode reconcile` はこの回収に **head 側に開ける PR URL があること**を要求する (`references/ledger.md`)。PR を名指しできないまま `pr_open` / `merged` / `rejected` に進めるのは突き合わせではなく台帳の書き換えなので通らない。
 
 **2 つ目の列挙を飛ばさない**。after を取れないまま `merged` にしたエントリは `pr_open` の列挙から外れ、`report` の delta にも revert candidate にも現れない — 効果が測られないまま静かに消える唯一の経路なので、毎回ここで拾い直して取れるようになった指標を記録する (それでも取れないなら `notes` にその旨を残す)。
 
@@ -174,7 +190,7 @@ $LEDGER list --ledger "$tmp/<headRefName>.jsonl" --json
 
 同じ finding を追い直したい場合 (前の PR がレビューで方針変更になった等) は、その PR を閉じてから次の実行に回す — open な PR と競合する差分を並行して出さない。
 
-**`proposed` かつ `pr == null` のまま open PR がある行は、pending ではなく修復対象**。PR 起票の後に `link-pr` の commit / push が落ちるとこの形で残る — workflow は「台帳に rejected を記録してから PR を閉じる」順で補償するが、**その記録自体が push できなかった場合は PR を open のまま残す** (どちらからも辿れない状態を作らないため)。新しい候補として拾い直さず、そのブランチで `link-pr` → commit → push を実行して紐付けを完成させる。
+**`proposed` かつ `pr == null` の行は、pending ではなく修復対象**。PR 起票の後に `link-pr` の commit / push が落ちるとこの形で残る — workflow は「台帳に rejected を記録してから PR を閉じる」順で補償するが、**その記録自体が push できなかった場合は PR を open のまま残す** (どちらからも辿れない状態を作らないため)。新しい候補として拾い直さず、Step 0 の**全状態の head branch 検索**で回収する — 補償が落ちた PR は後から人間に closed / merged されうるので、open PR の一覧だけを見ると取りこぼす。
 
 ### Step 1 — 収集と分類 (main が実行)
 
@@ -313,9 +329,11 @@ agent が書くのは manifest の 1 行 1 JSON まで:
 
 **ブランチの差分は allow-list で制限される**。`skills/<target_skill>/**`、`.claude/skills/<target_skill>/**`、`.agents/skills/<target_skill>/**`、`improvements/ledger.jsonl` 以外を含むブランチは、`stage` が push する前に、`verify` が検査を実行する前に、それぞれ落とす (reconcile ブランチは `improvements/ledger.jsonl` のみ)。
 
-**台帳は行の粒度でも検査される**。パスの allow-list は `improvements/ledger.jsonl` をファイル単位で許すので、1 行足すついでに他の行を書き換える余地が残る。`verify` は base 側の `ledger.py verify-diff` で、改善ブランチには「自分の 1 行の追加だけ」(id が manifest の `ledger_id` と一致し、`proposed` / `pr == null`)、reconcile ブランチには「`status` / `pr` / `after` / `notes` を許された遷移で進めるだけ」を要求する (`references/ledger.md`)。
+**台帳は行の粒度でも検査される**。パスの allow-list は `improvements/ledger.jsonl` をファイル単位で許すので、1 行足すついでに他の行を書き換える余地が残る。`verify` は base 側の `ledger.py verify-diff` で、改善ブランチには「自分の 1 行の追加だけ」(id が manifest の `ledger_id` と一致し、`proposed` / `pr == null`)、reconcile ブランチには「`status` / `pr` / `after` / `notes` を許された遷移で進めるだけ」を要求する (`proposed` からの決着は head 側に開ける PR URL があるときだけ通る。`references/ledger.md`)。
 
 検証に落ちたブランチは PR にならず、失敗したコマンドと共に job summary に出て job が赤になる。ブランチは調査用に残る。PR を作った後で `link-pr` の commit / push に失敗した場合は、**まず台帳に「閉じた」事実を記録してから PR を閉じる** — 先に close だけすると「PR は closed、台帳は `proposed` / `pr == null`」というどちらからも辿れない状態が残るため。台帳への記録 (`link-pr` + `set-status --status rejected --notes`) が push できたときだけ `gh pr close` し、記録に失敗したら **PR は open のまま**残して次回の Step 0 の修復対象にする。
+
+**起票の直後に PR の head を再照合する**。GitHub の PR head は必ず可変な branch なので、「検証した commit を指す」ことを不変 ref で保証することはできない — `gh pr view <URL> --json headRefOid` を読んで検証済み SHA と突き合わせ、動いていれば (取得できなければ) **PR を閉じる**。この照合は `ledger_id` を持たない reconcile ブランチも通る (台帳の書き込みだけを飛ばす)。ここだけは記録より close を優先する — 検証していない commit を指した PR をレビュー面に残す方が高くつくため。閉じた件数は run を赤で終わらせる (`references/scheduling.md`)。
 
 workflow は **専用の GitHub App としてしか動かない**。`GITHUB_TOKEN` は ruleset の bypass actor になれず、`improve/**` への push を絞る ruleset を作れば workflow 自身の push が止まり、作らなければ検証と起票の間に第三者が push できる窓が残る — どちらも成立しないため、この経路は用意していない。App の secrets (`SKILL_IMPROVER_APP_ID` / `SKILL_IMPROVER_APP_PRIVATE_KEY`)、default branch の ruleset、`improve/**` の ruleset (bypass はその App 1 件だけ) が揃うまで preflight が `exit 1` する。App に要る権限は **Contents: read/write**、**Pull requests: read/write**、**Issues: read**、**Administration: write** — 最後の 1 つは ruleset の `bypass_actors` が write 権限のある呼び出しにしか返らないためで、これが無いと bypass の検査が素通りする (セットアップは `references/scheduling.md`)。App として走るので `improve/*` PR の `pull_request` run も承認を挟まずに走るが、この「検証してから起票」の順序は変えない。
 

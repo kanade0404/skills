@@ -613,6 +613,52 @@ class TestCliRoundTrip(unittest.TestCase):
         self.assertFalse(ledger.is_inconsistent_row(repaired))
         self.assertFalse(ledger.is_pending_row(repaired))
 
+    def test_set_status_rejects_pr_open_with_clear_pr(self) -> None:
+        """`--status pr_open --clear-pr` は `pr` の無い pr_open を作ってしまう。
+
+        Step 0 は決着させる URL を持てず、Step 2.5 はその行を pending として
+        finding を永久に抑止する。片方ずつは正当な操作なので、組み合わせだけを
+        **書き換える前に** 拒否する。
+        """
+        run(
+            self.base(
+                "add", "--source", "retro", "--target", "tdd",
+                "--finding", "f", "--lever", "skill-edit",
+            )
+        )
+        entry_id = self.only_id()
+        run(
+            self.base(
+                "link-pr", "--id", entry_id, "--pr", "https://github.com/o/r/pull/5",
+            )
+        )
+        code, _ = run(
+            self.base("set-status", "--id", entry_id, "--status", "pr_open", "--clear-pr")
+        )
+        self.assertEqual(code, 1)
+        # 行は 1 文字も動いていない (拒否は書き換えの前)
+        unchanged = self.entries()[0]
+        self.assertEqual(unchanged["pr"], "https://github.com/o/r/pull/5")
+        self.assertEqual(unchanged["status"], "pr_open")
+        self.assertFalse(ledger.is_inconsistent_row(unchanged))
+
+        # 片方ずつは今まで通り効く
+        code, _ = run(
+            self.base(
+                "set-status", "--id", entry_id, "--status", "proposed", "--clear-pr",
+            )
+        )
+        self.assertEqual(code, 0)
+        self.assertIsNone(self.entries()[0]["pr"])
+        code, _ = run(
+            self.base(
+                "set-status", "--id", entry_id, "--status", "pr_open",
+                "--pr", "https://github.com/o/r/pull/6",
+            )
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(self.entries()[0]["pr"], "https://github.com/o/r/pull/6")
+
     def test_set_status_pr_open_accepts_row_that_already_has_a_pr(self) -> None:
         run(
             self.base(
@@ -1204,6 +1250,67 @@ class TestVerifyDiff(unittest.TestCase):
         base = [self.entry("IMP-20260903-aaaaaaaaaa")]
         head = [dict(base[0], status="pr_open", pr="https://github.com/o/r/pull/1")]
         self.assertEqual(ledger.check_reconcile_diff(base, head), [])
+
+    def test_reconcile_allows_settling_a_proposed_row_that_has_a_pr(self) -> None:
+        """PR URL を持ったまま proposed で残った行は、その PR の状態で決着させられる。
+
+        `link-pr --keep-status` までは通ったが `set-status` の前に落ちた残骸。
+        Step 0 はこの行を head branch の PR (全状態) で引いて決着させるので、
+        遷移を塞ぐと verify-diff が毎回落ち、行は永久に transient のまま残る。
+        """
+        pr = "https://github.com/o/r/pull/7"
+        for new_status in ("pr_open", "merged", "rejected"):
+            with self.subTest(new_status=new_status):
+                base = [self.entry("IMP-20260903-aaaaaaaaaa", status="proposed", pr=pr)]
+                head = [dict(base[0], status=new_status, notes="reconciled")]
+                self.assertEqual(ledger.check_reconcile_diff(base, head), [])
+
+    def test_reconcile_allows_recovering_a_proposed_row_with_an_empty_pr(self) -> None:
+        """publish の補償が push できず残った proposed / pr=null の回収経路。
+
+        Step 0 が `improve/<skill>-<id>` の PR を全状態で引き、open / merged /
+        closed に応じて link-pr してから決着させる。head 側に開ける PR URL が
+        入っていることが条件。
+        """
+        pr = "https://github.com/o/r/pull/8"
+        for new_status in ("pr_open", "merged", "rejected"):
+            with self.subTest(new_status=new_status):
+                base = [self.entry("IMP-20260903-aaaaaaaaaa")]
+                head = [dict(base[0], status=new_status, pr=pr, notes="回収")]
+                self.assertEqual(ledger.check_reconcile_diff(base, head), [])
+
+    def test_reconcile_rejects_settling_a_proposed_row_without_a_pr(self) -> None:
+        """PR を名指しできない proposed の決着は突き合わせではなく書き換え。"""
+        for new_status in ("pr_open", "merged", "rejected"):
+            with self.subTest(new_status=new_status):
+                base = [self.entry("IMP-20260903-aaaaaaaaaa")]
+                head = [dict(base[0], status=new_status, notes="根拠なし")]
+                problems = ledger.check_reconcile_diff(base, head)
+                self.assertTrue(
+                    any("開ける PR URL が要る" in p for p in problems), problems
+                )
+
+    def test_reconcile_rejects_settling_a_proposed_row_with_a_malformed_pr(self) -> None:
+        """ブランチ名のような開けない値では回収したことにならない。"""
+        base = [self.entry("IMP-20260903-aaaaaaaaaa")]
+        head = [
+            dict(
+                base[0],
+                status="merged",
+                pr="improve/tdd-IMP-20260903-aaaaaaaaaa",
+            )
+        ]
+        problems = ledger.check_reconcile_diff(base, head)
+        self.assertTrue(any("PR URL の形" in p for p in problems), problems)
+        self.assertTrue(any("開ける PR URL が要る" in p for p in problems), problems)
+
+    def test_reconcile_still_rejects_transitions_outside_the_table(self) -> None:
+        """proposed の回収を広げても、表に無い遷移は PR URL があっても通さない。"""
+        pr = "https://github.com/o/r/pull/9"
+        base = [self.entry("IMP-20260903-aaaaaaaaaa", status="proposed", pr=pr)]
+        head = [dict(base[0], status="reverted")]
+        problems = ledger.check_reconcile_diff(base, head)
+        self.assertTrue(any("許されない status 遷移" in p for p in problems), problems)
 
     def test_reconcile_allows_untraceable_pr_open_back_to_proposed(self) -> None:
         """辿れない `pr_open` は finding を出し直せるよう proposed に戻せる。

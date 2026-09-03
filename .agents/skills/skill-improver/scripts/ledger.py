@@ -685,6 +685,17 @@ def cmd_set_status(args: argparse.Namespace) -> int:
     if pr and args.clear_pr:
         print("error: --pr と --clear-pr は同時に使えない", file=sys.stderr)
         return EXIT_FAIL
+    # `pr` の無い `pr_open` は書き込み経路が作ってはいけない形 (Step 0 は決着させる
+    # URL を持たず、Step 2.5 はその finding を pending として永久に抑止する)。
+    # 片方ずつは正当な操作なので、組み合わせだけを **書き換える前に** 拒否する。
+    if args.clear_pr and args.status == "pr_open":
+        print(
+            "error: --status pr_open と --clear-pr は同時に使えない"
+            " (pr の無い pr_open は決着させる URL が無く、その finding を永久に"
+            "抑止する)。pr を消すなら --status proposed に戻すこと",
+            file=sys.stderr,
+        )
+        return EXIT_FAIL
     # status を問わず、保存する `pr` は必ず開ける URL であること。
     if pr:
         problem = pr_url_problem(pr)
@@ -766,13 +777,20 @@ def cmd_record_metrics(args: argparse.Namespace) -> int:
 RECONCILE_MUTABLE_FIELDS: frozenset[str] = frozenset({"status", "pr", "after", "notes"})
 
 #: 突き合わせで許す status 遷移。それ以外は人間の判断を要する。
-#: proposed (pr 未設定) からの 2 つは、PR 起票後に link-pr が落ちた場合の修復経路。
+#: proposed からの 3 つは **PR 起票後に link-pr / 補償が落ちた行の回収経路**。
+#: base 側の pr が空でも (publish の補償が push できなかった残骸)、既に PR URL を
+#: 持っていても (link-pr --keep-status までは通った残骸) 同じ扱いにする —
+#: どちらも「PR は実在するが台帳が追い付いていない」行で、Step 0 は head branch
+#: improve/<skill>-<id> の PR を全状態で引いて open / merged / closed に決着させる。
+#: 条件は **head 側に開ける PR URL が入っていること** (check_reconcile_diff が動的に
+#: 見る)。PR を名指しできないまま merged / rejected に進めるのは、突き合わせでは
+#: なく台帳の書き換えなので通さない。
 #: pr_open -> proposed は表に持たない — pr が空の行に限って
 #: check_reconcile_diff が動的に足す (辿れない行を出し直すための修復経路)。
 ALLOWED_STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
     "pr_open": frozenset({"merged", "rejected"}),
     "merged": frozenset({"reverted"}),
-    "proposed": frozenset({"pr_open", "rejected"}),
+    "proposed": frozenset({"pr_open", "merged", "rejected"}),
 }
 
 
@@ -887,6 +905,11 @@ def check_reconcile_diff(
 
     許すのは「決着した PR の status / pr / after / notes を進める」ことだけ。
     finding 本文や target_skill が動いていたら、それは突き合わせではない。
+
+    `proposed` の行を進められるのは **head 側に開ける PR URL がある**ときだけ。
+    publish の補償が落ちた残骸 (`pr` が空 / `link-pr --keep-status` まで通った行)
+    を Step 0 が全状態の PR 検索で回収するための経路で、PR を名指しできないまま
+    決着させることは許さない。
     """
     problems = _duplicate_problems(base, head)
     if problems:
@@ -917,10 +940,8 @@ def check_reconcile_diff(
         new_status = str(after.get("status", ""))
         if old_status != new_status:
             allowed = ALLOWED_STATUS_TRANSITIONS.get(old_status, frozenset())
-            if old_status == "proposed" and before.get("pr") is not None:
-                allowed = frozenset()
             # 追える PR が無い pr_open は決着させようがない (pr が空でも、
-            # 開けない値が入っていても同じ)。対応する open PR が見つからなかった
+            # 開けない値が入っていても同じ)。対応する PR が見つからなかった
             # 場合に限り、finding を出し直せるよう proposed へ戻すことを許す。
             # 開ける PR URL を持つ pr_open では許さない。
             if old_status == "pr_open" and not has_usable_pr(before):
@@ -928,6 +949,14 @@ def check_reconcile_diff(
             if new_status not in allowed:
                 problems.append(
                     f"{entry_id}: 許されない status 遷移 ({old_status} -> {new_status})"
+                )
+            elif old_status == "proposed" and not has_usable_pr(after):
+                # proposed からの遷移は「PR が実在した」ことの記録に限る。
+                # head 側に開ける PR URL が無いまま pr_open / merged / rejected へ
+                # 進めるのは、突き合わせに見せかけた status の書き換え。
+                problems.append(
+                    f"{entry_id}: proposed からの遷移には head 側に開ける PR URL が要る"
+                    f" ({old_status} -> {new_status})"
                 )
     for entry in added:
         problems.extend(_proposed_entry_problems(entry, f"追加行 {entry.get('id')}"))
