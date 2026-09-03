@@ -12,10 +12,12 @@
 `CLAUDE_CODE_OAUTH_TOKEN` を使う)。`workflow_dispatch` から手動起動もでき、
 `focus` 入力で skill 名 / finding id / issue URL に絞れる。
 
-権限は job ごとに分けてあり、agent を動かす `improve` は `contents: read` だけ、
-書き込み (`contents: write` / `pull-requests: write`) は `publish` と、agent 実行後の
-trusted step が使う App トークンにだけ置く (内訳は下の「job の分割」)。default branch への push と merge は**手順として**
-行わない — 承認ゲートは PR レビューに置く。
+権限は job ごとに分けてあり、agent を動かす `improve` は `contents: read` だけで
+**書き込み資格情報を一度も持たない**。書き込み (`contents: write` /
+`pull-requests: write`) は `stage` と `publish` の 2 job にだけ置き、どちらも agent が
+走った runner とは**別の runner** で個別に発行する (内訳は下の「job の分割」)。
+default branch への push と merge は**手順として**行わない — 承認ゲートは PR レビューに
+置く。
 
 ただし `contents: write` は improve/* と default branch を区別できない。**手順は
 約束であって強制ではない**ので、実効的な保証は default branch 側の設定に置く:
@@ -66,14 +68,15 @@ workflow は起動しない。
 そして**パスの allow-list は値を見ない**。`skills/<skill>/**` や
 `improvements/ledger.jsonl` の中に資格情報を書けば allow-list は通り、push →
 `publish` の `gh pr create` で公開 PR に載る。**したがって信用の境界はブランチの
-公開 (push) に置く**: `improve` job の trusted push step が、**push の前に**候補
-ブランチの差分をシークレットで走査する (`manifest_guard.py scan-diff`)。
+公開 (push) に置く**: **agent が走った runner とは別の runner** で動く `stage` job が、
+**push の前に**候補ブランチの差分をシークレットで走査する
+(`manifest_guard.py scan-diff`)。
 
 走査するもの:
 
-- **この job が見えるシークレットの実値** — `CLAUDE_CODE_OAUTH_TOKEN`、App の
-  read / preflight / write トークン、`SKILL_IMPROVER_APP_PRIVATE_KEY`、job の
-  `GITHUB_TOKEN`、そして **`ACTIONS_RUNTIME_TOKEN`** (下記)。それぞれ
+- **`stage` job が見えるシークレットの実値** — `CLAUDE_CODE_OAUTH_TOKEN`、
+  `SKILL_IMPROVER_APP_PRIVATE_KEY`、`stage` 自身が発行した write トークン、`stage` の
+  `GITHUB_TOKEN` の 4 つ (`improve` 側のトークンは下記)。それぞれ
   **literal / base64 / base64url / hex** の姿で探し、
   さらに**空白と `\n` `\r` `\t` エスケープを落とした姿**でも突き合わせる
   (折り返して埋め込むだけで一致を外せないため)。秘密鍵は**行単位**でも探す。
@@ -87,29 +90,35 @@ workflow は起動しない。
 - **PR 本文ファイル**も同じ規則で走査する (`scan-files`)。OAuth トークンは
   `ghs_` 系の接頭辞に当たらないので、既存の接頭辞 grep だけでは足りない
 
-**`ACTIONS_RUNTIME_TOKEN` だけ受け渡しが違う**。これは artifact / cache API 用に
-GitHub Actions が **JavaScript action の step にだけ**注入する run スコープの JWT で、
-`claude-code-action` は JavaScript action なので agent のプロセスもこれを継承する
-(この workflow 自身、manifest の artifact upload / download でこのトークンに依存して
-いる)。漏れれば同じ run の artifact を差し替えられるので走査対象に入れたいが、
-`run:` の step にはそもそも注入されないため `SCAN_...: ${{ env.ACTIONS_RUNTIME_TOKEN }}`
-では空になる。そこで **agent の実行後に trusted な JavaScript action**
-(`actions/github-script`、full SHA で pin) を 1 つ走らせて `process.env` から捕まえ、
-`$RUNNER_TEMP` の 0700 ディレクトリに **0600 のファイル**として落とし、そのパスだけを
-走査 step に渡す (`manifest_guard.py --secret-file NAME=PATH`)。値は step output にも
-`GITHUB_ENV` にも載せない。**空なら step を落とす** — 見えない値を「走査した」ことには
-できない (fail-closed)。走査側も **symlink や 0600 でない mode のファイルは拒否**する。
+**`improve` job のトークンは `stage` からは実値で走査できない**。`stage` は別 runner
+なので、`improve` の read トークン・preflight トークン・その job の `GITHUB_TOKEN`・
+`ACTIONS_RUNTIME_TOKEN` の値をそもそも知らない (同じ値をもう一度発行することもできない)。
+**代わりに接頭辞の網でだけ拾う**:
+
+- installation token (read / preflight / `GITHUB_TOKEN`) は `ghs_` で始まるので
+  `PREFIX_PATTERNS` の GitHub token パターンが拾う
+- **`ACTIONS_RUNTIME_TOKEN`** は artifact / cache API 用に GitHub Actions が
+  **JavaScript action の step にだけ**注入する run スコープの JWT で、
+  `claude-code-action` は JavaScript action なので agent のプロセスもこれを継承する
+  (この workflow 自身、hand-off の upload / download でこのトークンに依存している)。
+  値は知りようがないので、**base64url 3 節で先頭 2 節が `eyJ` という「形」**で拾う
+  (`PREFIX_PATTERNS` の run-scoped JWT パターン)
+
+以前は agent の実行後に `actions/github-script` を 1 つ走らせて `process.env` から
+`ACTIONS_RUNTIME_TOKEN` を捕まえ、0600 のファイル経由で走査 step に渡していた。
+その受け渡し自体が「**agent と同じ job の後段 step は trusted**」という成立しない前提の
+上に載っていたので (次節)、実値の走査ではなく形の網に落とした。**この 1 点は実値走査より
+弱い**ことを明記しておく — 分割・符号化して埋め込まれた JWT はこの網では止まらない。
 
 運用上の規律:
 
 - シークレットの値は**環境変数名で渡す** (コマンドラインは他プロセスから見える)。
-  環境変数に載らない値だけ、0600 のファイルのパスを `--secret-file` で渡す。
   検出しても**値も一致箇所も出力しない** — ログと summary に出るのはパスと
-  「どの名前のシークレットか」だけ
-- 検査スクリプトは working tree からではなく **run を起動した commit の blob**
-  (`git show $GITHUB_SHA:.github/scripts/manifest_guard.py`) を取り出して実行する。
-  `.github/` を禁じるパスの allow-list が効くのは `verify` job = push の後なので、
-  push 前の working tree にあるコピーは候補側の内容かもしれない
+  「どの名前のシークレットか」だけ。`manifest_guard.py` には 0600 ファイル経由の
+  `--secret-file` も残っているが、**workflow からは使っていない**
+- 検査スクリプトは `stage` / `publish` の working tree のものをそのまま使う。どちらの
+  job も**候補ブランチを checkout しない**ので、working tree は run を起動した commit
+  (`$GITHUB_SHA`) の内容そのもの — `git show $GITHUB_SHA:...` で取り出し直す必要が無い
 - 走査できる値が 1 つも組み立てられなければ**走査しなかったものとして落とす**
   (fail-closed)。差分が読めない場合も同じ
 - 当たった候補は push しない。manifest からも落ちるので `verify` / `publish` には
@@ -124,6 +133,37 @@ GitHub Actions が **JavaScript action の step にだけ**注入する run ス�
 > もの**にすること。個人の長期トークンを流用しない。`secret_hit` で run が赤くなったら、
 > ブランチの調査より先に該当の資格情報をローテーションする。
 
+### agent と同じ job に「後段の trusted step」は置けない
+
+以前この workflow は、agent の step の**後ろに**「trusted step」を並べていた
+(`ACTIONS_RUNTIME_TOKEN` の捕捉、write トークンの発行、差分の走査、push、manifest の
+sanitize、artifact の staging)。**同じ job である以上、この前提は成立しない**:
+
+- 同じ job の step は**同じ runner・同じ UID・同じファイルシステム**で走る
+- agent は終了する前にバックグラウンドプロセスを残せる。そのプロセスは後続 step が
+  走っている間ずっと生きている
+- そこからは **0600 のトークンファイルが読める** (同一 UID に mode は効かない)、
+  **兄弟プロセスの `/proc/<pid>/environ` が読める** (= agent の**後**に発行した write
+  トークンが読める)、**`$GITHUB_OUTPUT` / `$GITHUB_ENV` に追記できる**、**走査と push
+  の間にローカル ref を書き換えられる**
+
+runner 上でプロセスを殺しに行く対処は取らない (取りこぼしを前提にできない)。代わりに
+**agent が走った runner の出力は、artifact も `$GITHUB_OUTPUT` も含めて全て
+untrusted** と決め、資格情報の扱い・走査・push を**別 job (`stage`) = 別 runner** に
+移した。`improve` job に残るのは 3 つだけ:
+
+1. agent より**前**の preflight (ruleset 検査。admin トークンは agent が走り出す前の
+   step でしか使わない)
+2. agent の実行
+3. agent の成果を小包にまとめて上げるだけの、**untrusted な hand-off step** 1 つ
+
+hand-off は `$RUNNER_TEMP/handoff` に作り、`skill-improver-handoff` という名前の
+artifact として上げる。中身は (a) `git bundle create` した候補ブランチ
+(`refs/heads/improve/*` を基底なしで丸ごと)、(b) agent が書いた manifest、
+(c) PR 本文ファイル、の 3 つ。**この artifact の中身は全て untrusted** として
+`stage` が検証する。`improve` job は **job output も持たない** — `$GITHUB_OUTPUT` に
+書ける主体が agent 側に居る以上、matrix の添字も push の結果もそこからは取らない。
+
 ### improve/* PR には repo の CI が来ない — だから検証してから起票する
 
 **`GITHUB_TOKEN` が作成・更新した PR の `pull_request` run (`opened` / `synchronize` /
@@ -132,48 +172,55 @@ run」を押すまで走らない** ([GITHUB_TOKEN のドキュメント](https:
 そのため trigger-evals / rulesync drift / unittest の結果は、人間が承認するまで
 レビュアーに見えない。workflow 内の事前検証は、その承認前に結果を見せるための代替である。
 
-そこで **workflow モードでは agent は push も PR 起票もしない**。責務は 3 段に分かれる:
+そこで **workflow モードでは agent は push も PR 起票もしない**。責務は 4 段に分かれる:
 
 1. **agent (`improve` job)** — 改善ブランチを切って**ローカルに commit**し、環境変数
    `MANIFEST` のファイルに 1 行 1 JSON
    (`{"branch":..., "title":..., "body_file":..., "ledger_id":...}`) を追記する。
    持っているのは読み取り専用トークンだけで、`gh pr create` も allow-list の外
-2. **trusted push step (`improve` job、agent の実行後)** — 書き込みトークンを発行し、
-   manifest の `branch` を検証してローカル ref を push する。**`head_sha` はここで
-   実際に push した ref から計算して manifest に書き足す** (agent の申告値は使わない)。
-   続けて **artifact に上げる前に** manifest を `.github/scripts/manifest_guard.py`
-   で組み直す — 許可したキー (`branch` / `head_sha` / `body_file` / `ledger_id` /
-   `title`) だけを残し、**全ての文字列フィールド**について長さ・制御文字・トークン様
-   文字列を検査する (agent は自分の `GH_TOKEN` を読めるので、`title` に入れられると
-   `gh pr create --title` で公開される)。`body_file` も 1 件ずつ検証し (bodies/ 直下の
-   通常ファイル、symlink でない、hard link でない、64 KiB 以下、トークン様文字列を
-   含まない)、
-   **通ったファイルだけを新しく作った空のディレクトリにコピーして、そちらだけを上げる** —
-   agent が書けるディレクトリをそのまま artifact にすると、`body_file` を任意のファイルへの
-   symlink / hard link にすり替えるだけで `upload-artifact` がその中身を運び、PR 本文に載る
-3. **`verify` → `publish`** — `verify` が manifest の値・台帳差分・パスの allow-list を
+2. **hand-off step (`improve` job、agent の実行後 — trusted ではない)** — ローカルの
+   `refs/heads/improve/*` を `git bundle` にまとめ、manifest と PR 本文ファイルを添えて
+   `skill-improver-handoff` artifact に上げるだけ。**資格情報は扱わず、検証もしない**
+   (この step 自体が agent の残したプロセスと同居しているため)
+3. **`stage` job (別 runner。ここが信用の境界)** — hand-off を落として
+   `git bundle verify` → ref 名を検証して `refs/candidates/<name>` に取り込む →
+   `manifest_guard.py sanitize` で manifest を組み直す (許可したキー
+   `branch` / `head_sha` / `body_file` / `ledger_id` / `title` だけを残し、**全ての
+   文字列フィールド**について長さ・制御文字・トークン様文字列を検査する。agent は
+   自分の `GH_TOKEN` を読めるので `title` に入れられると `gh pr create --title` で
+   公開される) → **manifest の `branch` と bundle の ref が 1 対 1 で対応すること**を
+   確かめる (片側にしか無いものが 1 件でもあれば manifest 全体を落とす: fail closed) →
+   PR 本文ファイルを 1 件ずつ検証 (bodies/ 直下の通常ファイル、symlink でない、
+   hard link でない、64 KiB 以下) して `scan-files` に掛ける → **パスの allow-list
+   ゲート** → **差分のシークレット走査** → 通った候補だけを push する。
+   **`head_sha` は push した ref の SHA** (agent の申告値は使わない)。書き込み
+   トークンはこの job で発行するので、**agent が走った runner には最初から最後まで
+   存在しない**。artifact (`skill-improver-manifest`) に載るのも、検証を通った本文を
+   新しく作った空のディレクトリ (`mktemp -d`) にコピーしたものだけである
+4. **`verify` → `publish`** — `verify` が manifest の値・台帳差分・パスの allow-list を
    検査し、その SHA でテストを回す。通ったものだけ `publish` が `gh pr create` し、
    `link-pr` を commit / push する
 
 ### job の分割 (権限と信頼の分離)
 
 候補ブランチの中身は agent が書いたコードであり、そのまま書き込み資格情報のある場所で
-実行すると、テストや検査スクリプトを書き換えたブランチが資格情報に手を伸ばせる。
-そのため job を 4 つに割り、**ブランチを実行する job から資格情報を外し、その job の
-出力も信用しない**:
+実行すると、テストや検査スクリプトを書き換えたブランチが資格情報に手を伸ばせる。さらに
+**agent 自身も、同じ job に並べた後段 step には手が届く** (前節)。そのため job を
+5 つに割り、**agent を動かす job とブランチを実行する job の双方から資格情報を外し、
+どちらの出力も信用しない**:
 
-| job | 権限 | 役割 |
-|---|---|---|
-| `improve` | **`contents: read` のみ** | ruleset の preflight、agent 実行 (読み取り専用トークン)、trusted step でのブランチ push、manifest の検査と artifact 化 |
-| `verify` (**候補 1 件につき 1 job**) | `contents: read` のみ (`persist-credentials: false`、`GH_TOKEN` もシークレットも渡さない) | manifest の値の検証、パスの allow-list ゲート、**台帳差分のゲート (`ledger.py verify-diff`)**、メタスキル対象の拒否、ブランチ上で `unittest` / `check_trigger_evals.py` / `rulesync-sync.mjs --check`。**artifact は上げない** |
-| `collect` | `actions: read` のみ | 各 `verify (<idx>)` の conclusion と improve の manifest から合格記録を組み立てて artifact に上げる。候補コードは動かさない |
-| `publish` | `contents: write` / `pull-requests: write` | 合格記録にある候補の `gh pr create`、`link-pr` の commit / push、失敗時の補償 |
+| job | 権限 | 持つ資格情報 | 役割 |
+|---|---|---|---|
+| `improve` | **`contents: read` のみ** | App の read トークン、App の preflight トークン (agent より**前**の step だけ)、`CLAUDE_CODE_OAUTH_TOKEN`、この job の `ACTIONS_RUNTIME_TOKEN`。**書き込みトークンは一切持たない** | ruleset の preflight、agent 実行。実行後は untrusted な hand-off artifact を上げるだけで、**job output も持たない** |
+| `stage` (**信用の境界**) | `contents: read` (job の `GITHUB_TOKEN`) + この job で発行する App の **write** トークン | App の秘密鍵、`CLAUDE_CODE_OAUTH_TOKEN` (走査用)、自分で発行した write トークン。**`improve` 側のトークンは知らない** | hand-off の取り込み (`git bundle verify` → `refs/candidates/*`)、manifest の組み直しと bundle との突き合わせ、本文の検証と走査、**パスの allow-list ゲート**、**差分のシークレット走査**、通った候補の push、検証済み manifest の artifact 化。**候補コードは実行しない** |
+| `verify` (**候補 1 件につき 1 job**) | `contents: read` のみ (`persist-credentials: false`、`GH_TOKEN` もシークレットも渡さない) | **無し** | manifest の値の検証、パスの allow-list ゲート、**台帳差分のゲート (`ledger.py verify-diff`)**、メタスキル対象の拒否、ブランチ上で `unittest` / `check_trigger_evals.py` / `rulesync-sync.mjs --check`。**artifact は上げない** |
+| `collect` | `actions: read` のみ | この job の `GITHUB_TOKEN` (jobs API の読み取りだけ) | 各 `verify (<idx>)` の conclusion と stage の manifest から合格記録を組み立てて artifact に上げる。候補コードは動かさない |
+| `publish` | `contents: write` / `pull-requests: write` | App の write トークン (この job で発行) | 合格記録にある候補の `gh pr create`、`link-pr` の commit / push、失敗時の補償 |
 
 `improve` の job 権限が `contents: read` だけなのは、`claude-code-action` が
 `process.env` をそのまま SDK に渡す = **job の `GITHUB_TOKEN` は agent の環境に届く**
-ため。書き込み能力はこの job の `GITHUB_TOKEN` には持たせず、**agent の実行後に
-発行する App の write トークン** (trusted な push step) と **`publish` job** の 2 か所に
-だけ置く。
+ため。書き込み能力はこの job には (`GITHUB_TOKEN` にも App トークンにも) 一切置かず、
+**別 runner で走る `stage` と `publish`** の 2 か所にだけ置く。
 
 **なぜ verify を 1 件 1 job にするか**: 「候補コードを動かした runner が、そのまま
 合格記録も書く」構造は成立しない。候補コードは runner 上で任意に動けるので、落ちた
@@ -182,10 +229,10 @@ run」を押すまで走らない** ([GITHUB_TOKEN のドキュメント](https:
 runner 上の任意のコードが artifact を上げられる)。そこで **verify の信頼できる出力を
 job の conclusion 1 ビットだけに絞り**、合格記録の組み立ては候補コードを動かさない
 `collect` が行う。`collect` が読むのは (1) 各 `verify (<idx>)` の conclusion
-(`actions: read` で jobs API から取得)、(2) **候補コードが 1 行も動く前に** improve が
+(`actions: read` で jobs API から取得)、(2) **候補コードが 1 行も動く前に** `stage` が
 上げた manifest — の 2 つだけで、PR 本文も後者から取る。
 
-push できなかった候補があっても `improve` はそこで落とさない (落とすと後続 job が
+push できなかった候補があっても `stage` はそこで落とさない (落とすと後続 job が
 まるごと skip され、push できた候補まで検証・起票されなくなる)。件数を job output
 `push_failed` に出し、**`publish` の最終 step が起票を終えてからその run を赤にする**。
 
@@ -196,8 +243,10 @@ push できなかった候補があっても `improve` はそこで落とさな�
 合格記録を出して `publish` が「起票なし」で正常終了する。
 
 `verify` は `fetch-depth: 0` の checkout で全 remote head をローカルに取り込むため、
-job 中に追加のネットワークアクセス (= 資格情報) が要らない。`publish` は書き込み権限を
-持つが**ブランチのコードを実行しない** — `ledger.py` は checkout 前に default branch 側の
+job 中に追加のネットワークアクセス (= 資格情報) が要らない。`stage` と `publish` は
+書き込み権限を持つが**ブランチのコードを実行しない** — `stage` は候補を
+`refs/candidates/*` に置くだけで一度も checkout せず (working tree は
+`$GITHUB_SHA` のまま)、`publish` の `ledger.py` は候補 checkout 前に default branch 側の
 コピーを `$RUNNER_TEMP` へ退避して、そちらを使う。
 
 **台帳差分のゲート**: パスの allow-list は `improvements/ledger.jsonl` を**ファイル
@@ -206,8 +255,10 @@ job 中に追加のネットワークアクセス (= 資格情報) が要らな�
 追加だけ」、突き合わせブランチには「決着した行の `status` / `pr` / `after` / `notes`
 を許された遷移で進めるだけ」を要求する (詳細は `references/ledger.md`)。
 
-**パスの allow-list ゲート**: `verify` はブランチの中身を実行する前に
-`git diff --name-only origin/<default>...origin/<branch>` を取り、
+**パスの allow-list ゲート**: 同じ検査を `stage` (push の前) と `verify` (実行の前)
+の**両方**が持つ。allow-list を外れるブランチは `stage` がそもそも push しないので
+公開もされない。それぞれ
+`git diff --name-only origin/<default>...<候補の SHA>` を取り、
 `skills/<target_skill>/**` / `.claude/skills/<target_skill>/**` /
 `.agents/skills/<target_skill>/**` / `improvements/ledger.jsonl` の範囲に収まっているかを
 確かめる (reconcile ブランチは `improvements/ledger.jsonl` のみ)。外れるパスが 1 つでも
@@ -221,7 +272,7 @@ job 中に追加のネットワークアクセス (= 資格情報) が要らな�
 行として実在すること。`publish` は artifact 経由で受け取った値を自分でもう一度検証する。
 落ちた行は PR にならず job summary に出て job が赤になる (ブランチは調査用に残る)。
 
-**検証も起票もブランチ名ではなく `head_sha` を対象にする**。`improve` の push step が
+**検証も起票もブランチ名ではなく `head_sha` を対象にする**。`stage` の push step が
 push した ref の SHA を manifest に書き、`verify` は `origin/<branch>` が
 その SHA と一致することを確かめてから **SHA を checkout** して allow-list ゲートと
 検査を回す。`publish` は `gh pr create` の直前と `link-pr` の push 直前に
@@ -281,27 +332,28 @@ preflight は 3 と 5 を機械的に検査し (`actor_id` が `SKILL_IMPROVER_A
 いれば agent を起動せずに `exit 1` する。4 と 5 は repo 設定の変更なのでコード側では
 作れない。
 
-### トークンは 2 本に割る (agent は書き込みトークンを持たない)
+### トークンは 3 本に割る (agent は書き込みトークンを持たない)
 
 installation token は既定でインストール時の**全権限**を持つ。そのまま agent に渡すと、
 prompt injection が通ったときに書き込み権限ごと持っていかれる。そこで
-`permission-*` で明示的に絞ったうえで、**用途ごとに 2 本発行する**:
+`permission-*` で明示的に絞ったうえで、**用途ごとに分けて発行する** (write は job ごとに別発行なので実際には計 4 本):
 
 | トークン | 権限 | 使う場所 |
 |---|---|---|
 | read | `contents: read` / `issues: read` / `pull-requests: read` | `improve` の checkout、**agent の `GH_TOKEN`** |
-| preflight | `administration: write` | ruleset の preflight step **だけ** |
-| write | `contents: write` / `pull-requests: write` | agent の実行**後**の push step、`publish` job |
+| preflight | `administration: write` | ruleset の preflight step **だけ** (agent より前) |
+| write | `contents: write` / `pull-requests: write` | `stage` の push、`publish` の起票。**agent が走った runner には存在せず、2 つの job がそれぞれ別の runner で発行する** |
 
 job の `GITHUB_TOKEN` は `improve` では **`contents: read` だけ**に絞ってある。
 `claude-code-action` は `process.env` をそのまま SDK に渡すので、我々が
 `github_token` / `GH_TOKEN` に何を入れても **job の `GITHUB_TOKEN` は agent の環境に
 届く**。pin した action の中身は変えられないので、届いても害が無いように
 **その `GITHUB_TOKEN` から書き込み能力を取り上げる**方で解いた: checkout は App の
-read トークン、preflight は App の preflight トークン、ブランチ push は App の write
-トークン、artifact は `ACTIONS_RUNTIME_TOKEN` を使うので、job の `GITHUB_TOKEN` に
-write が要る場面がそもそも無い (`ACTIONS_RUNTIME_TOKEN` 自体も agent に届くため、
-走査対象に入れてある — 上の「走査するもの」を参照)。
+read トークン、preflight は App の preflight トークン、artifact は
+`ACTIONS_RUNTIME_TOKEN` を使うので、`improve` の `GITHUB_TOKEN` に write が要る場面が
+そもそも無い。ブランチの push は**この job では行わない** (別 runner の `stage`)。
+`ACTIONS_RUNTIME_TOKEN` 自体も agent に届くが、`stage` からは実値を知れないので
+run スコープ JWT の形で拾う — 上の「走査するもの」を参照。
 
 **preflight トークンが `administration: write` を要る理由**: GitHub は ruleset の
 `bypass_actors` を **その ruleset への write 権限を持つ呼び出しにしか返さない**
@@ -311,7 +363,7 @@ write が要る場面がそもそも無い (`ACTIONS_RUNTIME_TOKEN` 自体も ag
 専用トークンで引き、**キーの有無そのものを先に確かめて**、無ければ権限不足として
 `exit 1` する。
 
-このトークンの扱い: 発行するのは agent より前の trusted step で、**渡し先は
+このトークンの扱い: 発行するのは **agent が起動する前**の step で、**渡し先は
 preflight step の `GH_TOKEN` だけ**。checkout にも agent にも渡らない
 (`persist-credentials: false` なので `.git/config` にも入らない) し、用途も
 ruleset の GET に限られる。`administration` を要求するのはこの 1 本だけで、
@@ -319,13 +371,12 @@ read / write の 2 本は従来どおり。
 
 さらに `improve` の checkout は `persist-credentials: false` にしてある。
 `.git/config` に資格情報を残さないので、agent が git 設定を読んでトークンを
-PR 本文に書き出す経路が無い。**書き込みトークンは agent の実行中に runner のどこにも
-存在しない** (実行後の step で初めて発行する)。
+PR 本文に書き出す経路が無い。**書き込みトークンは `improve` job の runner に、
+agent の実行中も実行後も存在しない** (発行するのは別 runner の `stage` / `publish`)。
 
 その結果、**agent は push しない**: 改善ブランチにローカル commit するところまでで、
-push は後段の trusted step が行う。その step は manifest の `branch` を検証し、
-ローカル ref の存在を確かめ、**`head_sha` を push する ref から自分で計算して**
-manifest に書き戻す (agent の申告値は使わない)。
+その ref は bundle として `stage` に渡り、`stage` が検証・走査を通してから push する。
+`head_sha` は `stage` が **実際に push する ref から**取る (agent の申告値は使わない)。
 
 `concurrency: skill-improver` で直列化しているのは、同時実行が同じ
 `improve/<skill>-<finding-id>` ブランチを取り合うのを防ぐため。

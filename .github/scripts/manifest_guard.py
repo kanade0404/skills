@@ -11,19 +11,22 @@ agent が書いた manifest は **データ**であって、そのまま特権�
    同じ finding を 2 回起票する形が通ってしまう。
 2. `check-text` — `gh pr create` に渡す直前の title / body を同じ規則で再検査する。
 3. `scan-diff` / `scan-files` — **候補ブランチの差分そのもの**と PR 本文ファイルを、
-   この job が見えるシークレットの実値で走査する。manifest と本文だけを見ていても、
-   agent は資格情報を `skills/<x>/**` や台帳の中に書いて push させられるため
-   (allow-list はパスしか見ない)。値は環境変数名 (`--secret-env`) か、0600 の
-   ファイルのパス (`--secret-file NAME=PATH`) で受け取り、**値も一致箇所も一切
-   出力しない** — 出るのはパスと理由だけ。ファイル経由が要るのは
-   `ACTIONS_RUNTIME_TOKEN` のように **`run:` の step には注入されない**値がある
-   ため (JavaScript action の step で捕まえてファイルに落とす)。
+   呼び出し元の job が見えるシークレットの実値で走査する。manifest と本文だけを
+   見ていても、agent は資格情報を `skills/<x>/**` や台帳の中に書いて push させ
+   られるため (allow-list はパスしか見ない)。値は環境変数名 (`--secret-env`) か、
+   0600 のファイルのパス (`--secret-file NAME=PATH`) で受け取り、**値も一致箇所も
+   一切出力しない** — 出るのはパスと理由だけ。
 
-同じ走査を 2 か所に書き写すと片方だけ古くなるので、workflow の improve
-(staging) と publish (起票直前) の双方がこのファイルを呼ぶ。候補ブランチは
-`.github/` を触れない (allow-list の外) が、**その allow-list が効くのは push の後**
-なので、improve 側の呼び出しは working tree のコピーではなく run を起動した commit
-の blob (`git show $GITHUB_SHA:...`) を取り出して実行する。
+同じ走査を 2 か所に書き写すと片方だけ古くなるので、workflow の stage
+(push の直前) と publish (起票直前) の双方がこのファイルを呼ぶ。どちらの job も
+候補ブランチを checkout しないので、working tree にあるこのファイルは run を
+起動した commit のもの = trusted なコピーである。
+
+`--secret-file` は**現在 workflow からは使われていない**。agent が走った runner の
+値 (`ACTIONS_RUNTIME_TOKEN` 等) は別 job からは知りようがなく、実値の代わりに
+接頭辞の網 (`PREFIX_PATTERNS` の run スコープ JWT) で拾うようにしたため。値を
+コマンドラインにも環境変数にも載せられない受け口として、オプションとテストは
+残してある。
 
 exit code: 0 = 合格 / 1 = 違反 (理由を stderr に出す)
 """
@@ -215,7 +218,8 @@ def cmd_check_text(args: argparse.Namespace) -> int:
 # プロセスに渡す。取り除けない以上、資格情報が読めること自体は前提として、
 # **公開される場所へ出て行く手前**を関門にする。候補ブランチの内容は
 # パスの allow-list (`skills/<x>/**` と台帳) しか見られていないので、値の側は
-# ここで見る。走査は push の前 = 公開の前に、trusted step で行う。
+# ここで見る。走査は push の前 = 公開の前に、agent の走った runner とは別の
+# job (stage) で行う。
 #
 # **出力規律**: 一致した値も、その周辺の文字列も、絶対に出さない (出したら
 # それ自体が漏洩になる)。出すのはパスと「どの名前のシークレットか」だけ。
@@ -374,9 +378,9 @@ def needles_from_files(
 ) -> tuple[list[tuple[str, bytes]], list[str]]:
     """`NAME=PATH` の列から探索対象を組み立て、(needles, 注記) を返す。
 
-    値をコマンドラインにも環境変数にも載せられない場合の受け口
-    (`ACTIONS_RUNTIME_TOKEN` は JavaScript action の step にしか注入されないので、
-    trusted な JS step が 0600 のファイルに落としたものをここで読む)。
+    値をコマンドラインにも環境変数にも載せられない場合の受け口。
+    **現在 workflow からは使っていない** (agent の runner でしか読めない値は、
+    別 job からは実値を知れないので接頭辞の網で拾う方に寄せた)。
     受け付けられない指定は注記ではなく **例外**にする — fail-closed。
     """
     needles: list[tuple[str, bytes]] = []
@@ -551,7 +555,7 @@ def add_secret_arguments(parser: argparse.ArgumentParser) -> None:
         metavar="NAME=PATH",
         help=(
             "走査する値を持つ 0600 のファイル (値は渡さない)。"
-            "`run:` の step に注入されない値の受け口。複数指定可"
+            "環境変数に載せられない値の受け口 (現在 workflow からは未使用)。複数指定可"
         ),
     )
 

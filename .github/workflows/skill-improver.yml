@@ -5,29 +5,44 @@
 # **PR を作るのは agent ではなく workflow**。GITHUB_TOKEN が作成・更新した PR の
 # pull_request run は approval-required 状態で作られ、write 権限者が承認するまで
 # 走らないため、agent が先に PR を開くと結果の見えない PR が残る。ここでは agent に
-# ブランチの push とマニフェスト記録までさせ、検証が通ったブランチにだけ publish job が
-# gh pr create する。
+# ブランチのローカル commit とマニフェスト記録までさせ、検証が通ったブランチにだけ
+# publish job が gh pr create する。
 #
-# **job を 4 つに割る理由 (権限と信頼の分離)**:
-#   improve — agent を動かす。contents: write (improve/* の push) を持つが、
-#             ブランチの中身を実行しない
+# **job を 5 つに割る理由 (権限と信頼の分離)**:
+#   improve — agent を動かすだけの job。**資格情報の扱いも push も一切しない**。
+#             agent の実行後に残るのは untrusted な hand-off artifact 1 つだけ
+#   stage   — **信用の境界**。別 runner で hand-off を受け取り、検証・シークレット
+#             走査を通したものだけを push する。書き込みトークンを持つ唯一の
+#             前段 job で、候補コードは実行しない
 #   verify  — 候補ブランチの中身を実行する唯一の job。**候補 1 件につき 1 job**
 #             (matrix) で、contents: read だけ、資格情報もシークレットも持たない。
 #             **artifact を一切上げず、信頼できる出力は job の conclusion だけ**
-#   collect — verify の conclusion と improve の manifest (候補コードが動く前に
+#   collect — verify の conclusion と stage の manifest (候補コードが動く前に
 #             上げたもの) から合格記録を組み立てる。候補コードは動かさない
 #   publish — 合格記録にある候補にだけ PR を作る。contents: write を持つが、
 #             ブランチのコードは実行しない (ledger.py は default branch 側の
 #             コピーを使う)
 #
-# verify を 1 件 1 job にするのは、**同じ runner で候補コードを動かしてから合格記録を
-# 書く構造が成立しない**ため。候補コードは runner 上で任意に動けるので、落ちた別の
-# improve/* ブランチを指す「合格した行」を書き足せてしまう (artifact は
+# **improve job の中に「trusted な後段 step」は無い**。同じ job の step は同じ
+# runner・同じ UID・同じファイルシステムで走るので、agent は終了前にバックグラウンド
+# プロセスを残せば後続 step に生き残れる。そのプロセスからは
+#   - 0600 で書いたトークンファイル (同一 UID なので mode は障壁にならない)
+#   - 兄弟プロセスの /proc/<pid>/environ (agent の後に発行した write トークンを含む)
+#   - $GITHUB_OUTPUT / $GITHUB_ENV への追記
+#   - 走査と push の間でのローカル ref の書き換え
+# がすべて届く。だから「agent の後の step は trusted」という前提は置けない。
+# **agent が動いた runner の出力は、artifact も含めて全て untrusted** として扱い、
+# 検証・トークン発行・push は別 runner の stage job に移してある。
+# runner 側でプロセスを殺しに行くような対処はしない (取りこぼしを前提にできない)。
+#
+# verify を 1 件 1 job にするのも同じ理由。候補コードは runner 上で任意に動けるので、
+# 落ちた別の improve/* ブランチを指す「合格した行」を書き足せてしまう (artifact は
 # ACTIONS_RUNTIME_TOKEN があれば誰でも上げられるので、artifact も同じ理由で信用
 # できない)。conclusion は候補コードから触れないので、そこだけを信頼の担い手にする。
 #
 # この分離があっても、ブランチの差分は allow-list で対象 skill ディレクトリと
-# improvements/ledger.jsonl に限り、台帳は行の粒度でも検査する (verify のゲート)。
+# improvements/ledger.jsonl に限り (stage と verify の両方で見る)、台帳は行の粒度でも
+# 検査する (verify のゲート)。
 #
 # **実行アイデンティティは専用の GitHub App (必須)**。repo secrets の
 # SKILL_IMPROVER_APP_ID / SKILL_IMPROVER_APP_PRIVATE_KEY から installation token を
@@ -36,12 +51,12 @@
 # push を 1 つのアイデンティティに絞れず、verify と publish の間に第三者が push できる
 # 窓が残るから。secrets か improve/** の ruleset が欠けていれば agent を起動せず落とす。
 #
-# **トークンは用途ごとに 2 本**。installation token は既定でインストール時の全権限を
-# 持つので permission-* で絞り、agent には read だけを渡す (checkout も
-# persist-credentials: false)。書き込みトークンは agent の実行後に初めて発行するので、
-# injection が通っても runner のどこにも write 権限が存在しない。その代わり agent は
-# push せず、ローカル commit までで止めて manifest に記録し、trusted step が
-# 検証してから push する (head_sha もそこで確定させる)。
+# **トークンは用途ごとに 3 本、そして job をまたいで共有しない**。installation token は
+# 既定でインストール時の全権限を持つので permission-* で絞り、improve job には read
+# (と preflight) だけを渡す (checkout も persist-credentials: false)。**書き込み
+# トークンは improve job には一度も存在せず**、agent の走った runner とは別の runner
+# (stage / publish) でそれぞれ発行する。agent は push せずローカル commit までで止め、
+# その成果を bundle にして渡すだけ。head_sha は stage が push した ref から確定させる。
 #
 # 人間の承認ゲートは PR レビュー。**手順として** default branch へ push も merge も
 # しない — contents: write は improve/* ブランチを push するために必要な権限であり、
@@ -72,12 +87,10 @@ concurrency:
 jobs:
   improve:
     runs-on: ubuntu-latest
-    # verify は候補 1 件につき 1 job にする (matrix)。その添字リストをここから渡す。
-    outputs:
-      indexes: ${{ steps.push.outputs.indexes }}
-      count: ${{ steps.push.outputs.count }}
-      push_failed: ${{ steps.push.outputs.push_failed }}
-      secret_hit: ${{ steps.push.outputs.secret_hit }}
+    # この job は output を持たない。**agent が走った runner の出力は
+    # $GITHUB_OUTPUT も含めて untrusted** で、agent が残したバックグラウンド
+    # プロセスから追記できるため。後続に渡すのは hand-off artifact だけで、
+    # matrix の添字も push の結果も stage job が自分で出す。
     permissions:
       # この job の GITHUB_TOKEN は **read だけ**にする。claude-code-action は
       # process.env をそのまま SDK に渡すので、job の GITHUB_TOKEN は我々が渡す
@@ -85,9 +98,10 @@ jobs:
       # そこが抜け道になるため、書き込みは全て App トークン側に寄せる:
       #   checkout        -> App の read トークン (token: で明示)
       #   ruleset preflight -> App の preflight トークン
-      #   ブランチ push   -> App の write トークン (remote URL で明示)
       #   artifact 上げ   -> ACTIONS_RUNTIME_TOKEN (GITHUB_TOKEN ではない)
       # agent-feedback の issue も App の read トークンで読む。
+      # **書き込みトークンはこの job には存在しない** — ブランチの push は別 runner
+      # の stage job が行う (同じ job の後段 step は agent から到達できるため)。
       contents: read
       # id-token は付けない: 認証は claude_code_oauth_token 経由で、OIDC は使わない
 
@@ -135,7 +149,7 @@ jobs:
       # 奪われる。更新は SHA と併記コメントの両方を直す。
       # persist-credentials: false — agent が .git/config からトークンを読み出して
       # PR 本文などに書き出す経路を残さない (prompt injection の出口を塞ぐ)。
-      # push は agent ではなく後段の trusted step が行う。
+      # push は agent でも この job でもなく、別 runner の stage job が行う。
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -279,8 +293,8 @@ jobs:
           # この action は API を呼ぶために資格情報を agent のプロセスに渡すので、
           # 環境変数は `Bash(python3 *)` (ledger.py とテストに要る) からいくらでも
           # 読める。**資格情報が読めること自体は前提**にして、実効的な関門は
-          # 「push の前に候補ブランチの差分をシークレットで走査する」trusted step に
-          # 置く (下の Push the improvement branches step と
+          # 「push の前に候補ブランチの差分をシークレットで走査する」stage job に
+          # 置く (別 runner。この job の中に信用できる後段 step は無い —
           # references/scheduling.md)。
           # ツールを増やすときは「その週の改善ループに本当に要るか」で判断する。
           claude_args: >-
@@ -322,11 +336,11 @@ jobs:
               excluded_meta で記録して実行レポートで報告する
             - **push も PR 作成もしない**。この job のトークンは読み取り専用で、
               改善ブランチはローカルに commit するところまで (git switch -c → commit)。
-              push は後段の trusted step が、PR 起票は publish job が行う
+              push は別 job (stage) が、PR 起票は publish job が行う
             - ローカルに commit したら、環境変数 MANIFEST のファイルに 1 行 1 JSON で
               追記する: {"branch": "improve/<skill>-<finding-id>", "title": "<PR title>",
               "body_file": "<PR 本文のパス>", "ledger_id": "<IMP-...>"}。
-              **head_sha は書かない** — push した ref から trusted step が埋める
+              **head_sha は書かない** — push した ref から stage job が埋める
             - **本文ファイルは環境変数 BODIES のディレクトリの直下にだけ置く**
               (別の場所を指したエントリは検証で落ちる)
             - **.git/config を読み書きしない**。資格情報は checkout に残していないが、
@@ -341,69 +355,238 @@ jobs:
               委譲する (main は意思決定に徹する)
             - 候補が 0 件なら MANIFEST を空のまま「今週は改善なし」と報告して終了する
 
-      # --- ここから trusted step (agent の出力を検証してから push する) --------
-      # 検査スクリプトを **working tree から実行しない**。agent は改善ブランチを
-      # checkout したまま終われるし、Write でファイルも作れるので、working tree の
-      # `.github/scripts/manifest_guard.py` は候補側の内容かもしれない
-      # (`.github/` を禁じるパスの allow-list が効くのは push の後の verify job)。
-      # run を起動した commit の blob を取り出して、それだけを使う。ここは agent の
-      # 実行が終わった後なので、書き出し先を横取りする実行主体はもう居ない。
-      - name: Stage the trusted guard script
-        id: guard
+      # --- hand-off (ここから先は trusted ではない) --------------------------
+      # agent は終了前にバックグラウンドプロセスを残せる。同じ job の後続 step は
+      # 同じ runner・同じ UID・同じファイルシステムなので、そのプロセスからは
+      # 0600 のファイルも兄弟プロセスの /proc/<pid>/environ も $GITHUB_OUTPUT も
+      # 届く。だから **この job では資格情報を一切扱わず、走査も push もしない**。
+      # ここでやるのは「agent がローカルに作ったものを untrusted な小包にまとめて
+      # 次の runner に渡す」ことだけで、中身の検証は全て stage job が行う。
+      - name: Package the agent's work as an untrusted hand-off
         if: steps.skill-improver.outcome == 'success'
+        env:
+          HANDOFF: ${{ runner.temp }}/handoff
         run: |
-          set -euo pipefail
-          dest="$(mktemp "$RUNNER_TEMP/si-guard-XXXXXX.py")"
-          git show "$GITHUB_SHA:.github/scripts/manifest_guard.py" > "$dest"
-          chmod 0600 "$dest"
-          echo "path=$dest" >> "$GITHUB_OUTPUT"
+          set -uo pipefail
+          rm -rf "$HANDOFF"
+          mkdir -p "$HANDOFF/bodies"
+          # 候補 0 件の週でも artifact が空にならないようにする
+          # (if-no-files-found: error で落とさないため)
+          echo 1 > "$HANDOFF/handoff-version"
 
-      # `ACTIONS_RUNTIME_TOKEN` は artifact / cache API 用に GitHub Actions が
-      # **JavaScript action の step にだけ**注入する run スコープの JWT。
-      # `claude-code-action` は JavaScript action なので、そこから起動される agent の
-      # プロセスもこの値を継承する — つまり agent は `skills/<x>/**` や台帳に書ける。
-      # この workflow 自身が artifact のアップロード/ダウンロードでこのトークンに
-      # 依存している以上、漏れれば同じ run の artifact を差し替えられる。
-      #
-      # ところが `run:` の step にはそもそも注入されないので、
-      # `SCAN_...: ${{ env.ACTIONS_RUNTIME_TOKEN }}` では拾えない (空になる)。
-      # agent が終わった後に **trusted な JavaScript action** を 1 つ走らせて捕まえ、
-      # 0600 のファイルに落として走査スクリプトに渡す。値は step output にも
-      # `GITHUB_ENV` にも載せない (output はログにも後続 step にも広く出回る) —
-      # 後続に渡すのはファイルのパスだけ。空なら**走査できないので落とす**
-      # (fail-closed: 見えない値を「走査した」ことにはできない)。
-      - name: Capture ACTIONS_RUNTIME_TOKEN for the secret scan
-        id: runtime-token
+          # 候補ブランチは bundle 1 つにまとめて渡す。**bundle の中身も untrusted** —
+          # stage が git bundle verify → ref 名の検証 → refs/candidates/* への
+          # 取り込み、の順で扱う。基底を持たない完全な bundle にして、受け側に
+          # 前提 commit を要求しない。
+          refs="$(git for-each-ref --format='%(refname)' 'refs/heads/improve/*')"
+          if [ -n "$refs" ]; then
+            # shellcheck disable=SC2086
+            if ! git bundle create "$HANDOFF/candidates.bundle" $refs; then
+              echo "::error::候補ブランチの bundle を作れなかった"
+              exit 1
+            fi
+          fi
+
+          if [ -f "$MANIFEST" ] && [ ! -L "$MANIFEST" ]; then
+            cp -- "$MANIFEST" "$HANDOFF/prs.jsonl"
+          else
+            : > "$HANDOFF/prs.jsonl"
+          fi
+
+          # $BODIES は agent が書けるディレクトリ。symlink / hard link を辿って
+          # runner 上の任意のファイルを artifact に載せないよう、**ここでも**
+          # 通常ファイルだけを拾う。ただしこれは境界ではない (この step 自体が
+          # untrusted) — 本検査は stage job が同じ規則で行う。
+          if [ -d "$BODIES" ] && [ ! -L "$BODIES" ]; then
+            for src in "$BODIES"/*; do
+              [ -e "$src" ] || continue
+              base="$(basename -- "$src")"
+              printf '%s' "$base" | grep -Eq '^[A-Za-z0-9._-]+$' || continue
+              if [ -L "$src" ] || [ ! -f "$src" ]; then continue; fi
+              [ "$(stat -c %h "$src")" = "1" ] || continue
+              [ "$(stat -c %s "$src")" -le 65536 ] || continue
+              cp -- "$src" "$HANDOFF/bodies/$base"
+            done
+          fi
+          echo "hand-off: manifest $(wc -l < "$HANDOFF/prs.jsonl" | tr -d ' ') 行" \
+               "/ 本文 $(find "$HANDOFF/bodies" -type f | wc -l | tr -d ' ') 件" \
+               >> "$GITHUB_STEP_SUMMARY"
+
+      # 中身は untrusted。名前を skill-improver-manifest と分けてあるのは、
+      # 検証を通った成果物 (stage が上げるもの) と取り違えないため。
+      - name: Upload the untrusted hand-off
         if: steps.skill-improver.outcome == 'success'
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          script: |
-            const fs = require('fs');
-            const path = require('path');
-            const token = process.env.ACTIONS_RUNTIME_TOKEN || '';
-            if (!token) {
-              core.setFailed(
-                'ACTIONS_RUNTIME_TOKEN が空 — 走査できないので中止する (fail-closed)'
-              );
-              return;
-            }
-            // 固定パスは agent が先回りして symlink を置ける。毎回作り直す。
-            const dir = path.join(process.env.RUNNER_TEMP, 'si-runtime-token');
-            fs.rmSync(dir, { recursive: true, force: true });
-            fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-            fs.chmodSync(dir, 0o700);
-            const file = path.join(dir, 'actions-runtime-token');
-            fs.writeFileSync(file, token, { mode: 0o600 });
-            // mode は umask で削られることがあるので明示的に締め直す
-            // (走査スクリプトは 0600 でないファイルを受け付けない)。
-            fs.chmodSync(file, 0o600);
-            core.setOutput('path', file);
+          name: skill-improver-handoff
+          path: ${{ runner.temp }}/handoff
+          if-no-files-found: error
+          retention-days: 7
 
-      # 書き込みトークンはここで初めて発行する。agent の実行中は runner のどこにも
-      # 存在しないので、injection が成功しても持ち出せる write 権限が無い。
+  # **信用の境界はここ**。improve job の出力は、agent が走った runner の出力なので
+  # $GITHUB_OUTPUT も artifact も含めて全て untrusted として扱う (agent が残した
+  # プロセスは同じ UID で後続 step のファイル・環境・出力に届くため)。この job は
+  # **別の runner** で走り、信頼するのは run を起動した commit ($GITHUB_SHA) の
+  # checkout だけ:
+  #   hand-off の取り込み → manifest の組み直し → 差分の allow-list → 本文の検証
+  #   → シークレット走査 → (通ったものだけ) push
+  # の順に進める。候補コードは 1 行も実行しない (テストを回すのは verify job)。
+  #
+  # 検査スクリプトは working tree のものをそのまま使う。この job は候補ブランチを
+  # checkout しないので、working tree = 起動 commit の内容であり、
+  # `git show $GITHUB_SHA:...` で取り出し直す必要が無い。
+  stage:
+    needs: improve
+    runs-on: ubuntu-latest
+    permissions:
+      # job の GITHUB_TOKEN には書き込みを持たせない。push に使うのは、下で
+      # **走査を通してから**発行する App の write トークンだけ。
+      contents: read
+    # verify は候補 1 件につき 1 job にする (matrix)。その添字リストをここから渡す。
+    outputs:
+      indexes: ${{ steps.push.outputs.indexes }}
+      count: ${{ steps.push.outputs.count }}
+      push_failed: ${{ steps.push.outputs.push_failed }}
+      secret_hit: ${{ steps.push.outputs.secret_hit }}
+
+    env:
+      HANDOFF: ${{ runner.temp }}/handoff
+      HANDOFF_MANIFEST: ${{ runner.temp }}/handoff/prs.jsonl
+      HANDOFF_BODIES: ${{ runner.temp }}/handoff/bodies
+      BUNDLE: ${{ runner.temp }}/handoff/candidates.bundle
+      WORK: ${{ runner.temp }}/stage
+      BUNDLE_REFS: ${{ runner.temp }}/stage/bundle-refs.tsv
+      MANIFEST: ${{ runner.temp }}/stage/prs.jsonl
+      GUARD: .github/scripts/manifest_guard.py
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    steps:
+      - name: Checkout the triggering commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # 候補ブランチではなく **run を起動した commit** を出す。ここに
+          # manifest_guard.py と ledger.py の trusted なコピーがある。
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download the untrusted hand-off
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: skill-improver-handoff
+          path: ${{ env.HANDOFF }}
+
+      # bundle の中身は agent が作ったもの。**refs/heads/* には取り込まない** —
+      # 名前を検証したうえで refs/candidates/<name> という別の名前空間に置き、
+      # push するときだけ refs/heads/<branch> に写す。
+      - name: Import the candidate refs from the hand-off bundle
+        run: |
+          set -uo pipefail
+          mkdir -p "$WORK"
+          : > "$BUNDLE_REFS"
+          if [ ! -e "$BUNDLE" ]; then
+            echo "hand-off に bundle が無い (候補 0 件)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ -L "$BUNDLE" ] || [ ! -f "$BUNDLE" ]; then
+            echo "::error::bundle が通常ファイルでない"
+            exit 1
+          fi
+          if ! git bundle verify "$BUNDLE"; then
+            echo "::error::bundle の検証に失敗した (壊れているか前提 commit が無い)"
+            exit 1
+          fi
+          heads="$WORK/bundle-heads.txt"
+          if ! git bundle list-heads "$BUNDLE" > "$heads"; then
+            echo "::error::bundle の ref を列挙できなかった"
+            exit 1
+          fi
+          bad=0
+          while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            ref="${line#* }"
+            case "$ref" in
+              refs/heads/improve/*) ;;
+              *) echo "::error::bundle に improve/* 以外の ref がある"; bad=1; break ;;
+            esac
+            name="${ref#refs/heads/improve/}"
+            if ! printf '%s' "improve/$name" | grep -Eq '^improve/[A-Za-z0-9._-]+$'; then
+              echo "::error::bundle の ref 名が branch 名の規則に合わない"
+              bad=1; break
+            fi
+            if ! git check-ref-format "refs/candidates/$name"; then
+              echo "::error::bundle の ref 名を取り込み先の ref 名にできない"
+              bad=1; break
+            fi
+            if ! git fetch --no-tags --quiet "$BUNDLE" "+$ref:refs/candidates/$name" < /dev/null; then
+              echo "::error::bundle から $ref を取り込めなかった"
+              bad=1; break
+            fi
+            printf '%s\t%s\n' "improve/$name" \
+              "$(git rev-parse "refs/candidates/$name")" >> "$BUNDLE_REFS"
+          done < "$heads"
+          rm -f "$heads"
+          [ "$bad" -eq 0 ] || exit 1
+          echo "bundle から $(wc -l < "$BUNDLE_REFS" | tr -d ' ') 件の候補 ref を取り込んだ" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      # manifest は agent が書いた **データ**。許可キーだけで組み直し、bundle の
+      # ref と 1 対 1 で対応することまで確かめる。片側にしか無いものが 1 件でも
+      # あれば manifest 全体を落とす (どちらが正しいかは判断できない — fail closed)。
+      # head_sha は agent の申告ではなく **取り込んだ ref の SHA** を使う
+      # (この後 push するのはその ref そのもの)。
+      - name: Rebuild the manifest from the untrusted hand-off
+        run: |
+          set -uo pipefail
+          : > "$MANIFEST"
+          raw="$WORK/with-sha.jsonl"
+          : > "$raw"
+          if [ ! -s "$HANDOFF_MANIFEST" ]; then
+            if [ -s "$BUNDLE_REFS" ]; then
+              echo "::error::manifest が空なのに bundle に候補 ref がある"
+              exit 1
+            fi
+            echo "no improvement branch was recorded - nothing to stage" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          bad=0
+          while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            branch="$(printf '%s' "$line" | jq -r '.branch // ""' 2>/dev/null)"
+            if ! printf '%s' "$branch" | grep -Eq '^improve/[A-Za-z0-9._-]+$'; then
+              echo "::error::manifest の branch 名が不正"
+              bad=1; break
+            fi
+            sha="$(awk -F'\t' -v b="$branch" '$1 == b {print $2; exit}' "$BUNDLE_REFS")"
+            if [ -z "$sha" ]; then
+              echo "::error::manifest の $branch が bundle に無い"
+              bad=1; break
+            fi
+            printf '%s' "$line" | jq -c --arg sha "$sha" '. + {head_sha: $sha}' >> "$raw" \
+              || { echo "::error::manifest の行を読めなかった"; bad=1; break; }
+          done < "$HANDOFF_MANIFEST"
+          [ "$bad" -eq 0 ] || exit 1
+          # 逆向き: bundle にあって manifest に無い ref を残さない
+          while IFS=$'\t' read -r branch _sha; do
+            [ -n "$branch" ] || continue
+            if ! jq -e -r --arg b "$branch" 'select(.branch == $b)' "$raw" > /dev/null 2>&1; then
+              echo "::error::bundle の $branch が manifest に無い"
+              exit 1
+            fi
+          done < "$BUNDLE_REFS"
+          if ! python3 "$GUARD" sanitize --src "$raw" --dest "$MANIFEST"; then
+            echo "::error::manifest の検査に失敗した"
+            exit 1
+          fi
+          rm -f "$raw"
+
+      # 書き込みトークンはこの runner で初めて発行する。**agent が走った runner
+      # には最初から最後まで存在しない**ので、agent が残したプロセスからは
+      # /proc/<pid>/environ でも届かない。発行を走査より前に置くのは、この
+      # トークン自身も走査対象に入れるため (push はこの後、走査を通った候補だけ)。
       - name: Mint a write-scoped App token
         id: write-token
-        if: steps.skill-improver.outcome == 'success'
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
         with:
           app-id: ${{ secrets.SKILL_IMPROVER_APP_ID }}
@@ -412,46 +595,49 @@ jobs:
           permission-pull-requests: write
 
       # 候補ブランチを push する = **公開する**。ここが信用の境界なので、公開の前に
-      # 差分そのものをシークレットで走査する。パスの allow-list (verify) はパスしか
-      # 見ないので、`skills/<x>/**` や台帳の中に書かれた資格情報は素通りする。
+      # 差分そのものと PR 本文をシークレットで走査し、パスの allow-list も通す
+      # (verify も同じ allow-list を持つが、**落ちるものはそもそも push しない**)。
       #
-      # SCAN_* は **この step の env にだけ**置く。job の env に置くと agent の
-      # プロセスにも届いてしまう (App の秘密鍵は今 agent の環境に無い)。値は
-      # コマンドラインに渡さず環境変数名だけを渡し、検出しても値は出力しない。
-      - name: Push the improvement branches
+      # この job が見ないシークレット (improve job の read / preflight トークン、
+      # その job の GITHUB_TOKEN、ACTIONS_RUNTIME_TOKEN) は実値では走査できない。
+      # それらは接頭辞の網 — installation token の `ghs_`、run スコープ JWT の
+      # `eyJ....eyJ....` — で拾う (references/scheduling.md の「残余リスク」)。
+      - name: Scan and push the improvement branches
         id: push
-        if: steps.skill-improver.outcome == 'success'
         env:
           WRITE_TOKEN: ${{ steps.write-token.outputs.token }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          GUARD: ${{ steps.guard.outputs.path }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           # この job が見えるシークレットを全部渡す (どれが漏れても同じ被害なので、
           # 1 本でも渡し忘れるとその 1 本が抜け道になる)。SKILL_IMPROVER_APP_ID は
           # 短い数字列で誤検知にしかならないため対象外 (スクリプト側でも弾く)。
           SCAN_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           SCAN_APP_PRIVATE_KEY: ${{ secrets.SKILL_IMPROVER_APP_PRIVATE_KEY }}
-          SCAN_READ_TOKEN: ${{ steps.read-token.outputs.token }}
-          SCAN_PREFLIGHT_TOKEN: ${{ steps.preflight-token.outputs.token }}
           SCAN_WRITE_TOKEN: ${{ steps.write-token.outputs.token }}
           SCAN_JOB_GITHUB_TOKEN: ${{ github.token }}
-          # 環境変数では受け取れない値 (上の JS step が 0600 で落としたファイル)
-          RUNTIME_TOKEN_FILE: ${{ steps.runtime-token.outputs.path }}
         run: |
           set -uo pipefail
           failed=0
           secret_hit=0
-          scan_branch() {
+          # mktemp -d で毎回別名にする (固定パスを先回りされない)
+          stage="$(mktemp -d "$RUNNER_TEMP/si-stage-XXXXXX")"
+          mkdir -p "$stage/bodies"
+          echo "dir=$stage" >> "$GITHUB_OUTPUT"
+          bodies_real="$(realpath -e "$HANDOFF_BODIES" 2>/dev/null || true)"
+          scan_diff() {
             # 値ではなく環境変数名を渡す (コマンドラインは他プロセスから見える)
             python3 "$GUARD" scan-diff \
               --repo . --base "origin/$DEFAULT_BRANCH" --head "$1" \
               --secret-env SCAN_CLAUDE_CODE_OAUTH_TOKEN \
               --secret-env SCAN_APP_PRIVATE_KEY \
-              --secret-env SCAN_READ_TOKEN \
-              --secret-env SCAN_PREFLIGHT_TOKEN \
+              --secret-env SCAN_WRITE_TOKEN \
+              --secret-env SCAN_JOB_GITHUB_TOKEN
+          }
+          scan_body() {
+            python3 "$GUARD" scan-files \
+              --secret-env SCAN_CLAUDE_CODE_OAUTH_TOKEN \
+              --secret-env SCAN_APP_PRIVATE_KEY \
               --secret-env SCAN_WRITE_TOKEN \
               --secret-env SCAN_JOB_GITHUB_TOKEN \
-              --secret-file "SCAN_ACTIONS_RUNTIME_TOKEN=$RUNTIME_TOKEN_FILE"
+              -- "$1"
           }
           emit_indexes() {
             # push できた行数から matrix の添字リストを作る (0 始まり)
@@ -468,6 +654,7 @@ jobs:
           if [ ! -s "$MANIFEST" ]; then
             echo "no improvement branch was recorded - nothing to push" >> "$GITHUB_STEP_SUMMARY"
             : > "$MANIFEST"
+            : > "$stage/prs.jsonl"
             emit_indexes
             exit 0
           fi
@@ -475,37 +662,106 @@ jobs:
           : > "$MANIFEST.new"
           while IFS= read -r line; do
             [ -n "$line" ] || continue
-            branch="$(printf '%s' "$line" | jq -r '.branch // ""')"
-            if ! printf '%s' "$branch" | grep -Eq '^improve/[A-Za-z0-9._-]+$'; then
-              echo "::warning::${branch:-<no branch>}: branch 名が不正 — push しない"
-              echo "- \`${branch:-<no branch>}\`: branch 名が不正 — push しない ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
-              failed=$((failed + 1)); continue
+            # ここから先の値は sanitize を通っているので形式は保証されている
+            branch="$(printf '%s' "$line" | jq -r '.branch')"
+            head_sha="$(printf '%s' "$line" | jq -r '.head_sha')"
+            ledger_id="$(printf '%s' "$line" | jq -r '.ledger_id')"
+            body_base="$(printf '%s' "$line" | jq -r '.body_file')"
+            name="${branch#improve/}"
+            drop() {
+              echo "::warning::$branch: $1 — push しない"
+              echo "- \`$branch\`: $1 — push しない ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
+              failed=$((failed + 1))
+            }
+
+            # --- PR 本文ファイルの検証 (bodies/ 直下の通常ファイルだけ) --------
+            src="$HANDOFF_BODIES/$body_base"
+            if [ -z "$bodies_real" ]; then
+              drop "hand-off に bodies/ が無い"; continue
             fi
-            if ! git rev-parse --verify --quiet "refs/heads/$branch" > /dev/null; then
-              echo "::warning::$branch: ローカルにそのブランチが無い — push しない"
-              echo "- \`$branch\`: ローカルにそのブランチが無い — push しない ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
-              failed=$((failed + 1)); continue
+            if [ -L "$src" ] || [ ! -f "$src" ]; then
+              drop "body_file が bodies/ 配下の通常ファイルでない"; continue
             fi
-            # head_sha は agent の申告ではなく、いま push する ref から取る
-            head_sha="$(git rev-parse "refs/heads/$branch")"
-            # **公開の直前**にシークレットを走査する。差分が読めない場合も不合格
-            # (fail-closed)。理由はパスまでで、一致した値はログにも summary にも
-            # 出さない。落ちた候補は push しないので manifest からも消え、
-            # verify / publish には渡らない。
-            if ! scan_branch "$head_sha"; then
+            if [ "$(realpath "$src")" != "$bodies_real/$body_base" ]; then
+              drop "body_file の実体が bodies/ の外にある"; continue
+            fi
+            if [ "$(stat -c %h "$src")" != "1" ]; then
+              drop "body_file が hard link"; continue
+            fi
+            if [ "$(stat -c %s "$src")" -gt 65536 ]; then
+              drop "body_file が 64 KiB を超えている"; continue
+            fi
+
+            # --- 台帳の該当行から対象 skill を決める (verify と同じ規則) -------
+            target=""
+            if [ -n "$ledger_id" ]; then
+              target="$(git show "$head_sha:improvements/ledger.jsonl" 2>/dev/null \
+                | jq -r --arg id "$ledger_id" '
+                    select(.id == $id and .status == "proposed" and (.pr == null))
+                    | .target_skill // empty
+                  ' 2>/dev/null | head -n 1)"
+              if [ -z "$target" ]; then
+                drop "台帳に proposed かつ pr 未設定の $ledger_id が無い"; continue
+              fi
+              if ! printf '%s' "$target" | grep -Eq '^[A-Za-z0-9._-]+$'; then
+                drop "target_skill の名前が不正"; continue
+              fi
+              case "$target" in
+                retro|session-retro|skill-builder|empirical-prompt-tuning|skill-improver|model-policy|harness-distribution|rulesync-sync)
+                  drop "メタスキル ($target) は改善対象にできない"; continue ;;
+              esac
+            fi
+
+            # --- allow-list diff ゲート (verify と同じ範囲。公開の前にも見る) --
+            changed="$(mktemp)"
+            if ! git diff --name-only "origin/$DEFAULT_BRANCH...$head_sha" > "$changed"; then
+              rm -f "$changed"; drop "diff を取れなかった"; continue
+            fi
+            outside=""
+            while IFS= read -r path; do
+              [ -n "$path" ] || continue
+              case "$path" in
+                improvements/ledger.jsonl) continue ;;
+              esac
+              if [ -n "$target" ]; then
+                case "$path" in
+                  "skills/$target"/*|".claude/skills/$target"/*|".agents/skills/$target"/*) continue ;;
+                esac
+              fi
+              outside="$path"
+              break
+            done < "$changed"
+            rm -f "$changed"
+            if [ -n "$outside" ]; then
+              drop "allow-list 外の変更を含む (\`$outside\`)"; continue
+            fi
+
+            # --- **公開の直前**にシークレットを走査する ------------------------
+            # 差分が読めない場合も不合格 (fail-closed)。理由はパスまでで、一致した
+            # 値はログにも summary にも出さない。落ちた候補は push しないので
+            # manifest からも消え、verify / publish には渡らない。
+            if ! scan_diff "$head_sha"; then
               echo "::error::$branch: 差分にシークレットらしき値がある — push しない"
-              echo "- \`$branch\`: 差分にシークレットらしき値がある — push しない (詳細は improve job のログ、値は出さない) ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
+              echo "- \`$branch\`: 差分にシークレットらしき値がある — push しない (詳細は stage job のログ、値は出さない) ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
               secret_hit=$((secret_hit + 1)); continue
             fi
-            if ! git push "$remote" "refs/heads/$branch:refs/heads/$branch" > /dev/null 2>&1; then
-              echo "::warning::$branch: push に失敗"
-              echo "- \`$branch\`: push に失敗 ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
-              failed=$((failed + 1)); continue
+            if ! scan_body "$src"; then
+              echo "::error::$branch: PR 本文にシークレットらしき値がある — push しない"
+              echo "- \`$branch\`: PR 本文にシークレットらしき値がある — push しない (詳細は stage job のログ、値は出さない) ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
+              secret_hit=$((secret_hit + 1)); continue
             fi
-            printf '%s' "$line" | jq -c --arg sha "$head_sha" '. + {head_sha: $sha}' >> "$MANIFEST.new"
-            echo "- \`$branch\` (\`$head_sha\`): push 済み" >> "$GITHUB_STEP_SUMMARY"
+
+            if ! git push "$remote" "refs/candidates/$name:refs/heads/$branch" < /dev/null > /dev/null 2>&1; then
+              drop "push に失敗"; continue
+            fi
+            if ! cp -- "$src" "$stage/bodies/$body_base"; then
+              drop "本文ファイルをコピーできなかった"; continue
+            fi
+            printf '%s\n' "$line" >> "$MANIFEST.new"
+            echo "- \`$branch\` (\`$head_sha\`): 検証 OK → push 済み" >> "$GITHUB_STEP_SUMMARY"
           done < "$MANIFEST"
           mv "$MANIFEST.new" "$MANIFEST"
+          cp -- "$MANIFEST" "$stage/prs.jsonl"
           emit_indexes
           # push できなかった候補・シークレットで落とした候補があってもここでは
           # 落とさない — 落とすと後続 job がまるごと skip され、通った候補まで
@@ -513,117 +769,12 @@ jobs:
           # 持つ (push_failed / secret_hit を見る)。
           exit 0
 
-      # $WORKDIR は agent が書けるディレクトリなので、そのまま artifact にしない。
-      # body_file を「runner が読める任意のファイル」への symlink / hard link に
-      # すり替えられると、upload-artifact がリンクを解決して中身を運び、
-      # gh pr create --body-file 経由で公開 PR 本文に載る (OAuth token 等)。
-      # ここで 1 件ずつ検証し、**通ったファイルだけを新しく作った空のディレクトリに
-      # コピー**して、そちらだけを上げる。
-      - name: Stage the artifact from validated files
-        id: stage
-        if: steps.skill-improver.outcome == 'success'
-        env:
-          GUARD: ${{ steps.guard.outputs.path }}
-          # PR 本文は公開面そのもの。差分と同じ規則で走査する (SCAN_* を job の env に
-          # 置かないのは push step と同じ理由 — agent のプロセスに届かせないため)。
-          SCAN_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          SCAN_APP_PRIVATE_KEY: ${{ secrets.SKILL_IMPROVER_APP_PRIVATE_KEY }}
-          SCAN_READ_TOKEN: ${{ steps.read-token.outputs.token }}
-          SCAN_PREFLIGHT_TOKEN: ${{ steps.preflight-token.outputs.token }}
-          SCAN_WRITE_TOKEN: ${{ steps.write-token.outputs.token }}
-          SCAN_JOB_GITHUB_TOKEN: ${{ github.token }}
-          RUNTIME_TOKEN_FILE: ${{ steps.runtime-token.outputs.path }}
-        run: |
-          set -uo pipefail
-          # mktemp -d で毎回別名にする (agent が先回りして作れる固定パスを使わない)
-          stage="$(mktemp -d "$RUNNER_TEMP/si-stage-XXXXXX")"
-          mkdir -p "$stage/bodies"
-          echo "dir=$stage" >> "$GITHUB_OUTPUT"
-
-          # 1 件ずつのファイル検査の前に、**入れ物そのもの**を確かめる。
-          # $WORKDIR / $BODIES ごと symlink に差し替えられていたら、その下の
-          # realpath 比較は攻撃者の選んだディレクトリの中で一貫してしまう。
-          expect_bodies="$(realpath -e "$RUNNER_TEMP")/skill-improver/bodies"
-          if [ -L "$WORKDIR" ]; then
-            echo "::error::\$WORKDIR ($WORKDIR) が symlink"; exit 1
-          fi
-          if [ -L "$BODIES" ] || [ ! -d "$BODIES" ]; then
-            echo "::error::\$BODIES ($BODIES) が symlink か、ディレクトリでない"; exit 1
-          fi
-          actual_bodies="$(realpath -e "$BODIES")" || {
-            echo "::error::\$BODIES ($BODIES) を解決できない"; exit 1
-          }
-          if [ "$actual_bodies" != "$expect_bodies" ]; then
-            echo "::error::\$BODIES の実体が想定と違う ($actual_bodies != $expect_bodies)"
-            exit 1
-          fi
-          if [ -L "$MANIFEST" ] || { [ -e "$MANIFEST" ] && [ ! -f "$MANIFEST" ]; }; then
-            echo "::error::manifest ($MANIFEST) が symlink か通常ファイルでない"; exit 1
-          fi
-
-          if [ ! -s "$MANIFEST" ]; then
-            : > "$stage/prs.jsonl"
-            echo "no candidate to stage" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          # manifest はそのままコピーしない。agent は自分の GH_TOKEN を読めるので、
-          # title のような任意の文字列フィールドにトークンを載せられる (それは
-          # gh pr create --title で公開される)。許可したキーだけで組み直し、
-          # 長さ・制御文字・トークン様文字列を全フィールドで検査する。
-          python3 "$GUARD" sanitize \
-            --src "$MANIFEST" --dest "$stage/prs.jsonl" || {
-            echo "::error::manifest の検査に失敗した"; exit 1
-          }
-          bodies_real="$actual_bodies"
-          bad=0
-          while IFS= read -r line; do
-            [ -n "$line" ] || continue
-            branch="$(printf '%s' "$line" | jq -r '.branch // "?"')"
-            body_file="$(printf '%s' "$line" | jq -r '.body_file // ""')"
-            fail() {
-              echo "::error::$branch: body_file ($body_file) $1"
-              bad=1
-            }
-            base="$(basename -- "$body_file")"
-            if ! printf '%s' "$base" | grep -Eq '^[A-Za-z0-9._-]+$'; then
-              fail "の名前が不正"; continue
-            fi
-            src="$BODIES/$base"
-            # symlink は拒否 (-L)。hard link も拒否 (リンク数 1 以外)。
-            if [ -L "$src" ]; then fail "が symlink"; continue; fi
-            if [ ! -f "$src" ]; then fail "が通常ファイルでない"; continue; fi
-            if [ "$(realpath "$src")" != "$bodies_real/$base" ]; then
-              fail "の実体が bodies/ の外にある"; continue
-            fi
-            if [ "$(stat -c %h "$src")" != "1" ]; then fail "が hard link"; continue; fi
-            if [ "$(stat -c %s "$src")" -gt 65536 ]; then fail "が 64 KiB を超えている"; continue; fi
-            if grep -Eq '(ghs_|ghp_|github_pat_|ghu_)[A-Za-z0-9_]{10,}' "$src"; then
-              fail "にトークンらしき文字列がある"; continue
-            fi
-            # 接頭辞の網だけでなく、この job が見えるシークレットの**実値**でも見る
-            # (OAuth トークンは ghs_ 系の接頭辞に当たらない)。値は出力しない。
-            if ! python3 "$GUARD" scan-files \
-                 --secret-env SCAN_CLAUDE_CODE_OAUTH_TOKEN \
-                 --secret-env SCAN_APP_PRIVATE_KEY \
-                 --secret-env SCAN_READ_TOKEN \
-                 --secret-env SCAN_PREFLIGHT_TOKEN \
-                 --secret-env SCAN_WRITE_TOKEN \
-                 --secret-env SCAN_JOB_GITHUB_TOKEN \
-                 --secret-file "SCAN_ACTIONS_RUNTIME_TOKEN=$RUNTIME_TOKEN_FILE" \
-                 -- "$src"; then
-              fail "にシークレットらしき値がある"; continue
-            fi
-            cp -- "$src" "$stage/bodies/$base" || { fail "をコピーできなかった"; continue; }
-          done < "$MANIFEST"
-          [ "$bad" -eq 0 ] || exit 1
-
       - name: Upload the manifest
-        if: always() && steps.skill-improver.outcome == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: skill-improver-manifest
-          # 検証を通ったファイルだけを入れた staging ディレクトリ。$WORKDIR は上げない。
-          path: ${{ steps.stage.outputs.dir }}
+          # 検証を通ったファイルだけを入れた staging ディレクトリ。hand-off は上げない。
+          path: ${{ steps.push.outputs.dir }}
           if-no-files-found: error
           retention-days: 7
 
@@ -637,8 +788,8 @@ jobs:
   # 資格情報も持たない (contents: read / persist-credentials: false / GH_TOKEN なし /
   # secrets なし)。候補がテストや検査スクリプトを書き換えていても奪えるものが無い。
   verify:
-    needs: improve
-    if: needs.improve.outputs.count != '0'
+    needs: stage
+    if: needs.stage.outputs.count != '0'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -646,7 +797,7 @@ jobs:
       # 1 件落ちても残りは検証する (どれが落ちたかを conclusion で個別に見るため)
       fail-fast: false
       matrix:
-        idx: ${{ fromJSON(needs.improve.outputs.indexes) }}
+        idx: ${{ fromJSON(needs.stage.outputs.indexes) }}
     # collect が job 名から添字を引くので、名前は決め打ちにする
     name: verify (${{ matrix.idx }})
 
@@ -795,12 +946,12 @@ jobs:
           echo "- \`$branch\` (\`$head_sha\`): 検証 OK" >> "$GITHUB_STEP_SUMMARY"
 
   # 合格記録を組み立てる trusted job。候補コードは一切動かさず、**verify job の
-  # conclusion** (改竄できない) と **improve が候補コードを動かす前に上げた manifest**
+  # conclusion** (改竄できない) と **stage が候補コードを動かす前に上げた manifest**
   # だけを材料にする。verify が上げた artifact は使わない (使えばそこが抜け穴になる)。
   collect:
-    needs: [improve, verify]
+    needs: [stage, verify]
     if: >-
-      always() && needs.improve.result == 'success'
+      always() && needs.stage.result == 'success'
       && needs.verify.result != 'cancelled'
     runs-on: ubuntu-latest
     permissions:
@@ -814,7 +965,7 @@ jobs:
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
     steps:
-      # improve が上げた manifest (= 候補コードが 1 行も動く前の状態)。
+      # stage が上げた manifest (= 候補コードが 1 行も動く前の状態)。
       # bodies/ もこちらから取る — verify 側の成果物は信用しない。
       - name: Download the manifest
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -896,13 +1047,13 @@ jobs:
     # 入力は collect が組み立てた合格記録だけ。verify が上げた artifact は
     # (そもそも上げていないが) 使わない — 候補コードが動いた runner の成果物を
     # 信頼した時点で検証の意味が消えるため。
-    needs: [improve, collect]
+    needs: [stage, collect]
     # verify は候補が 1 つでも落ちれば赤くなる (その可視性は保つ)。ただし通った候補は
     # 起票したいので、その場合も publish は走らせる。
     # **always() が要る**: 状態関数を含まない if には暗黙の success() が掛かるため、
     # needs の result を見るだけでは上流が赤いと job ごと skip される。
     if: >-
-      always() && needs.improve.result == 'success'
+      always() && needs.stage.result == 'success'
       && needs.collect.result == 'success'
     runs-on: ubuntu-latest
     permissions:
@@ -1132,30 +1283,30 @@ jobs:
 
       # 差分にシークレットらしき値があった候補は push されていない。**その run は
       # 必ず赤で終える** — 通った候補の起票は済ませたうえで、最終 step でまとめて
-      # 落とす (push 失敗と同じ扱い)。どのブランチだったかは improve job の
+      # 落とす (push 失敗と同じ扱い)。どのブランチだったかは stage job の
       # summary に出ており、一致した値はどこにも出さない。
       - name: Fail the run when a candidate branch carried a secret
         if: >-
-          always() && needs.improve.outputs.secret_hit != ''
-          && needs.improve.outputs.secret_hit != '0'
+          always() && needs.stage.outputs.secret_hit != ''
+          && needs.stage.outputs.secret_hit != '0'
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          echo "::error::${{ needs.improve.outputs.secret_hit }} 件の候補ブランチの" \
+          echo "::error::${{ needs.stage.outputs.secret_hit }} 件の候補ブランチの" \
                "差分にシークレットらしき値があったため公開しなかった。" \
-               "資格情報のローテーションを検討すること。詳細は improve job の summary ($RUN_URL)"
+               "資格情報のローテーションを検討すること。詳細は stage job の summary ($RUN_URL)"
           exit 1
 
-      # push に失敗した候補があった run は赤で終える。improve 側で落とすと後続 job が
+      # push に失敗した候補があった run は赤で終える。stage 側で落とすと後続 job が
       # skip され、push できた候補まで起票されなくなるので、**起票を終えた後の
       # 最終 step** でまとめて赤にする。
       - name: Fail the run when some branches could not be pushed
         if: >-
-          always() && needs.improve.outputs.push_failed != ''
-          && needs.improve.outputs.push_failed != '0'
+          always() && needs.stage.outputs.push_failed != ''
+          && needs.stage.outputs.push_failed != '0'
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          echo "::error::${{ needs.improve.outputs.push_failed }} 件の候補ブランチを" \
-               "push できなかった。詳細は improve job の summary を参照 ($RUN_URL)"
+          echo "::error::${{ needs.stage.outputs.push_failed }} 件の候補ブランチを" \
+               "push できなかった。詳細は stage job の summary を参照 ($RUN_URL)"
           exit 1

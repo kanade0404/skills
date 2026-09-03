@@ -283,18 +283,19 @@ description を触ったら `evals/<skill>-trigger-results-<日付>.jsonl` を�
 | **workflow** (`.github/workflows/skill-improver.yml`) | `verify` job (資格情報を持たない。ブランチごとに checkout して Step 5 の検査を実行) | `publish` job。検証が通ったブランチにだけ `gh pr create` |
 | **手動 / Routine** (対話セッション) | 自分 (Step 5 をそのまま実行) | 自分。Step 5 が全て通ってから |
 
-workflow モードは job を 4 つに割ってある。**候補ブランチの中身を実行するのは `verify` job だけで、その job は資格情報を持たない** (`contents: read` / `persist-credentials: false` / `GH_TOKEN` なし) — ブランチがテストや検査スクリプトを書き換えていても、奪える資格情報がそこに無いようにするため。さらに **`verify` は候補 1 件につき 1 job** で、**artifact を一切上げない**: 候補コードが動いた runner の出力は (artifact も含めて) 信用できないので、信頼できる出力を job の conclusion 1 ビットだけに絞り、合格記録の組み立ては候補コードを動かさない `collect` job が行う。書き込み権限を持つ `publish` job はブランチのコードを実行しない (`ledger.py` は default branch 側のコピーを使う)。
+workflow モードは job を 5 つに割ってある。**agent を動かす `improve` job は書き込み資格情報を一切持たず、agent の実行後に残すのは untrusted な hand-off artifact 1 つだけ** — 同じ job の後段 step は agent が残したプロセスと同じ runner・同じ UID なので、「agent の後の step は trusted」という前提が置けないため (`references/scheduling.md`)。検証・シークレット走査・push は**別 runner の `stage` job**が行い、そこが信用の境界になる。**候補ブランチの中身を実行するのは `verify` job だけで、その job は資格情報を持たない** (`contents: read` / `persist-credentials: false` / `GH_TOKEN` なし) — ブランチがテストや検査スクリプトを書き換えていても、奪える資格情報がそこに無いようにするため。さらに **`verify` は候補 1 件につき 1 job** で、**artifact を一切上げない**: 候補コードが動いた runner の出力は (artifact も含めて) 信用できないので、信頼できる出力を job の conclusion 1 ビットだけに絞り、合格記録の組み立ては候補コードを動かさない `collect` job が行う。書き込み権限を持つ `stage` / `publish` job はブランチのコードを実行しない (`ledger.py` は default branch 側のコピーを使う)。
 
 | job | 権限 | 役割 |
 |---|---|---|
-| `improve` | `contents: write` / `issues: read` | ruleset の preflight、agent 実行 (読み取り専用トークン)、trusted step でのブランチ push、manifest の artifact 化 |
+| `improve` | **`contents: read` のみ** | ruleset の preflight、agent 実行 (読み取り専用トークン)。実行後は untrusted な hand-off artifact を上げるだけ |
+| `stage` (**信用の境界**) | `contents: read` + 自分で発行する App の write トークン | hand-off の取り込み (`git bundle verify`)、manifest の組み直し、allow-list ゲート、シークレット走査、通った候補の push、検証済み manifest の artifact 化 |
 | `verify` (**候補 1 件につき 1 job**) | `contents: read` のみ | manifest の検証、allow-list ゲート、台帳差分のゲート、ブランチ上での Step 5 の検査。**artifact は上げない** |
-| `collect` | `actions: read` のみ | 各 `verify` の conclusion と improve の manifest から合格記録を組み立てる |
+| `collect` | `actions: read` のみ | 各 `verify` の conclusion と stage の manifest から合格記録を組み立てる |
 | `publish` | `contents: write` / `pull-requests: write` | 合格記録にある候補の `gh pr create`、`link-pr` の commit / push、失敗時の補償 |
 
-workflow モードでは **agent は push も PR 起票もしない**。agent が持つのは読み取り専用トークンだけで (checkout も `persist-credentials: false`)、改善ブランチにローカル commit するところまで。push は agent の実行後に発行される書き込みトークンで trusted step が行い、PR 起票は `publish` job が行う。書き込みトークンは agent の実行中に runner のどこにも存在しないので、injection が通っても持ち出せる write 権限が無い。
+workflow モードでは **agent は push も PR 起票もしない**。agent が持つのは読み取り専用トークンだけで (checkout も `persist-credentials: false`)、改善ブランチにローカル commit するところまで。その ref は `git bundle` として hand-off artifact に載り、**別 runner の `stage` job** が検証・走査を通してから push する。PR 起票は `publish` job。書き込みトークンは agent が走った runner に**実行中も実行後も**存在しないので、injection が通っても持ち出せる write 権限が無い。
 
-ただし **API の資格情報は agent のプロセスから取り除けない** (action がその値で API を呼ぶ)。そこで**信用の境界はブランチの公開 (push) に置く**: trusted push step が push の前に候補ブランチの差分と PR 本文を、この job が見えるシークレットの実値 (literal / base64 / hex / 空白を落とした姿) と資格情報の接頭辞で走査し、当たった候補は公開しない (`secret_hit` として run を赤で終える)。残余リスクと資格情報の選び方は `references/scheduling.md`。
+ただし **API の資格情報は agent のプロセスから取り除けない** (action がその値で API を呼ぶ)。そこで**信用の境界はブランチの公開 (push) に置く**: `stage` job が push の前に候補ブランチの差分と PR 本文を、その job が見えるシークレットの実値 (literal / base64 / hex / 空白を落とした姿) と資格情報の接頭辞で走査し、当たった候補は公開しない (`secret_hit` として run を赤で終える)。`improve` job 側のトークン (read / preflight / `ACTIONS_RUNTIME_TOKEN`) は別 runner からは実値を知れないので、`ghs_` と run スコープ JWT の**形**でだけ拾う。残余リスクと資格情報の選び方は `references/scheduling.md`。
 
 agent が書くのは manifest の 1 行 1 JSON まで:
 
@@ -302,15 +303,15 @@ agent が書くのは manifest の 1 行 1 JSON まで:
 {"branch": "improve/<skill>-<finding-id>", "title": "<PR title>", "body_file": "<BODIES 直下のパス>", "ledger_id": "<IMP-...>"}
 ```
 
-**`head_sha` は agent が書かない** — push した ref から trusted step が計算して足す (agent の申告値を信用しない)。
+**`head_sha` は agent が書かない** — push した ref から `stage` job が計算して足す (agent の申告値を信用しない)。
 
-**検証も起票もブランチ名ではなく `head_sha` を対象にする**。ブランチ名で追い続けると、検証が終わってから起票までの間に押された commit が「検証済み」として PR に載る (TOCTOU)。`verify` は `origin/<branch>` が `head_sha` と一致することを確かめてからその SHA を checkout し、`publish` は `gh pr create` の直前と `link-pr` の push 直前に `git ls-remote` で remote の先端を取り直して再確認する。不一致ならそのブランチは起票しない (起票後に判明した場合は PR を閉じて補償する)。**agent (`improve` job) はそもそも push しない** (読み取り専用トークンしか持たない)。push 後にブランチが動くと検証済みとして扱えなくなるため、push は trusted step が 1 度だけ行う。`publish` が `link-pr` の commit を同じブランチに push するのは別で、直前の `git ls-remote` による再照合を通った後なので問題ない。
+**検証も起票もブランチ名ではなく `head_sha` を対象にする**。ブランチ名で追い続けると、検証が終わってから起票までの間に押された commit が「検証済み」として PR に載る (TOCTOU)。`verify` は `origin/<branch>` が `head_sha` と一致することを確かめてからその SHA を checkout し、`publish` は `gh pr create` の直前と `link-pr` の push 直前に `git ls-remote` で remote の先端を取り直して再確認する。不一致ならそのブランチは起票しない (起票後に判明した場合は PR を閉じて補償する)。**agent (`improve` job) はそもそも push しない** (読み取り専用トークンしか持たない)。push 後にブランチが動くと検証済みとして扱えなくなるため、push は `stage` job が 1 度だけ行う。`publish` が `link-pr` の commit を同じブランチに push するのは別で、直前の `git ls-remote` による再照合を通った後なので問題ない。
 
 > 最後の窓: 最後の照合と `gh pr create` の間はごく短いが 0 ではない。これを閉じるのは **`improve/**` への push を専用 GitHub App だけに制限する ruleset** の役目で、workflow の preflight がその存在を必須として検査する (`references/scheduling.md`)。
 
-**PR 本文は環境変数 `BODIES` のディレクトリ直下にだけ書き出す**。後段はそのディレクトリ配下の通常ファイルしか読まず、symlink・hard link・`..`・別ディレクトリを指したエントリは検証で落ちる (任意のファイルを PR 本文に載せてトークンを漏らす経路を塞ぐため)。artifact に載るのも、この検証を通ったファイルを trusted step が新しい空ディレクトリにコピーしたものだけで、agent が書けるディレクトリはそのまま上げない。`branch` は `^improve/[A-Za-z0-9._-]+$`、`head_sha` は `^[0-9a-f]{40}$`、`ledger_id` は `^IMP-[0-9]{8}-[0-9a-f]{10}$` に合致し、`ledger_id` はそのブランチの台帳に `proposed` / `pr == null` の行として実在することまで検査される。
+**PR 本文は環境変数 `BODIES` のディレクトリ直下にだけ書き出す**。後段はそのディレクトリ配下の通常ファイルしか読まず、symlink・hard link・`..`・別ディレクトリを指したエントリは検証で落ちる (任意のファイルを PR 本文に載せてトークンを漏らす経路を塞ぐため)。検証済み manifest の artifact に載るのも、この検証を通ったファイルを `stage` job が新しい空ディレクトリにコピーしたものだけである。`branch` は `^improve/[A-Za-z0-9._-]+$`、`head_sha` は `^[0-9a-f]{40}$`、`ledger_id` は `^IMP-[0-9]{8}-[0-9a-f]{10}$` に合致し、`ledger_id` はそのブランチの台帳に `proposed` / `pr == null` の行として実在することまで検査される。
 
-**ブランチの差分は allow-list で制限される**。`skills/<target_skill>/**`、`.claude/skills/<target_skill>/**`、`.agents/skills/<target_skill>/**`、`improvements/ledger.jsonl` 以外を含むブランチは検査を実行する前に落とす (reconcile ブランチは `improvements/ledger.jsonl` のみ)。
+**ブランチの差分は allow-list で制限される**。`skills/<target_skill>/**`、`.claude/skills/<target_skill>/**`、`.agents/skills/<target_skill>/**`、`improvements/ledger.jsonl` 以外を含むブランチは、`stage` が push する前に、`verify` が検査を実行する前に、それぞれ落とす (reconcile ブランチは `improvements/ledger.jsonl` のみ)。
 
 **台帳は行の粒度でも検査される**。パスの allow-list は `improvements/ledger.jsonl` をファイル単位で許すので、1 行足すついでに他の行を書き換える余地が残る。`verify` は base 側の `ledger.py verify-diff` で、改善ブランチには「自分の 1 行の追加だけ」(id が manifest の `ledger_id` と一致し、`proposed` / `pr == null`)、reconcile ブランチには「`status` / `pr` / `after` / `notes` を許された遷移で進めるだけ」を要求する (`references/ledger.md`)。
 
