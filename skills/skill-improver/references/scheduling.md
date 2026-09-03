@@ -12,9 +12,9 @@
 `CLAUDE_CODE_OAUTH_TOKEN` を使う)。`workflow_dispatch` から手動起動もでき、
 `focus` 入力で skill 名 / finding id / issue URL に絞れる。
 
-権限は job ごとに分けてあり、最大でも `contents: write` (改善ブランチの push) /
-`pull-requests: write` (PR 起票) / `issues: read` (`agent-feedback` ラベルの読み取り)
-まで (内訳は下の「job の分割」)。default branch への push と merge は**手順として**
+権限は job ごとに分けてあり、agent を動かす `improve` は `contents: read` だけ、
+書き込み (`contents: write` / `pull-requests: write`) は `publish` と、agent 実行後の
+trusted step が使う App トークンにだけ置く (内訳は下の「job の分割」)。default branch への push と merge は**手順として**
 行わない — 承認ゲートは PR レビューに置く。
 
 ただし `contents: write` は improve/* と default branch を区別できない。**手順は
@@ -70,8 +70,13 @@ run」を押すまで走らない** ([GITHUB_TOKEN のドキュメント](https:
 2. **trusted push step (`improve` job、agent の実行後)** — 書き込みトークンを発行し、
    manifest の `branch` を検証してローカル ref を push する。**`head_sha` はここで
    実際に push した ref から計算して manifest に書き足す** (agent の申告値は使わない)。
-   続けて **artifact に上げる前に** `body_file` を 1 件ずつ検証し (bodies/ 直下の通常
-   ファイル、symlink でない、hard link でない、64 KiB 以下、トークン様文字列を含まない)、
+   続けて **artifact に上げる前に** manifest を `\.github/scripts/manifest_guard.py`
+   で組み直す — 許可したキー (`branch` / `head_sha` / `body_file` / `ledger_id` /
+   `title`) だけを残し、**全ての文字列フィールド**について長さ・制御文字・トークン様
+   文字列を検査する (agent は自分の `GH_TOKEN` を読めるので、`title` に入れられると
+   `gh pr create --title` で公開される)。`body_file` も 1 件ずつ検証し (bodies/ 直下の
+   通常ファイル、symlink でない、hard link でない、64 KiB 以下、トークン様文字列を
+   含まない)、
    **通ったファイルだけを新しく作った空のディレクトリにコピーして、そちらだけを上げる** —
    agent が書けるディレクトリをそのまま artifact にすると、`body_file` を任意のファイルへの
    symlink / hard link にすり替えるだけで `upload-artifact` がその中身を運び、PR 本文に載る
@@ -88,10 +93,16 @@ run」を押すまで走らない** ([GITHUB_TOKEN のドキュメント](https:
 
 | job | 権限 | 役割 |
 |---|---|---|
-| `improve` | `contents: write` / `issues: read` | ruleset の preflight、agent 実行 (読み取り専用トークン)、trusted step でのブランチ push、manifest を artifact に上げる |
+| `improve` | **`contents: read` のみ** | ruleset の preflight、agent 実行 (読み取り専用トークン)、trusted step でのブランチ push、manifest の検査と artifact 化 |
 | `verify` (**候補 1 件につき 1 job**) | `contents: read` のみ (`persist-credentials: false`、`GH_TOKEN` もシークレットも渡さない) | manifest の値の検証、パスの allow-list ゲート、**台帳差分のゲート (`ledger.py verify-diff`)**、メタスキル対象の拒否、ブランチ上で `unittest` / `check_trigger_evals.py` / `rulesync-sync.mjs --check`。**artifact は上げない** |
 | `collect` | `actions: read` のみ | 各 `verify (<idx>)` の conclusion と improve の manifest から合格記録を組み立てて artifact に上げる。候補コードは動かさない |
 | `publish` | `contents: write` / `pull-requests: write` | 合格記録にある候補の `gh pr create`、`link-pr` の commit / push、失敗時の補償 |
+
+`improve` の job 権限が `contents: read` だけなのは、`claude-code-action` が
+`process.env` をそのまま SDK に渡す = **job の `GITHUB_TOKEN` は agent の環境に届く**
+ため。書き込み能力はこの job の `GITHUB_TOKEN` には持たせず、**agent の実行後に
+発行する App の write トークン** (trusted な push step) と **`publish` job** の 2 か所に
+だけ置く。
 
 **なぜ verify を 1 件 1 job にするか**: 「候補コードを動かした runner が、そのまま
 合格記録も書く」構造は成立しない。候補コードは runner 上で任意に動けるので、落ちた

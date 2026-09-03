@@ -441,11 +441,19 @@ jobs:
             echo "::error::manifest ($MANIFEST) が symlink か通常ファイルでない"; exit 1
           fi
 
-          cp -- "$MANIFEST" "$stage/prs.jsonl"
           if [ ! -s "$MANIFEST" ]; then
+            : > "$stage/prs.jsonl"
             echo "no candidate to stage" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
+          # manifest はそのままコピーしない。agent は自分の GH_TOKEN を読めるので、
+          # title のような任意の文字列フィールドにトークンを載せられる (それは
+          # gh pr create --title で公開される)。許可したキーだけで組み直し、
+          # 長さ・制御文字・トークン様文字列を全フィールドで検査する。
+          python3 .github/scripts/manifest_guard.py sanitize \
+            --src "$MANIFEST" --dest "$stage/prs.jsonl" || {
+            echo "::error::manifest の検査に失敗した"; exit 1
+          }
           bodies_real="$actual_bodies"
           bad=0
           while IFS= read -r line; do
@@ -773,6 +781,7 @@ jobs:
       BODIES: ${{ runner.temp }}/skill-improver/bodies
       PASSED: ${{ runner.temp }}/skill-improver/passed.jsonl
       TRUSTED_LEDGER: ${{ runner.temp }}/trusted-ledger.py
+      TRUSTED_GUARD: ${{ runner.temp }}/trusted-guard.py
       BASE_BRANCH: ${{ github.event.repository.default_branch }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
@@ -823,8 +832,11 @@ jobs:
 
       # 候補ブランチを checkout する前に、default branch 側の ledger.py を退避する。
       # ブランチ側のスクリプトを write 権限を持ったまま実行しないため。
-      - name: Stage the trusted ledger script
-        run: cp skills/skill-improver/scripts/ledger.py "$TRUSTED_LEDGER"
+      - name: Stage the trusted scripts
+        run: |
+          set -euo pipefail
+          cp skills/skill-improver/scripts/ledger.py "$TRUSTED_LEDGER"
+          cp .github/scripts/manifest_guard.py "$TRUSTED_GUARD"
 
       - name: Open a PR for each verified branch
         env:
@@ -888,6 +900,12 @@ jobs:
               failed=1; echo "::endgroup::"; continue
             fi
 
+            # 起票の直前にもう一度 title / body を検査する (staging と同じ規則。
+            # artifact 経由で渡ってくる以上、公開面に出す側が自分で確かめる)。
+            if ! python3 "$TRUSTED_GUARD" check-text --title "$title" --body-file "$body_path"; then
+              echo "- \`$branch\`: title / body が検査に落ちた — PR は作らない ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
+              failed=1; echo "::endgroup::"; continue
+            fi
             if ! pr_url="$(gh pr create --base "$BASE_BRANCH" --head "$branch" \
                  --title "$title" --body-file "$body_path")"; then
               echo "- \`$branch\`: 検証 OK だが PR 起票に失敗 ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"

@@ -97,7 +97,12 @@ $LEDGER list --missing-after --json       # merged だが after を取り損ね�
 $LEDGER list --status proposed --json     # PR に紐付いていないエントリ (修復対象)
 ```
 
-**3 つ目の列挙も飛ばさない**。`proposed` のまま残った行は、PR 起票の後に `link-pr` の commit / push が落ちた (あるいは検証後にブランチが動いて PR を閉じる補償に入った) ときの残骸で、`pr` が空なので `pr_open` の列挙にも出てこない。対応する open PR があれば**修復対象**、無ければ前回の実行が PR まで至らなかった候補なので、`notes` を見て再挑戦か `rejected` かを決める。
+**3 つ目の列挙も飛ばさない**。`proposed` のまま残った行は、PR 起票の後に `link-pr` の commit / push が落ちた (あるいは検証後にブランチが動いて PR を閉じる補償に入った) ときの残骸で、`pr_open` の列挙には出てこない。2 通りあるので分けて扱う:
+
+| 行 | 扱い |
+|---|---|
+| `pr` が入っている | **PR は実在する**。その PR の状態で決着させる — open なら `set-status --status pr_open`、closed / merged なら `pr_open` の行と同じく `rejected` / `merged` |
+| `pr` が空 | 対応する open PR があれば**修復対象** (そのブランチで `link-pr` → commit → push)。無ければ前回の実行が PR まで至らなかった候補なので、`notes` を見て再挑戦か `rejected` かを決める |
 
 **2 つ目の列挙を飛ばさない**。after を取れないまま `merged` にしたエントリは `pr_open` の列挙から外れ、`report` の delta にも revert candidate にも現れない — 効果が測られないまま静かに消える唯一の経路なので、毎回ここで拾い直して取れるようになった指標を記録する (それでも取れないなら `notes` にその旨を残す)。
 
@@ -150,7 +155,9 @@ $LEDGER list --ledger "$tmp/<headRefName>.jsonl" --json
 | 行の状態 | 意味 |
 |---|---|
 | `status == "pr_open"` | その PR が現に開いている |
-| `status == "proposed"` かつ `pr == null` | この実行で `add` したが、まだ PR に紐付いていない |
+| `status == "proposed"` かつ `pr` が入っている | PR は作られたが `set-status` の前に落ちた残骸。**PR は実在するので二重起票しない** |
+
+`status == "proposed"` かつ `pr` が空の行は pending ではない (まだ PR が無い = Step 0 の修復対象)。判定は `ledger.py` の `is_pending_row()` が持つ。
 
 必要なら `pr` の URL を open PR の一覧と突き合わせて裏を取る。そのうえで **`target_skill` と finding クラスキーが一致するもの**を pending 扱いにする:
 

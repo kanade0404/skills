@@ -37,14 +37,20 @@ uv run python3 skills/skill-improver/scripts/ledger.py list --ledger "$tmp/<bran
 なった行が「対応済み」として効いてしまい、同じ skill で本当に再発した finding を
 握り潰す。pending と数えるのは次の 2 つだけ:
 
-| 行の状態 | 意味 |
-|---|---|
-| `status == "pr_open"` | その PR が現に開いている |
-| `status == "proposed"` かつ `pr == null` | `add` 済みだが、まだ PR に紐付いていない |
+| 行の状態 | 意味 | pending か |
+|---|---|---|
+| `status == "pr_open"` | その PR が現に開いている | **pending** |
+| `status == "proposed"` かつ `pr` が入っている | PR は作られたが `set-status` の前に落ちた (補償経路が作る過渡状態)。**PR は実在する** | **pending** (二重起票しない) |
+| `status == "proposed"` かつ `pr == null` | まだ PR が無い | pending ではない (Step 0 の修復対象) |
+| `merged` / `rejected` / `reverted` | 決着済みの過去の記録 | pending ではない (本当の再発を抑止しない) |
 
-この条件を満たす行と `target_skill` × finding クラスが一致する finding は
+判定は `ledger.py` の `is_pending_row()` が持つ。この条件を満たす行と `target_skill` × finding クラスが一致する finding は
 **処理済み (pending)** であり、新規候補にしない。これをしないと、レビュー待ちの
 PR がある間じゅう同じ finding で PR を出し続ける。
+
+**`proposed` かつ `pr` が入っている行**は、Step 0 が **PR の状態で決着させる**:
+open なら `set-status pr_open`、closed / merged なら `pr_open` の行と同じ扱いで
+`rejected` / `merged` にする。放っておくと過渡状態のまま残り続ける。
 
 `proposed` かつ `pr == null` の行に対応する open PR がある場合は、pending ではなく
 **修復対象**である: PR 起票の後に `link-pr` の commit / push が落ちるとこの形で残る。
@@ -74,7 +80,7 @@ push できたときだけ** PR を閉じる。台帳に書けなければ PR �
 | `finding` | string | **1 文**。長い説明は PR 本文に書く |
 | `finding_class` | string | 再発クラスキー。空なら finding 本文の正規化で代用する。agent が「同じ問題の再発」と判断したときに `add --class <key>` で明示する |
 | `lever` | enum | `skill-edit` / `ept` / `trigger`。上流 (`retro` / `session-retro`) の呼び名 `ept-handoff` も `add --lever` で受け付け、`ept` に正規化して保存する |
-| `status` | enum | `proposed` / `pr_open` / `merged` / `rejected` / `excluded_meta` / `reverted` |
+| `status` | enum | `proposed` / `pr_open` / `merged` / `rejected` / `excluded_meta` / `reverted`。`proposed` かつ `pr` が入っている行は**過渡状態** — PR は作られたが `set-status` の前に落ちた残骸で、「PR が実在する finding」として扱う (下記) |
 | `pr` | string \| null | PR URL |
 | `before` / `after` | object | 指標。キーは全て省略可: `trigger_f1` / `ci_fix_iterations` / `review_cycles` / `escalations` |
 | `recurrence` | int | 同一 `target_skill` × 同一 finding クラスの通算回数 (今回を含む)。`add` が自動計算する。`report` は台帳から数え直した値を正とし、保存値は数え直しより大きいときだけ tiebreak として採る |
@@ -142,7 +148,7 @@ cwd から見た repo root。規約外の場所に台帳を置くときは `--sk
 |---|---|
 | `add --source --target --finding --lever [--class] [--evidence ...] [--status] [--notes] [--id] [--created]` | finding を 1 件記録。`recurrence` を自動計算し、`id` を内容から決める。`--class` は再発クラスキーの明示。`--id` は形式 (`IMP-YYYYMMDD-xxxxxxxxxx`) と重複を検査する。対象がメタスキルなら `--status` を無視して `excluded_meta` で記録し、**exit 2** を返す |
 | `set-status --id --status [--notes]` | status を更新 |
-| `link-pr --id --pr [--keep-status]` | PR URL を紐付け、既定で `status=pr_open` にする |
+| `link-pr --id --pr [--keep-status]` | PR URL を紐付け、既定で `status=pr_open` にする。`--keep-status` は補償経路が使う — `proposed` のまま `pr` だけ入れて「PR は実在する」ことを先に記録する |
 | `record-metrics --id --phase before\|after --metric KEY=VALUE [--metric ...]` | 指標を記録。両相が揃うと delta を表示する。非有限値 (`nan` / `inf`) は拒否 |
 | `list [--status ...] [--skill] [--missing-after] [--json]` | エントリを絞って列挙。Step 0 の突き合わせは `--status pr_open`、`--missing-after` (merged なのに `after` が空)、`--status proposed` (PR に紐付いていない = 修復対象) の 3 本を起点にする |
 | `report [--skill] [--json] [--fail-on-revert]` | skill 別の件数・**再発クラスキーとその件数**・status 内訳、before→after の delta、**merged without after metrics**、**revert candidate** を出力 |

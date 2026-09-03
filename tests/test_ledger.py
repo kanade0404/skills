@@ -630,6 +630,32 @@ class TestCliRoundTrip(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(self.entries()[0]["target_skill"], "tdd")
 
+    def test_list_proposed_returns_rows_with_and_without_pr(self) -> None:
+        # 補償経路は proposed のまま pr が入った行を作る。Step 0 が
+        # list --status proposed で拾えないと、その行は回収不能になる
+        for created in ("2026-09-03", "2026-09-10"):
+            run(
+                self.base(
+                    "add", "--source", "retro", "--target", "tdd",
+                    "--finding", f"f-{created}", "--lever", "skill-edit",
+                    "--created", created,
+                )
+            )
+        linked = self.entries()[0]["id"]
+        self.assertEqual(
+            run(self.base("link-pr", "--id", linked, "--pr", "https://x/1", "--keep-status"))[0],
+            0,
+        )
+        listed = json.loads(run(self.base("list", "--status", "proposed", "--json"))[1])
+        self.assertEqual(len(listed), 2)
+        by_id = {e["id"]: e for e in listed}
+        self.assertEqual(by_id[linked]["status"], "proposed")
+        self.assertEqual(by_id[linked]["pr"], "https://x/1")
+        self.assertTrue(ledger.is_pending_row(by_id[linked]))
+        other = next(e for e in listed if e["id"] != linked)
+        self.assertIsNone(other["pr"])
+        self.assertFalse(ledger.is_pending_row(other))
+
     def test_list_missing_after_and_report_section(self) -> None:
         # after を取り損ねた merged は delta にも revert candidate にも出ない。
         # 名指ししないと「効果が測られないまま完了扱い」で静かに消える
@@ -788,6 +814,33 @@ class TestLedgerFileIO(unittest.TestCase):
 def backticked_names(text: str) -> set[str]:
     """`skill-name` 形式で列挙された名前を拾う。"""
     return set(re.findall(r"`([a-z][a-z0-9-]*)`", text))
+
+
+class TestPendingRow(unittest.TestCase):
+    """Step 2.5 が新規候補を抑止してよい行の判定 (純関数)。
+
+    `link-pr --keep-status` を通ると `proposed` のまま `pr` が入る。補償経路が
+    実際にこの形を作るので、拒否せず「PR が実在する = pending」として扱う。
+    """
+
+    def test_pr_open_is_pending(self) -> None:
+        self.assertTrue(ledger.is_pending_row({"status": "pr_open", "pr": "https://x/1"}))
+
+    def test_proposed_with_pr_is_pending(self) -> None:
+        # link-pr の後 set-status の前に落ちた残骸。PR は実在するので二重起票しない
+        self.assertTrue(
+            ledger.is_pending_row({"status": "proposed", "pr": "https://x/1"})
+        )
+
+    def test_proposed_without_pr_is_not_pending(self) -> None:
+        self.assertFalse(ledger.is_pending_row({"status": "proposed", "pr": None}))
+
+    def test_settled_rows_are_not_pending(self) -> None:
+        for status in ("merged", "rejected", "reverted", "excluded_meta"):
+            with self.subTest(status=status):
+                self.assertFalse(
+                    ledger.is_pending_row({"status": status, "pr": "https://x/1"})
+                )
 
 
 class TestVerifyDiff(unittest.TestCase):

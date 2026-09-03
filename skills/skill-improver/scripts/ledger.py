@@ -434,6 +434,27 @@ def ledger_lock(path: Path) -> Iterator[None]:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+def is_pending_row(entry: dict[str, Any]) -> bool:
+    """その行が「もう PR として動いている finding」かを返す (純関数)。
+
+    Step 2.5 (未 merge の improve/* PR の台帳を読む) で、新規候補を抑止してよいのは
+    次の 2 つだけ:
+
+    - `status == "pr_open"` — PR が現に開いている
+    - `status == "proposed"` かつ `pr` が入っている — PR は作られたが `set-status` の
+      前に落ちた残骸 (`link-pr --keep-status` 直後の状態)。PR は実在するので、
+      新規候補として二重に起票してはいけない
+
+    `proposed` かつ `pr` が空の行は「まだ PR が無い」ので pending ではない
+    (Step 0 の修復対象)。merged / rejected / reverted は過去の記録なので、
+    本当の再発を抑止しないよう pending に数えない。
+    """
+    status = entry.get("status")
+    if status == "pr_open":
+        return True
+    return status == "proposed" and bool(entry.get("pr"))
+
+
 def missing_after(entries: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     """merged なのに after 指標が 1 つも無いエントリを返す (純関数)。
 
