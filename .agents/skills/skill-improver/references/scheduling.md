@@ -295,14 +295,50 @@ commit SHA のような不変 ref を渡すことはできず、PR は常に「�
    別 run から同じブランチを動かすことを防ぐ (2 つの run が同時に publish しない)
 3. **起票直後の head 再照合** — 上の 2 つを抜けた場合 (App の鍵の持ち主が手で
    push した等) の最後の検出。`gh pr view <URL> --json headRefOid` を読み、
-   `head_sha` と一致しなければ **PR を閉じる**。取得に失敗した場合も不一致として
+   `head_sha` と一致しなければ **補償に入る**。取得に失敗した場合も不一致として
    扱う (fail-closed)
 
 3 は `ledger_id` を持つ行だけの経路ではない。**台帳行を持たない候補 (reconcile
-ブランチ) も同じ照合と close を通る** — 台帳の書き込みだけを飛ばす。閉じた件数は
+ブランチ) も同じ照合と補償を通る** — 台帳の書き込みだけを飛ばす。検出した件数は
 `publish` step の `head_moved` output に載り、最終 step が run を赤にする
 (`secret_hit` / `push_failed` と同じ仕組み)。検証と起票の間にブランチが動いたこと
 自体が、1 か 2 が破れている証拠として調べるべき異常だから。
+
+##### 公開の窓 (publication window) と、不一致を検出したときの補償
+
+`improve/**` への push は ruleset でこの App 1 件だけに絞られ、workflow レベルの
+`concurrency` (`group: skill-improver` / `cancel-in-progress: false`) が同じ App の
+run 同士の重なりも塞ぐ。したがって公開中にブランチが動いたということは、**App の鍵で
+手動 push した運用者がいる**ことをほぼ意味する。`publish` はその 1 ケースを前提に、
+次の順で補償する (各段は job summary に記録され、**どの段もトークンやシークレットを
+出力しない** — 扱うのは PR の URL と 2 つの SHA だけ):
+
+1. **台帳に `rejected` を記録する** — `link-pr --keep-status` +
+   `set-status --status rejected --notes "PR head moved after verification in <run>"`
+   を候補ブランチに commit / push する。**記録できなくても 2 以降は行う** (この経路
+   だけは「辿れない台帳行」より「未検証 commit を指した open PR」の方が高くつく)
+2. **`gh pr close` を最大 3 回、5 秒 / 10 秒の backoff で試す** — 一過性の API
+   エラーで未検証の PR が open のまま残るのを防ぐ。`gh pr close` は既に閉じている
+   PR には成功を返すので、再試行しても二重には閉じない
+3. **まだ open なら、ブランチの側を検証済みの内容に戻す** —
+   `git push --force-with-lease=refs/heads/<branch>:<観測した SHA> origin <head_sha>:refs/heads/<branch>`。
+   書き戻す先は **この workflow 自身が作った `improve/*` ブランチだけ**で、lease を
+   「たったいま観測した先端」に張るので、**その後さらに動いていれば push は失敗し、
+   知らない commit を握り潰さない**。戻したら `headRefOid` を読み直し、`head_sha` と
+   一致したなら (= open な PR が検証済みの中身を指す状態に戻ったなら) **もう一度だけ
+   `gh pr close` を試す** — 台帳は 1 で `rejected` にしてあるので、最終状態を台帳と
+   一致させるため
+4. **それでも open かつ未検証の commit を指したままなら**、PR URL・観測した SHA・
+   検証済み SHA・ブランチ名を job summary の「手動対応が必要 (unverified PR left
+   open)」見出しに書き出す。加えて (1〜3 の成否に関わらず) `head_moved` を立てて
+   run を赤で終える
+
+**それでも窓は残る**。`git ls-remote` / `gh pr create` / `gh pr view` は 3 つの別々の
+API 呼び出しで、その隙間を GitHub 側で原子化する手段は無い。**PR head に SHA や tag の
+ような不変 ref を指定できない以上、この窓を GitHub 上で閉じ切ることはできない** —
+ruleset と `concurrency` で「動かせる者」を App 1 件に絞り、動いたら検出して上の補償を
+かけるところが上限である。ここまで来た run は必ず赤になるので、窓が実際に踏まれたか
+どうかは run の色と summary で分かる。
 
 **PR 起票後に `link-pr` が落ちた場合の補償**: 台帳から辿れない PR をレビュー待ちに
 残さないため `publish` がその PR を閉じるが、**閉じる前に「閉じた」という事実を台帳に
@@ -450,13 +486,23 @@ kanade0404/skills で skill-improver を 1 周回してください。
    新規候補より先に報告する
 2.5. open な improve/* PR (gh pr list --state open --search 'head:improve/') の
    head ブランチにある improvements/ledger.jsonl も
-   ledger.py list --ledger <tmp> で読む。pending と数えるのは status が pr_open の
-   行と、proposed かつ pr が null の行だけ (head ブランチの台帳は default branch の
-   履歴を含むので、merged / rejected / reverted の行まで数えると本物の再発を
-   握り潰す)。pending の行と target_skill + finding クラスが一致する候補は新規
-   起票せず、実行レポートの「既存 PR あり (skip)」に PR URL を並べる。
-   proposed かつ pr が null のまま open PR がある行は pending ではなく修復対象で、
-   そのブランチで link-pr を実行して commit / push する
+   ledger.py list --ledger <tmp> で読む。pending と数えるのは (a) status が
+   pr_open の行と (b) status が proposed でも `pr` に**開ける PR URL** が入って
+   いる行の 2 つだけで、これは `ledger.py` の `is_pending_row()` と同じ条件
+   (`references/ledger.md`)。(b) は PR 起票の後 `set-status` の前に落ちた残骸で、
+   PR は実在するので二重起票しない。head ブランチの台帳は default branch の履歴を
+   含むので、merged / rejected / reverted の行まで数えると本物の再発を握り潰す。
+   pending の行と target_skill + finding クラスが一致する候補は新規起票せず、実行
+   レポートの「既存 PR あり (skip)」に PR URL を並べたうえで、その PR の現在の
+   状態で決着させる。**`pr` が null の行と `pr` が PR URL の形をしていない行は、
+   status が proposed でも pr_open でも pending ではなく修復対象** — 辿れる PR が
+   無いまま pending として数えると、決着させる URL が無いのにその finding が永久に
+   抑止される。列挙は `ledger.py list --status proposed` と
+   `ledger.py list --inconsistent` の 2 本で拾う (pending だけを直接引くサブ
+   コマンドは無い)。そのブランチで link-pr を実行して commit / push し、**修復した
+   行はそのまま通常の pending 判定に戻る** (link-pr できたなら (b) として pending、
+   引ける PR が 1 件も無ければ proposed / pr=null のままで、その finding は新規
+   候補として拾い直してよい)
 3. 入力は 3 系統: (a) 直近 1 週の retro / session-retro finding のうち lever が
    skill edit / ept-handoff のもの (台帳には ept として保存される)
    (b) agent-feedback ラベルの issue / PR で、author association が

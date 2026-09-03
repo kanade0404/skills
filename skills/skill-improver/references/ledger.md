@@ -91,9 +91,10 @@ gh pr list --state all --head "improve/<target_skill>-<id>" --limit 20 \
 #### 不変条件: `pr_open` は必ず `pr` を持つ
 
 `pr_open` は「追える PR がある」ことを意味する status であり、`pr` が空のまま
-この status になった行は**どちらの経路からも動かせない**: Step 2.5 は pending として
-その finding を抑止する一方、Step 0 には決着させる URL が無い。結果としてその
-finding は二度と提案されない。
+この status になった行は**どちらの経路からも動かせない**: `is_pending_row()` は開ける
+PR URL を持つ行しか pending にしないのでこの行は pending にならず、Step 0 にも決着
+させる URL が無い。結果としてその行は永久に `pr_open` のまま残り、**実在する PR を
+見落として同じ finding に二重で PR が立つ**。
 
 そこで書き込み側で塞ぐ。`add --status pr_open` は `--pr` を必須にし、
 `set-status --status pr_open` は行に `pr` があるか `--pr` が渡されたときだけ通す。

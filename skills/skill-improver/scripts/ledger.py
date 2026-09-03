@@ -492,8 +492,10 @@ def is_inconsistent_row(entry: dict[str, Any]) -> bool:
     - `pr` が空でないのに PR URL の形をしていない — 引けない値を指している
 
     書き込み経路 (`add` / `set-status` / `link-pr`) はどちらも作らせないが、
-    過去の実行が残した行や手編集で入り込みうる。放置すると finding が永久に
-    抑止されるので、Step 0 が `list --inconsistent` で列挙して修復する。
+    過去の実行が残した行や手編集で入り込みうる。`is_pending_row` は開ける URL を
+    持つ行しか pending にしないのでこの行は pending にもならず、放置すると実在する
+    PR を追えないまま残る (同じ finding に二重で PR が立つ)。そこで Step 0 が
+    `list --inconsistent` で列挙して修復する。
     """
     pr = str(entry.get("pr") or "").strip()
     if not pr:
@@ -631,7 +633,9 @@ def cmd_add(args: argparse.Namespace) -> int:
         return EXIT_FAIL
 
     # `pr_open` は「追える PR がある」ことを意味する status。URL 無しで記録すると
-    # Step 0 は決着させる手段が無く、Step 2.5 はその finding を永久に抑止する。
+    # Step 0 は決着させる手段が無く、その行は永久に `pr_open` のまま残る
+    # (`is_pending_row` は開ける URL を持つ行しか pending にしないので、実在する PR を
+    # 見落としたまま同じ finding に二重で PR が立つ)。
     pr = (args.pr or "").strip()
     # status を問わず、保存する `pr` は必ず開ける URL であること。`proposed` でも
     # `pr` が入っていれば Step 2.5 は pending として finding を抑止するので、
@@ -686,7 +690,8 @@ def cmd_set_status(args: argparse.Namespace) -> int:
         print("error: --pr と --clear-pr は同時に使えない", file=sys.stderr)
         return EXIT_FAIL
     # `pr` の無い `pr_open` は書き込み経路が作ってはいけない形 (Step 0 は決着させる
-    # URL を持たず、Step 2.5 はその finding を pending として永久に抑止する)。
+    # URL を持たず、`is_pending_row` も pending にしないので、実在する PR を見落とした
+    # まま同じ finding に二重で PR が立つ)。
     # 片方ずつは正当な操作なので、組み合わせだけを **書き換える前に** 拒否する。
     if args.clear_pr and args.status == "pr_open":
         print(

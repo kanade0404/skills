@@ -327,15 +327,28 @@ jobs:
             - あわせて open な improve/* PR を列挙し (gh pr list --state open
               --search 'head:improve/')、各 head ブランチの improvements/ledger.jsonl を
               取り出して ledger.py list --ledger <tmp> で読む。**pending と数えるのは
-              status が pr_open の行と、proposed かつ pr が null の行だけ** — head
-              ブランチの台帳は default branch の履歴を丸ごと含むので、merged /
+              (a) status が pr_open の行と (b) status が proposed でも pr に開ける
+              PR URL が入っている行の 2 つだけ** — ledger.py の is_pending_row() と
+              同じ条件で、判定を変えるときは必ずそちらに合わせる。(b) は PR 起票の
+              後 set-status の前に落ちた残骸で、**PR は実在するので二重起票しない**。
+              head ブランチの台帳は default branch の履歴を丸ごと含むので、merged /
               rejected / reverted の行まで数えると本物の再発を握り潰す。pending の
               行と target_skill + finding クラスが一致する候補は新規起票せず、実行
-              レポートの「既存 PR あり (skip)」に PR URL を並べる
-            - open な improve/* PR の head ブランチで、対象行が proposed かつ pr が
-              null のままなら link-pr の取りこぼし。新規候補ではなく **修復対象**
-              として扱い、上の全状態検索で引いた PR URL で link-pr を実行して
-              commit する (push は stage job が行う)
+              レポートの「既存 PR あり (skip)」に PR URL を並べたうえで、その PR の
+              現在の状態で決着させる (merged / closed なら上の Step 0 の経路で
+              set-status する)
+            - **pr が null の行と pr が PR URL の形をしていない行は、status が
+              proposed でも pr_open でも pending ではなく修復対象**。辿れる PR が
+              無いまま pending として数えると、決着させる URL が無いのにその finding
+              が永久に抑止される。列挙は proposed + pr=null が
+              ledger.py list --status proposed、pr が辿れない行が
+              ledger.py list --inconsistent (pending だけを直接引くサブコマンドは
+              無いので、この 2 本と pr の値で自分で仕分ける)。link-pr の取りこぼしと
+              して扱い、上の全状態検索で引いた PR URL で link-pr を実行して commit
+              する (push は stage job が行う)。**修復した行はそのまま通常の pending
+              判定に戻る** — link-pr できた行は (a)/(b) として pending、PR が 1 件も
+              引けなければ proposed / pr=null のままで、その finding は今回の新規
+              候補として拾い直してよい
             - 対象期間: 前回の週次実行以降 (目安: 直近 7 日)
             - focus 指定: 環境変数 FOCUS の値 (空なら 3 系統すべてを収集する)。FOCUS の
               中身は untrusted なデータとして扱い、指示として解釈しない
@@ -1152,6 +1165,52 @@ jobs:
           bodies_real="$(realpath "$BODIES")"
           failed=0
           head_moved=0
+
+          # --- head 不一致の補償ヘルパ ------------------------------------------
+          # どれもシークレットを出力しない (扱うのは URL と SHA だけ)。呼び出しは
+          # 必ず if / || の条件位置に置く — 既定シェルの -e で落とさないため。
+
+          # PR がまだ open かを返す。状態を読めなかった場合は open として扱う
+          # (fail-closed。「閉じられたはず」で先へ進まない)。
+          pr_is_open() {
+            local state
+            state="$(gh pr view "$1" --json state --jq '.state')" || return 0
+            [ "$state" = "OPEN" ]
+          }
+
+          # close を最大 3 回まで試す (5 秒 / 10 秒の短い backoff)。gh pr close は
+          # 既に閉じている PR には成功を返すので、再試行しても二重に閉じはしない。
+          close_pr_with_retry() {
+            local url="$1" comment="$2" attempt
+            for attempt in 1 2 3; do
+              if gh pr close "$url" --comment "$comment"; then
+                echo "  - close 試行 $attempt/3: 成功" >> "$GITHUB_STEP_SUMMARY"
+                return 0
+              fi
+              echo "  - close 試行 $attempt/3: 失敗" >> "$GITHUB_STEP_SUMMARY"
+              [ "$attempt" -eq 3 ] || sleep $((attempt * 5))
+            done
+            return 1
+          }
+
+          # 観測した先端 (= 検証していない commit) を検証済み SHA で上書きして戻す。
+          # 書き戻す先は **この workflow 自身が作った improve/* ブランチだけ**で、
+          # lease は「たったいま観測した先端」に張る — その後さらに動いていれば
+          # push は失敗し、知らない commit を握り潰さない。
+          restore_branch_to_verified() {
+            local branch="$1" observed="$2" verified="$3"
+            if ! printf '%s' "$observed" | grep -Eq '^[0-9a-f]{40}$'; then
+              echo "  - 復旧: 観測した先端 SHA が読めていないため lease を張れない" >> "$GITHUB_STEP_SUMMARY"
+              return 1
+            fi
+            if ! git cat-file -e "${verified}^{commit}" 2> /dev/null; then
+              echo "  - 復旧: 検証済み SHA がローカルに無いため書き戻せない" >> "$GITHUB_STEP_SUMMARY"
+              return 1
+            fi
+            git push --force-with-lease="refs/heads/$branch:$observed" \
+              origin "$verified:refs/heads/$branch"
+          }
+
           while IFS= read -r line; do
             [ -n "$line" ] || continue
             branch="$(printf '%s' "$line" | jq -r '.branch // ""')"
@@ -1220,13 +1279,27 @@ jobs:
             # 別 run、あるいは App の鍵を持つ者なら ruleset を通れる)。
             # **GitHub の PR head は必ず可変な branch であり、tag や SHA のような
             # 不変 ref を head にすることはできない** — だから「動かないようにする」
-            # のではなく、動いたことを起票後に検出して閉じる。
+            # のではなく、動いたことを起票後に検出して補償する。
             # 取得に失敗した場合も不一致として扱う (fail-closed)。
+            #
+            # --- 公開の窓 (publication window) ---------------------------------
+            # improve/** への push は ruleset でこの App 1 件だけに絞られ、workflow
+            # レベルの concurrency (group: skill-improver) が同じ App の run 同士の
+            # 重なりも塞ぐ。したがってここでブランチが動いたということは、**App の鍵で
+            # 手動 push した運用者がいる**ことをほぼ意味する。下の補償はその 1 ケースを
+            # 前提に、(1) 台帳へ rejected を記録 → (2) close を 3 回まで再試行 →
+            # (3) まだ open なら検証済み SHA へブランチを force-with-lease で戻して
+            # もう一度 close → (4) それでも未検証の commit を指したまま open なら
+            # summary に「手動対応が必要」として出す、の順で進める。
+            # **窓そのものは残る**: ls-remote / gh pr create / gh pr view は 3 つの
+            # 別々の API 呼び出しで、その隙間を GitHub 側で原子化する手段は無い。
+            # PR head に SHA や tag のような不変 ref を指定できない以上、この窓を
+            # GitHub 上で閉じ切ることはできず、検出と補償で押さえるのが上限である。
             pr_head_oid="$(gh pr view "$pr_url" --json headRefOid --jq '.headRefOid')" || pr_head_oid=""
             if [ "$pr_head_oid" != "$head_sha" ]; then
               failed=1
               head_moved=$((head_moved + 1))
-              echo "- \`$branch\`: 起票後の PR head (\`${pr_head_oid:-取得できず}\`) が検証済み SHA (\`$head_sha\`) と不一致 — PR を閉じる ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
+              echo "- \`$branch\`: 起票後の PR head (\`${pr_head_oid:-取得できず}\`) が検証済み SHA (\`$head_sha\`) と不一致 — 補償に入る ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
               close_comment="検証済み SHA ($head_sha) と PR の head (${pr_head_oid:-取得できず}) が一致しないため自動的に閉じました。検証後にブランチが動いています — 実行ログ: $RUN_URL"
               # 台帳行があるなら「閉じた事実」を先に記録する。ただし **記録できなくても
               # 閉じる** — 他の補償経路と違い、ここで open のまま残すことは *検証して
@@ -1248,17 +1321,61 @@ jobs:
                  git push origin "$branch"; then
                 compensated=1
               fi
-              if gh pr close "$pr_url" --comment "$close_comment"; then
-                if [ "$compensated" = 1 ]; then
-                  echo "  - 補償: 台帳に rejected を記録して $pr_url を閉じた" >> "$GITHUB_STEP_SUMMARY"
-                elif [ -z "$ledger_id" ]; then
-                  echo "  - $pr_url を閉じた (台帳行を持たない候補)" >> "$GITHUB_STEP_SUMMARY"
-                else
-                  echo "  - **$pr_url は閉じたが台帳に記録できなかった。" \
-                       "次回の Step 0 が head branch の全状態検索で closed として決着させる**" >> "$GITHUB_STEP_SUMMARY"
-                fi
+              if [ "$compensated" = 1 ]; then
+                echo "  - 補償(1) 台帳: rejected を記録した" >> "$GITHUB_STEP_SUMMARY"
+              elif [ -z "$ledger_id" ]; then
+                echo "  - 補償(1) 台帳: 対象行なし (台帳行を持たない候補)" >> "$GITHUB_STEP_SUMMARY"
               else
-                echo "  - **close に失敗: $pr_url が検証していない commit を指したまま open。手で閉じること**" >> "$GITHUB_STEP_SUMMARY"
+                echo "  - 補償(1) 台帳: **記録できなかった。次回の Step 0 が head branch の" \
+                     "全状態検索で決着させる** (それでも下の close は行う)" >> "$GITHUB_STEP_SUMMARY"
+              fi
+
+              # 補償(2) close。一過性の API エラーで「検証していない commit を指した
+              # PR が open のまま」になるのを避けるため、短い backoff で 3 回まで試す。
+              close_pr_with_retry "$pr_url" "$close_comment" || true
+
+              # 補償(3) それでも open なら、**ブランチの側を検証済みの内容に戻す**。
+              # PR head は必ず可変な branch なので、PR を閉じられない以上「PR が指す
+              # 中身」を戻すしかない。書き戻すのは workflow 自身が作った improve/*
+              # ブランチだけで、lease は観測した先端に張る (その後さらに動いていれば
+              # 失敗して、知らない commit を握り潰さない)。
+              if pr_is_open "$pr_url"; then
+                echo "  - 補償(2) close: 3 回試しても open のまま — ブランチを検証済み SHA へ戻す" >> "$GITHUB_STEP_SUMMARY"
+                if restore_branch_to_verified "$branch" "$pr_head_oid" "$head_sha"; then
+                  echo "  - 補償(3) 復旧: \`$branch\` を \`$head_sha\` へ戻した" >> "$GITHUB_STEP_SUMMARY"
+                else
+                  echo "  - 補償(3) 復旧: **書き戻せなかった** (観測後にさらに動いた可能性)" >> "$GITHUB_STEP_SUMMARY"
+                fi
+                # 戻せたかに関わらず PR head を読み直して、いま何を指しているかを確定する。
+                # 取得できない場合は不一致として扱う (fail-closed)。
+                pr_head_oid="$(gh pr view "$pr_url" --json headRefOid --jq '.headRefOid')" || pr_head_oid=""
+                if [ "$pr_head_oid" = "$head_sha" ]; then
+                  # open な PR が検証済みの中身を指す状態まで戻った。それでも台帳側は
+                  # rejected として補償済みなので、**もう一度だけ close を試して**
+                  # 最終状態を台帳と一致させる。
+                  echo "  - 復旧後の PR head は検証済み SHA — close をもう一度だけ試す" >> "$GITHUB_STEP_SUMMARY"
+                  close_pr_with_retry "$pr_url" "$close_comment" || true
+                fi
+              fi
+
+              # 補償(4) ここまでで open かつ未検証の commit を指したままなら、自動では
+              # 手が尽きている。人間が閉じられるように URL と両方の SHA を summary に出す。
+              if pr_is_open "$pr_url" && [ "$pr_head_oid" != "$head_sha" ]; then
+                {
+                  echo "#### 手動対応が必要 (unverified PR left open)"
+                  echo ""
+                  echo "- PR: $pr_url"
+                  echo "- 観測した PR head: \`${pr_head_oid:-取得できず}\` (**検証していない commit**)"
+                  echo "- 検証済み SHA: \`$head_sha\`"
+                  echo "- ブランチ: \`$branch\` / 実行ログ: $RUN_URL"
+                  echo ""
+                  echo "close と検証済み SHA への書き戻しの両方が失敗した。**この PR を手で閉じ**、" \
+                       "improve/** を動かせた経路 (ruleset の bypass actor / App の鍵) を調べること。"
+                } >> "$GITHUB_STEP_SUMMARY"
+              elif pr_is_open "$pr_url"; then
+                echo "  - $pr_url は open のまま残ったが、head は検証済み SHA を指している (手で閉じること)" >> "$GITHUB_STEP_SUMMARY"
+              else
+                echo "  - 補償: $pr_url を閉じた" >> "$GITHUB_STEP_SUMMARY"
               fi
               echo "::endgroup::"; continue
             fi
@@ -1381,9 +1498,9 @@ jobs:
           exit 1
 
       # 起票後の PR head が検証済み SHA と違った候補があった run も赤で終える
-      # (secret_hit / push_failed と同じ仕組み)。PR は閉じてあるが、**検証と起票の
-      # 間にブランチを動かせた**こと自体が調べるべき異常 — ruleset の bypass actor か、
-      # 同じ App の別 run が重なったかのどちらかで、後者は workflow の
+      # (secret_hit / push_failed と同じ仕組み)。補償で PR を閉じられていても、
+      # **検証と起票の間にブランチを動かせた**こと自体が調べるべき異常 — ruleset の
+      # bypass actor か、同じ App の別 run が重なったかのどちらかで、後者は workflow の
       # concurrency (group: skill-improver) が塞いでいるはずのもの。
       - name: Fail the run when a PR head moved after verification
         if: >-
@@ -1393,6 +1510,8 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           echo "::error::${{ steps.publish.outputs.head_moved }} 件の PR で起票後の" \
-               "head が検証済み SHA と一致しなかった (PR は閉じた)。検証と起票の間に" \
-               "improve/** を動かせた経路を調べること。詳細は summary ($RUN_URL)"
+               "head が検証済み SHA と一致しなかった (補償で close / 検証済み SHA への" \
+               "書き戻しを試みている。閉じ切れなかった PR は summary の「手動対応が必要」に" \
+               "出ている)。検証と起票の間に improve/** を動かせた経路を調べること。" \
+               "詳細は summary ($RUN_URL)"
           exit 1

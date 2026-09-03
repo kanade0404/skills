@@ -99,7 +99,7 @@ $LEDGER list --inconsistent --json        # pr が辿れない壊れた行 (修�
 | `pr` が入っている | **PR は実在する**。その PR の状態で決着させる — open なら `set-status --status pr_open`、merged なら `merged`、closed (未 merge) なら `rejected` |
 | `pr` が空 | 下記の**全状態の head branch 検索**で PR を回収する |
 
-**4 つ目の列挙も飛ばさない**。`pr` が辿れない行 — `pr_open` なのに `pr` が空、または status を問わず `pr` が PR URL の形をしていない (ブランチ名が入っている等) — は**どちらの経路からも動かせない** — Step 2.5 は pending としてその finding を抑止する一方、ここには決着させる URL が無いので、放置するとその finding は二度と提案されない。書き込み経路 (`add` / `set-status` / `link-pr`) はこの形を作らせないが、過去の実行や手編集が残した行は入りうる。`pr` の空いた `proposed` と同じく、下記の**全状態の head branch 検索**で回収する。
+**4 つ目の列挙も飛ばさない**。`pr` が辿れない行 — `pr_open` なのに `pr` が空、または status を問わず `pr` が PR URL の形をしていない (ブランチ名が入っている等) — は**どちらの経路からも動かせない**。`is_pending_row()` は開ける PR URL を持つ行しか pending にしないのでこの行は pending にならず、かといって Step 0 にも決着させる URL が無い。放置すると台帳はその PR を永久に追えないまま `pr_open` に留まり、**実在する PR を見落として同じ finding に二重で PR が立つ**。書き込み経路 (`add` / `set-status` / `link-pr`) はこの形を作らせないが、過去の実行や手編集が残した行は入りうる。`pr` の空いた `proposed` と同じく、下記の**全状態の head branch 検索**で回収する。
 
 #### head branch から PR を回収する (`pr` を持たない `proposed` / `pr` が辿れない行)
 
@@ -327,7 +327,7 @@ agent が書くのは manifest の 1 行 1 JSON まで:
 
 検証に落ちたブランチは PR にならず、失敗したコマンドと共に job summary に出て job が赤になる。ブランチは調査用に残る。PR を作った後で `link-pr` の commit / push に失敗した場合は、**まず台帳に「閉じた」事実を記録してから PR を閉じる** — 先に close だけすると「PR は closed、台帳は `proposed` / `pr == null`」というどちらからも辿れない状態が残るため。台帳への記録 (`link-pr` + `set-status --status rejected --notes`) が push できたときだけ `gh pr close` し、記録に失敗したら **PR は open のまま**残して次回の Step 0 の修復対象にする。
 
-**起票の直後に PR の head を再照合する**。GitHub の PR head は必ず可変な branch なので、「検証した commit を指す」ことを不変 ref で保証することはできない — `gh pr view <URL> --json headRefOid` を読んで検証済み SHA と突き合わせ、動いていれば (取得できなければ) **PR を閉じる**。この照合は `ledger_id` を持たない reconcile ブランチも通る (台帳の書き込みだけを飛ばす)。ここだけは記録より close を優先する — 検証していない commit を指した PR をレビュー面に残す方が高くつくため。閉じた件数は run を赤で終わらせる (`references/scheduling.md`)。
+**起票の直後に PR の head を再照合する**。GitHub の PR head は必ず可変な branch なので、「検証した commit を指す」ことを不変 ref で保証することはできない — `gh pr view <URL> --json headRefOid` を読んで検証済み SHA と突き合わせ、動いていれば (取得できなければ) **補償に入る**: 台帳に `rejected` を記録 → `gh pr close` を 3 回まで再試行 → まだ open なら `git push --force-with-lease=refs/heads/<branch>:<観測した SHA>` でブランチを検証済み SHA に戻してもう一度 close → それでも未検証の commit を指したまま open なら job summary に「手動対応が必要」として出す。この照合は `ledger_id` を持たない reconcile ブランチも通る (台帳の書き込みだけを飛ばす)。ここだけは記録より close を優先する — 検証していない commit を指した PR をレビュー面に残す方が高くつくため。検出した件数は run を赤で終わらせる。**窓そのものは残り、PR head に不変 ref を指定できない以上 GitHub 上では閉じ切れない** (`references/scheduling.md`)。
 
 workflow は **専用の GitHub App としてしか動かない**。`GITHUB_TOKEN` は ruleset の bypass actor になれず、`improve/**` への push を絞る ruleset を作れば workflow 自身の push が止まり、作らなければ検証と起票の間に第三者が push できる窓が残る — どちらも成立しないため、この経路は用意していない。App の secrets (`SKILL_IMPROVER_APP_ID` / `SKILL_IMPROVER_APP_PRIVATE_KEY`)、default branch の ruleset、`improve/**` の ruleset (bypass はその App 1 件だけ) が揃うまで preflight が `exit 1` する。App に要る権限は **Contents: read/write**、**Pull requests: read/write**、**Issues: read**、**Administration: write** — 最後の 1 つは ruleset の `bypass_actors` が write 権限のある呼び出しにしか返らないためで、これが無いと bypass の検査が素通りする (セットアップは `references/scheduling.md`)。App として走るので `improve/*` PR の `pull_request` run も承認を挟まずに走るが、この「検証してから起票」の順序は変えない。
 
