@@ -76,11 +76,18 @@ jobs:
     outputs:
       indexes: ${{ steps.push.outputs.indexes }}
       count: ${{ steps.push.outputs.count }}
+      push_failed: ${{ steps.push.outputs.push_failed }}
     permissions:
-      # improve/* ブランチの push に必要 (default branch へ push しないのは手順側の約束)
-      contents: write
-      # agent-feedback ラベルの issue とそのコメントを読むため
-      issues: read
+      # この job の GITHUB_TOKEN は **read だけ**にする。claude-code-action は
+      # process.env をそのまま SDK に渡すので、job の GITHUB_TOKEN は我々が渡す
+      # 読み取り専用トークンとは別に agent の環境へ届く。write を持たせておくと
+      # そこが抜け道になるため、書き込みは全て App トークン側に寄せる:
+      #   checkout        -> App の read トークン (token: で明示)
+      #   ruleset preflight -> App の preflight トークン
+      #   ブランチ push   -> App の write トークン (remote URL で明示)
+      #   artifact 上げ   -> ACTIONS_RUNTIME_TOKEN (GITHUB_TOKEN ではない)
+      # agent-feedback の issue も App の read トークンで読む。
+      contents: read
       # id-token は付けない: 認証は claude_code_oauth_token 経由で、OIDC は使わない
 
     env:
@@ -257,6 +264,8 @@ jobs:
           GH_TOKEN: ${{ steps.read-token.outputs.token }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # action が GitHub API に使うトークンも読み取り専用の App トークンにする
+          github_token: ${{ steps.read-token.outputs.token }}
           # この job は untrusted な入力 (agent-feedback ラベルの issue / PR コメント) を
           # 読みながら contents: write を持つ。injection が成功したときに手が届く範囲を
           # 許可ツール側で狭めておく。deny は「default branch を直接動かす」という
@@ -345,10 +354,12 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -uo pipefail
+          failed=0
           emit_indexes() {
             # push できた行数から matrix の添字リストを作る (0 始まり)
             n="$(wc -l < "$MANIFEST" | tr -d ' ')"
             echo "count=$n" >> "$GITHUB_OUTPUT"
+            echo "push_failed=$failed" >> "$GITHUB_OUTPUT"
             if [ "$n" -eq 0 ]; then
               echo "indexes=[]" >> "$GITHUB_OUTPUT"
             else
@@ -362,31 +373,36 @@ jobs:
             exit 0
           fi
           remote="https://x-access-token:${WRITE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          failed=0
           : > "$MANIFEST.new"
           while IFS= read -r line; do
             [ -n "$line" ] || continue
             branch="$(printf '%s' "$line" | jq -r '.branch // ""')"
             if ! printf '%s' "$branch" | grep -Eq '^improve/[A-Za-z0-9._-]+$'; then
+              echo "::warning::${branch:-<no branch>}: branch 名が不正 — push しない"
               echo "- \`${branch:-<no branch>}\`: branch 名が不正 — push しない ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
-              failed=1; continue
+              failed=$((failed + 1)); continue
             fi
             if ! git rev-parse --verify --quiet "refs/heads/$branch" > /dev/null; then
+              echo "::warning::$branch: ローカルにそのブランチが無い — push しない"
               echo "- \`$branch\`: ローカルにそのブランチが無い — push しない ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
-              failed=1; continue
+              failed=$((failed + 1)); continue
             fi
             # head_sha は agent の申告ではなく、いま push する ref から取る
             head_sha="$(git rev-parse "refs/heads/$branch")"
             if ! git push "$remote" "refs/heads/$branch:refs/heads/$branch" > /dev/null 2>&1; then
+              echo "::warning::$branch: push に失敗"
               echo "- \`$branch\`: push に失敗 ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
-              failed=1; continue
+              failed=$((failed + 1)); continue
             fi
             printf '%s' "$line" | jq -c --arg sha "$head_sha" '. + {head_sha: $sha}' >> "$MANIFEST.new"
             echo "- \`$branch\` (\`$head_sha\`): push 済み" >> "$GITHUB_STEP_SUMMARY"
           done < "$MANIFEST"
           mv "$MANIFEST.new" "$MANIFEST"
           emit_indexes
-          exit "$failed"
+          # push できなかった候補があってもここでは落とさない — 落とすと後続 job が
+          # まるごと skip され、push できた候補まで検証・起票されなくなる。
+          # run を赤くする役目は publish の最終 step が持つ (push_failed を見る)。
+          exit 0
 
       # $WORKDIR は agent が書けるディレクトリなので、そのまま artifact にしない。
       # body_file を「runner が読める任意のファイル」への symlink / hard link に
@@ -403,12 +419,34 @@ jobs:
           stage="$(mktemp -d "$RUNNER_TEMP/si-stage-XXXXXX")"
           mkdir -p "$stage/bodies"
           echo "dir=$stage" >> "$GITHUB_OUTPUT"
+
+          # 1 件ずつのファイル検査の前に、**入れ物そのもの**を確かめる。
+          # $WORKDIR / $BODIES ごと symlink に差し替えられていたら、その下の
+          # realpath 比較は攻撃者の選んだディレクトリの中で一貫してしまう。
+          expect_bodies="$(realpath -e "$RUNNER_TEMP")/skill-improver/bodies"
+          if [ -L "$WORKDIR" ]; then
+            echo "::error::\$WORKDIR ($WORKDIR) が symlink"; exit 1
+          fi
+          if [ -L "$BODIES" ] || [ ! -d "$BODIES" ]; then
+            echo "::error::\$BODIES ($BODIES) が symlink か、ディレクトリでない"; exit 1
+          fi
+          actual_bodies="$(realpath -e "$BODIES")" || {
+            echo "::error::\$BODIES ($BODIES) を解決できない"; exit 1
+          }
+          if [ "$actual_bodies" != "$expect_bodies" ]; then
+            echo "::error::\$BODIES の実体が想定と違う ($actual_bodies != $expect_bodies)"
+            exit 1
+          fi
+          if [ -L "$MANIFEST" ] || { [ -e "$MANIFEST" ] && [ ! -f "$MANIFEST" ]; }; then
+            echo "::error::manifest ($MANIFEST) が symlink か通常ファイルでない"; exit 1
+          fi
+
           cp -- "$MANIFEST" "$stage/prs.jsonl"
           if [ ! -s "$MANIFEST" ]; then
             echo "no candidate to stage" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          bodies_real="$(realpath "$BODIES")"
+          bodies_real="$actual_bodies"
           bad=0
           while IFS= read -r line; do
             [ -n "$line" ] || continue
@@ -864,15 +902,33 @@ jobs:
             # ledger.jsonl の pr / status が誰の PR にも入らず、次回の Step 0 が
             # 突き合わせる相手を失う (改善ループが閉じない)。
             # commit を積む前にもう一度先端を確かめる (起票との間にも窓がある)。
+            # 不一致でも「閉じるだけ」にはしない — 台帳に記録できたときだけ閉じる
+            # (link-pr 失敗時と同じ規律。PR からも台帳からも辿れない状態を作らない)。
             remote_sha="$(git ls-remote origin "refs/heads/$branch" | cut -f1)"
             if [ "$remote_sha" != "$head_sha" ]; then
               failed=1
               echo "- \`$branch\`: link-pr 直前に verified SHA と remote HEAD が不一致 (検証後に更新された) ($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
-              if gh pr close "$pr_url" --comment \
-                   "検証済み SHA とブランチ先端が一致しないため自動的に閉じました — 実行ログ: $RUN_URL"; then
-                echo "  - 補償: $pr_url を閉じた" >> "$GITHUB_STEP_SUMMARY"
+              if [ -n "$ledger_id" ] &&
+                 git checkout --force -B "$branch" "$head_sha" &&
+                 python3 "$TRUSTED_LEDGER" link-pr --ledger improvements/ledger.jsonl \
+                   --id "$ledger_id" --pr "$pr_url" --keep-status &&
+                 python3 "$TRUSTED_LEDGER" set-status --ledger improvements/ledger.jsonl \
+                   --id "$ledger_id" --status rejected \
+                   --notes "remote head moved after verification in $RUN_URL; PR closed by compensation" &&
+                 git -c user.name="github-actions[bot]" \
+                     -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+                     commit -m "chore(ledger): record moved head for $ledger_id" \
+                     improvements/ledger.jsonl &&
+                 git push origin "$branch"; then
+                if gh pr close "$pr_url" --comment \
+                     "検証済み SHA とブランチ先端が一致しないため自動的に閉じました。台帳には rejected として記録済みです — 実行ログ: $RUN_URL"; then
+                  echo "  - 補償: 台帳に rejected を記録して $pr_url を閉じた" >> "$GITHUB_STEP_SUMMARY"
+                else
+                  echo "  - **補償の close に失敗: $pr_url が open のまま (台帳は rejected)。手で閉じること**" >> "$GITHUB_STEP_SUMMARY"
+                fi
               else
-                echo "  - **補償に失敗: $pr_url が open のまま。手で閉じること**" >> "$GITHUB_STEP_SUMMARY"
+                echo "  - **台帳に記録できなかったため $pr_url は open のまま残す (修復対象)。" \
+                     "次回の Step 0 が proposed / pr=null の行として拾う**" >> "$GITHUB_STEP_SUMMARY"
               fi
               echo "::endgroup::"; continue
             fi
@@ -922,3 +978,17 @@ jobs:
             echo "::endgroup::"
           done < "$PASSED"
           exit "$failed"
+
+      # push に失敗した候補があった run は赤で終える。improve 側で落とすと後続 job が
+      # skip され、push できた候補まで起票されなくなるので、**起票を終えた後の
+      # 最終 step** でまとめて赤にする。
+      - name: Fail the run when some branches could not be pushed
+        if: >-
+          always() && needs.improve.outputs.push_failed != ''
+          && needs.improve.outputs.push_failed != '0'
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          echo "::error::${{ needs.improve.outputs.push_failed }} 件の候補ブランチを" \
+               "push できなかった。詳細は improve job の summary を参照 ($RUN_URL)"
+          exit 1

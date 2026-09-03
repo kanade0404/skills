@@ -79,7 +79,10 @@ claudecode:
 LEDGER="uv run python3 skills/skill-improver/scripts/ledger.py"
 $LEDGER list --status pr_open --json      # 未決着のエントリと PR URL
 $LEDGER list --missing-after --json       # merged だが after を取り損ねたエントリ
+$LEDGER list --status proposed --json     # PR に紐付いていないエントリ (修復対象)
 ```
+
+**3 つ目の列挙も飛ばさない**。`proposed` のまま残った行は、PR 起票の後に `link-pr` の commit / push が落ちた (あるいは検証後にブランチが動いて PR を閉じる補償に入った) ときの残骸で、`pr` が空なので `pr_open` の列挙にも出てこない。対応する open PR があれば**修復対象**、無ければ前回の実行が PR まで至らなかった候補なので、`notes` を見て再挑戦か `rejected` かを決める。
 
 **2 つ目の列挙を飛ばさない**。after を取れないまま `merged` にしたエントリは `pr_open` の列挙から外れ、`report` の delta にも revert candidate にも現れない — 効果が測られないまま静かに消える唯一の経路なので、毎回ここで拾い直して取れるようになった指標を記録する (それでも取れないなら `notes` にその旨を残す)。
 

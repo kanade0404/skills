@@ -103,6 +103,10 @@ job の conclusion 1 ビットだけに絞り**、合格記録の組み立ては
 (`actions: read` で jobs API から取得)、(2) **候補コードが 1 行も動く前に** improve が
 上げた manifest — の 2 つだけで、PR 本文も後者から取る。
 
+push できなかった候補があっても `improve` はそこで落とさない (落とすと後続 job が
+まるごと skip され、push できた候補まで検証・起票されなくなる)。件数を job output
+`push_failed` に出し、**`publish` の最終 step が起票を終えてからその run を赤にする**。
+
 `verify` は候補が 1 つでも落ちれば赤くなる (その可視性は保つ) が、**通った候補は
 起票する** — `collect` と `publish` は `always()` を含む条件で回し、cancelled では
 走らせない (状態関数を含まない `if` には暗黙の `success()` が掛かるため `always()` が
@@ -206,6 +210,15 @@ prompt injection が通ったときに書き込み権限ごと持っていかれ
 | read | `contents: read` / `issues: read` / `pull-requests: read` | `improve` の checkout、**agent の `GH_TOKEN`** |
 | preflight | `administration: write` | ruleset の preflight step **だけ** |
 | write | `contents: write` / `pull-requests: write` | agent の実行**後**の push step、`publish` job |
+
+job の `GITHUB_TOKEN` は `improve` では **`contents: read` だけ**に絞ってある。
+`claude-code-action` は `process.env` をそのまま SDK に渡すので、我々が
+`github_token` / `GH_TOKEN` に何を入れても **job の `GITHUB_TOKEN` は agent の環境に
+届く**。pin した action の中身は変えられないので、届いても害が無いように
+**その `GITHUB_TOKEN` から書き込み能力を取り上げる**方で解いた: checkout は App の
+read トークン、preflight は App の preflight トークン、ブランチ push は App の write
+トークン、artifact は `ACTIONS_RUNTIME_TOKEN` を使うので、job の `GITHUB_TOKEN` に
+write が要る場面がそもそも無い。
 
 **preflight トークンが `administration: write` を要る理由**: GitHub は ruleset の
 `bypass_actors` を **その ruleset への write 権限を持つ呼び出しにしか返さない**

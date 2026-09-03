@@ -51,11 +51,16 @@ PR がある間じゅう同じ finding で PR を出し続ける。
 新しい候補として拾い直さず、そのブランチで `link-pr` → commit → push を実行して
 紐付けを完成させる。
 
+`proposed` のまま `pr` が空の行は `pr_open` の列挙に出てこないので、Step 0 は
+`list --status proposed` も併せて回す — そうしないと、補償で取り残された行が
+どの列挙からも漏れて回収不能になる。
+
 workflow 側の補償も同じ不変条件を守る: `link-pr` が落ちたとき、**台帳に
 `link-pr` + `set-status --status rejected --notes "link-pr failed: ..."` を
 push できたときだけ** PR を閉じる。台帳に書けなければ PR は open のまま残す —
 「PR は closed、台帳は `proposed` / `pr == null`」という、PR からも台帳からも
-辿れない状態を作らないため。
+辿れない状態を作らないため。**検証後にブランチの先端が動いていた場合** (`link-pr` の
+直前の SHA 再照合で不一致) も同じ順序を通る。
 
 ## エントリのフィールド
 
@@ -139,7 +144,7 @@ cwd から見た repo root。規約外の場所に台帳を置くときは `--sk
 | `set-status --id --status [--notes]` | status を更新 |
 | `link-pr --id --pr [--keep-status]` | PR URL を紐付け、既定で `status=pr_open` にする |
 | `record-metrics --id --phase before\|after --metric KEY=VALUE [--metric ...]` | 指標を記録。両相が揃うと delta を表示する。非有限値 (`nan` / `inf`) は拒否 |
-| `list [--status ...] [--skill] [--missing-after] [--json]` | エントリを絞って列挙。Step 0 の突き合わせは `--status pr_open` と `--missing-after` (merged なのに `after` が空) の 2 本を起点にする |
+| `list [--status ...] [--skill] [--missing-after] [--json]` | エントリを絞って列挙。Step 0 の突き合わせは `--status pr_open`、`--missing-after` (merged なのに `after` が空)、`--status proposed` (PR に紐付いていない = 修復対象) の 3 本を起点にする |
 | `report [--skill] [--json] [--fail-on-revert]` | skill 別の件数・**再発クラスキーとその件数**・status 内訳、before→after の delta、**merged without after metrics**、**revert candidate** を出力 |
 | `verify-diff --head <file> [--base <file>] --mode candidate\|reconcile [--ledger-id ID]` | ブランチの台帳差分が許された変更だけかを検査する (workflow の `verify` job 用) |
 | `check-target <skill>` | 改善対象にしてよいかの判定 |
