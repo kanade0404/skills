@@ -782,11 +782,13 @@ def cmd_record_metrics(args: argparse.Namespace) -> int:
 RECONCILE_MUTABLE_FIELDS: frozenset[str] = frozenset({"status", "pr", "after", "notes"})
 
 #: 突き合わせで許す status 遷移。それ以外は人間の判断を要する。
-#: proposed からの 3 つは **PR 起票後に link-pr / 補償が落ちた行の回収経路**。
-#: base 側の pr が空でも (publish の補償が push できなかった残骸)、既に PR URL を
-#: 持っていても (link-pr --keep-status までは通った残骸) 同じ扱いにする —
-#: どちらも「PR は実在するが台帳が追い付いていない」行で、Step 0 は head branch
-#: improve/<skill>-<id> の PR を全状態で引いて open / merged / closed に決着させる。
+#: proposed からの 3 つは **起票済みの行を紐付ける回収経路**。publish は台帳に
+#: 書かない (improve/** は作成後に凍結されていて commit を積めない) ので、
+#: base 側の pr は空のままなのが通常で、既に PR URL を持っている場合
+#: (link-pr --keep-status までは通った途中状態) も同じ扱いにする — どちらも
+#: 「PR は実在するが台帳が追い付いていない」行で、Step 0 は head branch
+#: improve/<skill>-<id>-<run id> の PR を**接頭辞**で全状態から引いて
+#: open / merged / closed に決着させる。
 #: 条件は **head 側に開ける PR URL が入っていること** (check_reconcile_diff が動的に
 #: 見る)。PR を名指しできないまま merged / rejected に進めるのは、突き合わせでは
 #: なく台帳の書き換えなので通さない。
@@ -912,7 +914,7 @@ def check_reconcile_diff(
     finding 本文や target_skill が動いていたら、それは突き合わせではない。
 
     `proposed` の行を進められるのは **head 側に開ける PR URL がある**ときだけ。
-    publish の補償が落ちた残骸 (`pr` が空 / `link-pr --keep-status` まで通った行)
+    起票済みだが紐付いていない行 (`pr` が空 / `link-pr --keep-status` まで通った行)
     を Step 0 が全状態の PR 検索で回収するための経路で、PR を名指しできないまま
     決着させることは許さない。
     """

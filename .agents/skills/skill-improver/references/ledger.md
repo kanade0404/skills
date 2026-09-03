@@ -41,7 +41,7 @@ uv run python3 skills/skill-improver/scripts/ledger.py list --ledger "$tmp/<bran
 |---|---|---|
 | `status == "pr_open"` かつ `pr` が入っている | その PR が現に開いている | **pending** |
 | `status == "pr_open"` かつ `pr` が空 | 辿れる PR が無い**壊れた行** | pending ではない (Step 0 の修復対象) |
-| `status == "proposed"` かつ `pr` が入っている | PR は作られたが `set-status` の前に落ちた (補償経路が作る過渡状態)。**PR は実在する** | **pending** (二重起票しない) |
+| `status == "proposed"` かつ `pr` が入っている | `link-pr` は通ったが `set-status` の前に落ちた過渡状態 (Step 0 の回収の途中)。**PR は実在する** | **pending** (二重起票しない) |
 | `status == "proposed"` かつ `pr == null` | まだ PR が無い | pending ではない (Step 0 の修復対象) |
 | `merged` / `rejected` / `reverted` | 決着済みの過去の記録 | pending ではない (本当の再発を抑止しない) |
 
@@ -53,19 +53,23 @@ PR がある間じゅう同じ finding で PR を出し続ける。
 open なら `set-status pr_open`、merged なら `merged`、closed (未 merge) なら
 `rejected` にする。放っておくと過渡状態のまま残り続ける。
 
-`proposed` かつ `pr == null` の行は pending ではなく **修復対象**である: PR 起票の
-後に `link-pr` の commit / push が落ちる (あるいは補償そのものが push できない) と
-この形で残る。新しい候補として拾い直さず、head branch から PR を回収する。
+`proposed` かつ `pr == null` の行は pending ではなく **修復対象**である。workflow
+モードでは **PR を起票した実行そのものがこの形を残す**: `improve/**` は作成後に
+ruleset で凍結されるため `publish` は `link-pr` の commit を積めず、紐付けは次回
+実行の Step 0 に回る (`references/scheduling.md`)。だからこれは異常ではなく通常の
+入口であり、新しい候補として拾い直さずに head branch から PR を回収する。
 
 `proposed` のまま `pr` が空の行は `pr_open` の列挙に出てこないので、Step 0 は
-`list --status proposed` も併せて回す — そうしないと、補償で取り残された行が
-どの列挙からも漏れて回収不能になる。
+`list --status proposed` も併せて回す — そうしないと、起票済みなのに紐付いていない
+行がどの列挙からも漏れて回収不能になる。
 
 #### 回収は head branch の PR を **全状態で** 引く
 
 `pr` を持たない `proposed` も、`pr` が辿れない行も、回収の入口は同じ:
-`improve/<target_skill>-<id>` という head branch の PR を引く。ブランチ名が finding の
-id を含むので機械的に引ける。**`--state open` で引いてはいけない**:
+`improve/<target_skill>-<id>-<run id>` という head branch の PR を引く。ブランチ名が
+finding の id を含むので機械的に引ける — ただし **run ごとに suffix が変わる**ので、
+完全一致ではなく**接頭辞** `improve/<target_skill>-<id>-` で引く。
+**`--state open` で引いてはいけない**:
 
 - **closed の PR** は列挙から丸ごと落ち、行は `proposed` のまま残る
 - **merged の PR** はもっと悪い。default branch に `proposed` / `pr == null` の行が
@@ -78,9 +82,14 @@ merge 済み**なのに台帳がそれを知らないまま重複起票する �
 使えなくなる。したがって:
 
 ```bash
-gh pr list --state all --head "improve/<target_skill>-<id>" --limit 20 \
-  --json number,state,mergedAt,url | jq 'sort_by(.number) | reverse'
+gh pr list --state all --limit 200 \
+  --json number,state,mergedAt,url,headRefName \
+  | jq --arg p "improve/<target_skill>-<id>-" \
+       '[.[] | select(.headRefName | startswith($p))] | sort_by(.number) | reverse'
 ```
+
+**作者で絞る必要は無い** — `improve/**` を作れるのは workflow の GitHub App だけ
+(ruleset A) なので、この接頭辞の head branch を持つ PR はすべてこのループのものである。
 
 新しい順に最初の 1 件で決着させる — open は `link-pr`、merged は
 `link-pr --keep-status` → `set-status --status merged`、closed (未 merge) は
@@ -108,7 +117,8 @@ PR URL を持つ行しか pending にしないのでこの行は pending にな�
 `pr` が空の行**と、**status を問わず `pr` が空でないのに PR URL の形をしていない行**の
 2 つ。Step 0 の修復はどちらも同じで、上の**全状態の head branch 検索**を通る:
 
-1. `improve/<target_skill>-<id>` の PR を `--state all` で引く
+1. `improve/<target_skill>-<id>-` を接頭辞に持つ head branch の PR を
+   `--state all` で引く
 2. 見つかれば `link-pr` して紐付けを完成させ、その PR の状態
    (open / merged / closed) で決着させる
 3. 1 件も見つからなければ `set-status --status proposed --clear-pr --notes "..."` で
@@ -124,12 +134,12 @@ PR URL を持つ行しか pending にしないのでこの行は pending にな�
 正当な操作 (`--clear-pr` は 3 の修復経路、`--status pr_open` は 2 の決着) だが、
 組み合わせると `pr` の無い `pr_open` — この節が塞いでいる形そのもの — を作るため。
 
-workflow 側の補償も同じ不変条件を守る: `link-pr` が落ちたとき、**台帳に
-`link-pr` + `set-status --status rejected --notes "link-pr failed: ..."` を
-push できたときだけ** PR を閉じる。台帳に書けなければ PR は open のまま残す —
-「PR は closed、台帳は `proposed` / `pr == null`」という、PR からも台帳からも
-辿れない状態を作らないため。**検証後にブランチの先端が動いていた場合** (`link-pr` の
-直前の SHA 再照合で不一致) も同じ順序を通る。
+workflow 側はこの不変条件を「書かないこと」で守る: `publish` は台帳に一切書かない
+(凍結されたブランチに commit を積めない) ので、`pr` の無い `pr_open` も、開けない
+`pr` を持つ行も作らない。起票した PR は `proposed` / `pr == null` の行と、head
+branch の接頭辞という 2 つの手掛かりで次回の Step 0 から辿れる。**起票後に PR の
+head が検証済み SHA と違っていた場合**は ruleset が外れている疑いなので、台帳には
+何も書かず PR を閉じて run を赤にする (`references/scheduling.md`)。
 
 ## エントリのフィールド
 
@@ -211,7 +221,7 @@ cwd から見た repo root。規約外の場所に台帳を置くときは `--sk
 |---|---|
 | `add --source --target --finding --lever [--class] [--evidence ...] [--status] [--pr] [--notes] [--id] [--created]` | finding を 1 件記録。`recurrence` を自動計算し、`id` を内容から決める。`--class` は再発クラスキーの明示。`--id` は形式 (`IMP-YYYYMMDD-xxxxxxxxxx`) と重複を検査する。対象がメタスキルなら `--status` を無視して `excluded_meta` で記録し、**exit 2** を返す。`--status pr_open` には `--pr` が要る |
 | `set-status --id --status [--pr] [--clear-pr] [--notes]` | status を更新。`--status pr_open` は行に `pr` があるか `--pr` を渡したときだけ通る (辿れない `pr_open` を作らない)。`--pr` は status を問わず形を検査する。`--clear-pr` は Step 0 の修復経路が使う — 辿れない `pr` を空に戻す。`--pr` との併用と、**`--status pr_open` との併用**は拒否する (後者は `pr` の無い `pr_open` を作る) |
-| `link-pr --id --pr [--keep-status]` | PR URL を紐付け、既定で `status=pr_open` にする。`--pr` は `https://.../pull/<番号>` の形であること。`--keep-status` は補償経路が使う — `proposed` のまま `pr` だけ入れて「PR は実在する」ことを先に記録する |
+| `link-pr --id --pr [--keep-status]` | PR URL を紐付け、既定で `status=pr_open` にする。`--pr` は `https://.../pull/<番号>` の形であること。`--keep-status` は Step 0 の回収が使う — `proposed` のまま `pr` だけ入れて「PR は実在する」ことを先に記録する |
 | `record-metrics --id --phase before\|after --metric KEY=VALUE [--metric ...]` | 指標を記録。両相が揃うと delta を表示する。非有限値 (`nan` / `inf`) は拒否 |
 | `list [--status ...] [--skill] [--missing-after] [--inconsistent] [--json]` | エントリを絞って列挙。Step 0 の突き合わせは `--status pr_open`、`--missing-after` (merged なのに `after` が空)、`--status proposed` (PR に紐付いていない = 修復対象)、`--inconsistent` (`pr_open` なのに `pr` が空、または `pr` が PR URL の形をしていない = 壊れた行) の 4 本を起点にする |
 | `report [--skill] [--json] [--fail-on-revert]` | skill 別の件数・**再発クラスキーとその件数**・status 内訳、before→after の delta、**merged without after metrics**、**revert candidate** を出力 |
@@ -268,7 +278,7 @@ added / removed / modified の 3 分類で行い、モードごとに許す形�
 |---|---|
 | `candidate` (改善ブランチ) | **追加 1 行だけ**。削除・既存行の変更は不可。追加行は `--ledger-id` と一致する id を持ち、`status` が `proposed`、`pr` が `null` であること |
 | 両モード共通 | **base / head のどちらかに id の重複があれば不合格**。重複があると id をキーにした差分計算が 2 行目以降を落とすので、同じ id を 2 行書くだけで「追加は 1 行だけ」の検査をすり抜けられる。base 側の重複は台帳自体が壊れている状態なのでこちらも通さない |
-| `reconcile` (突き合わせブランチ) | 削除は不可。既存行で変えてよいのは `status` / `pr` / `after` / `notes` だけで、`status` の遷移は `pr_open → merged`\|`rejected`、`merged → reverted`、`proposed → pr_open`\|`merged`\|`rejected` (**head 側に開ける PR URL があるときだけ**。base 側の `pr` は空でも入っていてもよい — どちらも publish の補償が落ちた残骸で、Step 0 が head branch の PR を全状態で引いて回収する経路)、`pr_open` (pr が辿れない) `→ proposed` (辿れない行を出し直す修復経路) のみ。触った行の `pr` は空か、PR URL の形をしていること。追加行があれば `proposed` の形であること |
+| `reconcile` (突き合わせブランチ) | 削除は不可。既存行で変えてよいのは `status` / `pr` / `after` / `notes` だけで、`status` の遷移は `pr_open → merged`\|`rejected`、`merged → reverted`、`proposed → pr_open`\|`merged`\|`rejected` (**head 側に開ける PR URL があるときだけ**。base 側の `pr` は空でも入っていてもよい — どちらも起票済みで紐付いていない行で、Step 0 が head branch の PR を接頭辞 + 全状態で引いて回収する経路)、`pr_open` (pr が辿れない) `→ proposed` (辿れない行を出し直す修復経路) のみ。触った行の `pr` は空か、PR URL の形をしていること。追加行があれば `proposed` の形であること |
 
 `verify` job は **base (default branch) 側の `ledger.py`** でこの検査を実行する —
 候補ブランチのコピーを使ったら検査にならないため。違反があれば内容を並べて

@@ -40,9 +40,10 @@ default branch への push と merge は**手順として**行わない — 承�
 起動しません** (PR の Follow-ups に挙げてあるとおり、repo 設定の変更はコード PR の
 スコープ外)。
 
-push と PR 起票は専用の GitHub App が行う (下の「実行アイデンティティ」節)。
-これは任意の強化ではなく**前提条件**で、App と `improve/**` の ruleset が揃うまで
-workflow は起動しない。
+ブランチの作成と PR 起票は専用の GitHub App が行う (下の「実行アイデンティティ」節)。
+これは任意の強化ではなく**前提条件**で、App と `improve/**` の ruleset **2 本**
+(作成を App に絞る A、作成後の更新・削除を誰にも許さない B) が揃うまで workflow は
+起動しない。
 
 この job は書き込み資格情報を持ったまま、第三者が書ける可能性のあるテキスト
 (`agent-feedback` ラベルの issue / PR コメント) を読む。そのため:
@@ -198,8 +199,9 @@ run」を押すまで走らない** ([GITHUB_TOKEN のドキュメント](https:
    存在しない**。artifact (`skill-improver-manifest`) に載るのも、検証を通った本文を
    新しく作った空のディレクトリ (`mktemp -d`) にコピーしたものだけである
 4. **`verify` → `publish`** — `verify` が manifest の値・台帳差分・パスの allow-list を
-   検査し、その SHA でテストを回す。通ったものだけ `publish` が `gh pr create` し、
-   `link-pr` を commit / push する
+   検査し、その SHA でテストを回す。通ったものだけ `publish` が `gh pr create` する。
+   **`publish` は台帳に書かない** (ブランチは凍結済み) — `link-pr` は次回実行の
+   Step 0 が行う
 
 ### job の分割 (権限と信頼の分離)
 
@@ -215,12 +217,12 @@ run」を押すまで走らない** ([GITHUB_TOKEN のドキュメント](https:
 | `stage` (**信用の境界**) | `contents: read` (job の `GITHUB_TOKEN`) + この job で発行する App の **write** トークン | App の秘密鍵、`CLAUDE_CODE_OAUTH_TOKEN` (走査用)、自分で発行した write トークン。**`improve` 側のトークンは知らない** | hand-off の取り込み (`git bundle verify` → `refs/candidates/*`)、manifest の組み直しと bundle との突き合わせ、本文の検証と走査、**パスの allow-list ゲート**、**差分のシークレット走査**、通った候補の push、検証済み manifest の artifact 化。**候補コードは実行しない** |
 | `verify` (**候補 1 件につき 1 job**) | `contents: read` のみ (`persist-credentials: false`、`GH_TOKEN` もシークレットも渡さない) | **無し** | manifest の値の検証、パスの allow-list ゲート、**台帳差分のゲート (`ledger.py verify-diff`)**、メタスキル対象の拒否、ブランチ上で `unittest` / `check_trigger_evals.py` / `rulesync-sync.mjs --check`。**artifact は上げない** |
 | `collect` | `actions: read` のみ | この job の `GITHUB_TOKEN` (jobs API の読み取りだけ) | 各 `verify (<idx>)` の conclusion と stage の manifest から合格記録を組み立てて artifact に上げる。候補コードは動かさない |
-| `publish` | `contents: write` / `pull-requests: write` | App の write トークン (この job で発行) | 合格記録にある候補の `gh pr create`、`link-pr` の commit / push、失敗時の補償 |
+| `publish` | `contents: read` / `pull-requests: write` | App の PR トークン (この job で発行。**contents は read**) | 合格記録にある候補の `gh pr create` と起票後の head 照合。**push も台帳の書き込みもしない** — `improve/**` は作成後に凍結されていて commit を積めないので、この job から改善ブランチを動かす能力そのものを外してある |
 
 `improve` の job 権限が `contents: read` だけなのは、`claude-code-action` が
 `process.env` をそのまま SDK に渡す = **job の `GITHUB_TOKEN` は agent の環境に届く**
 ため。書き込み能力はこの job には (`GITHUB_TOKEN` にも App トークンにも) 一切置かず、
-**別 runner で走る `stage` と `publish`** の 2 か所にだけ置く。
+**別 runner で走る `stage`** にだけ置く (`publish` は `contents: read` で足りる)。
 
 **なぜ verify を 1 件 1 job にするか**: 「候補コードを動かした runner が、そのまま
 合格記録も書く」構造は成立しない。候補コードは runner 上で任意に動けるので、落ちた
@@ -265,7 +267,7 @@ job 中に追加のネットワークアクセス (= 資格情報) が要らな�
 あればそのブランチは実行せず、PR にもしない。
 
 **manifest の値は agent が書いたデータ**として扱い、特権的に使う前に検証する:
-`branch` は `^improve/[A-Za-z0-9._-]+$` で origin に実在すること、`head_sha` は
+`branch` は `^improve/[A-Za-z0-9._-]+$` かつ **末尾がこの run の id** で origin に実在すること (形は `manifest_guard.py`、run id との一致は `stage` が push の直前に見る)、`head_sha` は
 `^[0-9a-f]{40}$` であること、`body_file` は `bodies/` 直下の通常ファイル
 (symlink・`..`・別ディレクトリは不可) であること、`ledger_id` は
 `^IMP-[0-9]{8}-[0-9a-f]{10}$` かつそのブランチの台帳に `proposed` / `pr == null` の
@@ -275,104 +277,90 @@ job 中に追加のネットワークアクセス (= 資格情報) が要らな�
 **検証も起票もブランチ名ではなく `head_sha` を対象にする**。`stage` の push step が
 push した ref の SHA を manifest に書き、`verify` は `origin/<branch>` が
 その SHA と一致することを確かめてから **SHA を checkout** して allow-list ゲートと
-検査を回す。`publish` は `gh pr create` の直前と `link-pr` の push 直前に
-`git ls-remote origin refs/heads/<branch>` で remote の先端を取り直し、`head_sha` と
-一致しなければそのブランチを起票しない (起票後に判明した場合は PR を閉じて補償する)。
-ブランチ名で追い続けると、検証と起票の間に押された commit が「検証済み」として PR に
-載る (TOCTOU)。
+検査を回す。`publish` も `gh pr create` の直前に
+`git ls-remote origin refs/heads/<branch>` を 1 度読むが、これは**安い早期終了**で
+あって保証ではない (保証は下の ruleset)。ブランチ名で追い続けると、検証と起票の間に
+押された commit が「検証済み」として PR に載る (TOCTOU)。
 
-#### 検証済み SHA の不変条件は「不変な ref」では守れない
+#### 検証済み SHA の不変条件は「ブランチを不変にする」ことで守る
 
 **GitHub の PR head は必ず可変な branch である**。`gh pr create --head` に tag や
 commit SHA のような不変 ref を渡すことはできず、PR は常に「そのブランチの現在の
-先端」を指し続ける。つまり「検証した commit を指した PR を作る」ことを ref の性質で
-保証する手段は無い。この不変条件は**次の 3 つの重ね合わせ**で守る:
+先端」を指し続ける。しかも `git ls-remote` / `gh pr create` / `gh pr view` は 3 つの
+別々の API 呼び出しで、その隙間を GitHub 側で原子化する手段は無い。つまり
+**workflow の中には、検証した SHA を起票まで不変に保つ仕組みを置けない**。
+「起票の直前に照合する」も「起票の後に照合して補償する」も、窓を狭めるだけで
+閉じはしない (実際、以前はここに復旧 → 台帳 → close の補償一式を置いていた)。
 
-1. **ruleset (`improve/**` の push をこの App 1 件に絞る)** — 第三者がブランチを
-   動かせる経路をそもそも塞ぐ。preflight がその存在を必須として検査する
-2. **workflow レベルの `concurrency` (`group: skill-improver` /
-   `cancel-in-progress: false`)** — 唯一の push 権限者である App 自身が、重なった
-   別 run から同じブランチを動かすことを防ぐ (2 つの run が同時に publish しない)
-3. **起票直後の head 再照合** — 上の 2 つを抜けた場合 (App の鍵の持ち主が手で
-   push した等) の最後の検出。`gh pr view <URL> --json headRefOid` を読み、
-   `head_sha` と一致しなければ **補償に入る**。取得に失敗した場合も不一致として
-   扱う (fail-closed)
+そこで**照合をやめてブランチ自体を不変にする**。保証は repo 側の ruleset 2 本に
+置き、preflight が両方を fail-closed で検査する:
 
-3 は `ledger_id` を持つ行だけの経路ではない。**台帳行を持たない候補 (reconcile
-ブランチ) も同じ照合と補償を通る** — 台帳の書き込みだけを飛ばす。検出した件数は
-`publish` step の `head_moved` output に載り、最終 step が run を赤にする
-(`secret_hit` / `push_failed` と同じ仕組み)。検証と起票の間にブランチが動いたこと
-自体が、1 か 2 が破れている証拠として調べるべき異常だから。
+| ruleset | 対象 | ルール | bypass actors | 効果 |
+|---|---|---|---|---|
+| **A (create-only)** | `refs/heads/improve/**` | `creation` | この App 1 件だけ (`Integration` / `actor_id` = App ID / `bypass_mode: always`) | `improve/**` を**作れる**のは workflow の App だけ |
+| **B (freeze)** | `refs/heads/improve/**` | `update` と `deletion` | **空 (1 件も入れない)** | 作成後の `improve/**` は**誰も動かせない** — App も、App の鍵を持つ運用者も、repo admin も |
 
-##### 公開の窓 (publication window) と、不一致を検出したときの補償
+**ruleset は bypass actor に載っていない限り admin にも効く**。だから B に
+bypass を 1 つも置かないことが要点で、ここに App を入れた瞬間に「App の鍵を持つ
+運用者が `ls-remote` と `gh pr create` の間でブランチを差し替える」経路が戻る。
+**PR 起票専用の別アイデンティティを立てるだけでは足りない**のも同じ理由で、鍵の
+持ち主は「起票できない別の身元」ではなく「ブランチを更新できる身元」を使えばよく、
+更新の能力が誰かに残っている限り窓は閉じない。閉じられるのは、更新の能力を
+**全員から**取り上げたときだけである。
 
-`improve/**` への push は ruleset でこの App 1 件だけに絞られ、workflow レベルの
-`concurrency` (`group: skill-improver` / `cancel-in-progress: false`) が同じ App の
-run 同士の重なりも塞ぐ。したがって公開中にブランチが動いたということは、**App の鍵で
-手動 push した運用者がいる**ことをほぼ意味する。`publish` はその 1 ケースを前提に、
-**復旧 → 台帳 → close → 最終判定** の順で補償する。
+その結果、`stage` が push した瞬間から `head_sha` は不変になり、**publish 側の補償は
+不要になった**。`publish` に残るのは起票直後の `gh pr view --json headRefOid` 1 回
+だけで、これは補償の入口ではなく **ruleset が外れていないかの検出器**である
+(一致しなければ PR を閉じ、job summary に「手動対応が必要 (unverified PR)」を書き、
+`head_moved` output で run を赤にする)。`publish` は force push もしなければ台帳も
+書かないので、`contents` は `read` で足りる。
 
-**起票の後に候補ブランチへ commit する経路は、すべてこの 1 つの手順を通る**
-(`publish` step の `compensate_after_create` 関数)。該当するのは 3 つ:
+**残余リスクは ruleset を編集できる者だけ**である。ruleset そのものの編集権限が
+この設計のトラストルートで、そこは workflow の側から縛れない (スコープ外)。
+B を外した / bypass を足した痕跡は repo の監査ログに残り、外れた状態で走らせれば
+preflight が `exit 1` して agent すら起動しない。
 
-| 経路 | 入口 | run を赤にする出口 |
-|---|---|---|
-| (a) 起票直後の head 再照合で不一致 | `gh pr view --json headRefOid` != `head_sha` | `head_moved` output |
-| (b) `link-pr` の直前の再照合で不一致 | `git ls-remote` != `head_sha` | publish step の終了コード |
-| (c) `link-pr` の commit / push が失敗 | commit / push が非 0 | publish step の終了コード |
+##### 凍結の代償 (1) ブランチ名を run ごとに一意にする
 
-**枝ごとに手順を書かない**。分けて書くと片方だけが直り、**未検証の commit を指した
-PR を open のまま残す**枝が生き残る — 実際に (b) は「検証していない remote の上へ
-台帳 commit を non-fast-forward で push しようとし、失敗したら close もしない」経路に
-なっていた。各段は job summary に記録され、**どの段もトークンやシークレットを
-出力しない** (扱うのは PR の URL と SHA だけ):
+更新も削除もできないということは、**同じ名前を作り直せない**ということでもある。
+そこでブランチ名に run id を入れて 1 run 1 ブランチにする:
 
-1. **まずブランチの側を検証済みの内容に戻す** — 補償に入った時点で
-   `git ls-remote origin refs/heads/<branch>` を**引き直し**、`head_sha` と違えば
-   `git push --force-with-lease=refs/heads/<branch>:<いま読んだ SHA> origin <head_sha>:refs/heads/<branch>`。
-   書き戻す先は **この workflow 自身が作った `improve/*` ブランチだけ**で、lease を
-   「いま読んだ先端」に張るので、**その後さらに動いていれば push は失敗し、
-   知らない commit を握り潰さない**。lease が弾かれたときだけ remote の先端を
-   **1 度だけ**読み直し、新しい値で **1 度だけ**再試行する (動かし続ける相手を
-   無限に追いかけて force push を繰り返さないため)。`ls-remote` 自体が読めなければ
-   呼び出し側が既に観測していた SHA (a なら `headRefOid`) を使い、それも無ければ
-   lease を張れないので復旧は失敗として扱う。先端が既に `head_sha` なら
-   ((c) の典型) 書き戻しは不要で、そのまま 2 へ進む
-2. **戻せたときだけ、台帳に `rejected` を記録する** — `link-pr --keep-status` +
-   `set-status --status rejected --notes "<経路ごとの理由> in <run>"` を `head_sha` の
-   上に 1 commit 積み、**通常の fast-forward で push する** (1 で remote は `head_sha`
-   に戻っているので force は要らない)。1 が失敗したなら remote は未検証 commit を
-   指したままで、そこへ安全に載せる方法が無いので **台帳 push ごと飛ばす** — その旨を
-   summary に出し、台帳が `proposed` のまま残っても次回の Step 0 が head branch の
-   全状態検索で決着させる
-3. **`gh pr close` を最大 3 回、5 秒 / 10 秒の backoff で試す** — 一過性の API
-   エラーで未検証の PR が open のまま残るのを防ぐ。`gh pr close` は既に閉じている
-   PR には成功を返すので、再試行しても二重には閉じない。**2 を記録できたかに関わらず
-   閉じる**: 台帳が `proposed` のまま残っても Step 0 の全状態検索が回収できるのに対し、
-   未検証の commit を指した PR をレビュー面に残す方が高くつくため
-4. **それでも open で、かつ `headRefOid` が `head_sha` でも 2 で積んだ先端でもない
-   なら**、PR URL・観測した SHA・補償後の SHA・検証済み SHA・ブランチ名を job summary の
-   「手動対応が必要 (unverified PR left open)」見出しに書き出す。加えて (1〜3 の成否に
-   関わらず) run は赤で終わる (上の表の出口)
+| ブランチ | 名前 |
+|---|---|
+| 改善候補 | `improve/<skill>-<finding-id>-<github.run_id>` |
+| 突き合わせ | `improve/ledger-reconcile-<github.run_id>` |
 
-**台帳 commit を先に push してはいけない** — それ自体が remote の先端を動かすので、
-起票直後に観測した SHA に張った lease が必ず弾かれ、1 の復旧が毎回失敗する。逆に
-2 の push は自分で動かした先端なので、4 の判定では `head_sha` と並べて**受け入れる側**に
-置く (自分の台帳 commit を「head が動いた」と読み違えないため)。
+`stage` は push の直前に **branch 名の末尾が `-$GITHUB_RUN_ID` であること**を要求し、
+違えばその候補を push せず落とす (`push_failed` として run が赤くなる)。黙って
+rename しないのは、manifest / PR 本文 / 台帳が指す名前と実際の ref が食い違う方が
+後から追えなくなるためである。push 自体も **create-only** で行う
+(`git push --force-with-lease="refs/heads/<branch>:" ...` — 空の期待値は「その ref が
+存在しないこと」を意味する) ので、同名の ref が既にあれば手元で落ちる。push の直後に
+`git ls-remote` で `head_sha` と一致することも確かめる (ここで一致していれば、以後
+ruleset B が動かさせない)。
 
-**それでも窓は残る**。`git ls-remote` / `gh pr create` / `gh pr view` は 3 つの別々の
-API 呼び出しで、その隙間を GitHub 側で原子化する手段は無い。**PR head に SHA や tag の
-ような不変 ref を指定できない以上、この窓を GitHub 上で閉じ切ることはできない** —
-ruleset と `concurrency` で「動かせる者」を App 1 件に絞り、動いたら検出して上の補償を
-かけるところが上限である。ここまで来た run は必ず赤になるので、窓が実際に踏まれたか
-どうかは run の色と summary で分かる。
+##### 凍結の代償 (2) PR と台帳の紐付けは次回実行に移る
 
-**台帳より先にブランチの復旧をやる**のは 3 経路すべてで共通である。PR head は必ず
-可変な branch なので、**中身を検証済みに戻せていれば close が落ちても未検証 commit を
-レビュー面に晒さずに済む**。逆に台帳を先に push すると lease が壊れて復旧の道が閉じる。
-台帳が `proposed` / `pr == null` のまま残っても、Step 0 の全状態検索がその PR を
-見つけて `rejected` として決着させられる (`references/ledger.md`) — 補償で閉じた PR は
-後から人間に reopen / merge されうるので、**open な PR の一覧だけを見ると取りこぼす**。
+凍結されたブランチには `link-pr` の commit を積めない。したがって
+**`publish` は台帳を一切書かない**: 起票された PR の台帳行は `proposed` /
+`pr == null` のまま default branch に残り、紐付けは**次回実行の Step 0** が行う。
+Step 0 は head branch の**接頭辞**で PR を引く (ブランチ名が run ごとに変わるため
+完全一致では引けない):
+
+```bash
+gh pr list --state all --limit 200 \
+  --json number,state,mergedAt,url,headRefName \
+  | jq --arg p "improve/<target_skill>-<id>-" \
+       '[.[] | select(.headRefName | startswith($p))] | sort_by(.number) | reverse'
+```
+
+**作者で絞る必要は無い** — `improve/**` を作れるのは App だけ (ruleset A) なので、
+この接頭辞を持つ head branch の PR はすべてこのループが起票したものである。
+`--state all` で引くのも従来どおり必須で、closed / merged の PR を落とすと台帳が
+その finding を決着させられなくなる (`references/ledger.md`)。
+
+この「1 週遅れ」は、承認ゲートを PR レビューに置いたことによる台帳の遅延
+(下の「ブランチと PR の種別」) と同じ性質のもので、同じ理由で受け入れる。
 
 CI runner は `trigger-evals.yml` と同じく `python3` を直接呼ぶ (`uv` が無い runner
 前提) — ローカル / agent 実行 (Step 5 やこの下の Route 2) では `uv run python3` を使う。
@@ -386,11 +374,11 @@ CI runner は `trigger-evals.yml` と同じく `python3` を直接呼ぶ (`uv` �
 経路は用意していない:
 
 - `GITHUB_TOKEN` (`github-actions[bot]`) は **ruleset の bypass actor になれない**。
-  つまり `improve/**` への push を絞る ruleset を作ると workflow 自身の push が止まり、
-  作らなければ verify と publish の間に第三者が push できる窓が残る。どちらも成立しない
-- App なら `improve/**` の push をその App 1 つに絞れて窓が消える。ついでに
-  `improve/*` PR の `pull_request` run が承認待ちにならず、default branch への write を
-  workflow の `GITHUB_TOKEN` から切り離せる
+  つまり `improve/**` の作成を絞る ruleset (A) を作ると workflow 自身がブランチを
+  作れなくなり、作らなければ誰でも `improve/**` を植えられる。どちらも成立しない
+- App なら A の bypass にその App だけを載せられる。ついでに `improve/*` PR の
+  `pull_request` run が承認待ちにならず、default branch への write を workflow の
+  `GITHUB_TOKEN` から切り離せる
 
 **前提条件 (すべて揃うまで workflow は起動しない)**:
 
@@ -400,21 +388,29 @@ CI runner は `trigger-evals.yml` と同じく `python3` を直接呼ぶ (`uv` �
 2. その App をこのリポジトリにインストールする
 3. App ID と private key を repo secrets に置く
    (`SKILL_IMPROVER_APP_ID` / `SKILL_IMPROVER_APP_PRIVATE_KEY`)
-4. default branch の ruleset を作る (前節。`~DEFAULT_BRANCH` / enforcement=active /
-   `pull_request` または `update` ルール / bypass に Integration を入れない)
-5. `improve/**` の ruleset を作る (`refs/heads/improve/**` / enforcement=active /
-   `update` ルール / **bypass はその App 1 件だけ**、bypass mode は
-   **「Always allow」** — `pull_request` モードでは直接 push を通せない)
-6. **どちらの ruleset も `conditions.ref_name.exclude` を空にする** — GitHub は
-   `exclude` に一致した ref に ruleset を適用しないので、`include` だけ合っていても
-   `exclude` が対象を覆っていれば**何も強制されない ruleset が preflight を通ってしまう**。
-   preflight は両方の条件で `exclude` が空であることも検査する
+4. **default branch の ruleset** を作る (前節。`~DEFAULT_BRANCH` /
+   enforcement=active / `pull_request` または `update` ルール / bypass に
+   Integration を入れない)
+5. **ruleset A (create-only)** を作る — `refs/heads/improve/**` /
+   enforcement=active / **`creation` ルール** / **bypass はその App 1 件だけ**、
+   bypass mode は **「Always allow」** (`pull_request` モードでは直接 push を
+   通せない)。これで `improve/**` を作れるのは workflow の App だけになる
+6. **ruleset B (freeze)** を作る — `refs/heads/improve/**` / enforcement=active /
+   **`update` と `deletion` の両ルール** / **bypass actors は 1 件も入れない**
+   (この App も入れない)。これで作成後の `improve/**` は誰も動かせなくなり、
+   検証済みの `head_sha` が起票まで不変になる。**A と B は別々の ruleset**である
+   (bypass の有無が真逆なので 1 本にはまとめられない)
+7. **3 本とも `conditions.ref_name.exclude` を空にする** — GitHub は `exclude` に
+   一致した ref に ruleset を適用しないので、`include` だけ合っていても `exclude` が
+   対象を覆っていれば**何も強制されない ruleset が preflight を通ってしまう**
 
-preflight は 3・5・6 を機械的に検査し (`actor_id` が `SKILL_IMPROVER_APP_ID` と一致し、
-`bypass_mode` が `always` で、`bypass_actors` がちょうど 1 件、`ref_name.exclude` が
-空であることまで)、欠けて
-いれば agent を起動せずに `exit 1` する。4 と 5 は repo 設定の変更なのでコード側では
-作れない。
+preflight は 3・4・5・6・7 を機械的に検査し (A は `actor_id` が
+`SKILL_IMPROVER_APP_ID` と一致・`bypass_mode` が `always`・`bypass_actors` が
+ちょうど 1 件、B は `bypass_actors` が空、どちらも `ref_name.exclude` が空で
+`creation` / `update`+`deletion` のルールを持つことまで)、欠けていれば agent を
+起動せずに `exit 1` する。4〜6 は repo 設定の変更なのでコード側では作れない。
+**ruleset を編集できる者がこの設計のトラストルート**であり、そこだけは workflow から
+縛れない (残余リスク)。
 
 ### トークンは 3 本に割る (agent は書き込みトークンを持たない)
 
@@ -426,7 +422,8 @@ prompt injection が通ったときに書き込み権限ごと持っていかれ
 |---|---|---|
 | read | `contents: read` / `issues: read` / `pull-requests: read` | `improve` の checkout、**agent の `GH_TOKEN`** |
 | preflight | `administration: write` | ruleset の preflight step **だけ** (agent より前) |
-| write | `contents: write` / `pull-requests: write` | `stage` の push、`publish` の起票。**agent が走った runner には存在せず、2 つの job がそれぞれ別の runner で発行する** |
+| write | `contents: write` / `pull-requests: write` | `stage` の push (`improve/**` の作成)。**agent が走った runner には存在せず、`stage` の runner で発行する** |
+| PR | `contents: read` / `pull-requests: write` | `publish` の checkout と `gh pr create`。**contents は read** — 凍結されたブランチに commit を積む経路が無くなったので、起票 job から `improve/**` を動かす能力を外してある |
 
 job の `GITHUB_TOKEN` は `improve` では **`contents: read` だけ**に絞ってある。
 `claude-code-action` は `process.env` をそのまま SDK に渡すので、我々が
@@ -435,7 +432,7 @@ job の `GITHUB_TOKEN` は `improve` では **`contents: read` だけ**に絞っ
 **その `GITHUB_TOKEN` から書き込み能力を取り上げる**方で解いた: checkout は App の
 read トークン、preflight は App の preflight トークン、artifact は
 `ACTIONS_RUNTIME_TOKEN` を使うので、`improve` の `GITHUB_TOKEN` に write が要る場面が
-そもそも無い。ブランチの push は**この job では行わない** (別 runner の `stage`)。
+そもそも無い。ブランチの作成は**この job では行わない** (別 runner の `stage`)。
 `ACTIONS_RUNTIME_TOKEN` 自体も agent に届くが、`stage` からは実値を知れないので
 run スコープ JWT の形で拾う — 上の「走査するもの」を参照。
 
@@ -463,9 +460,10 @@ agent の実行中も実行後も存在しない** (発行するのは別 runner
 `head_sha` は `stage` が **実際に push する ref から**取る (agent の申告値は使わない)。
 
 `concurrency: skill-improver` (`cancel-in-progress: false`) で直列化しているのは、
-同時実行が同じ `improve/<skill>-<finding-id>` ブランチを取り合うのを防ぐため。
-**唯一の push 権限者である App 自身が検証と起票の間にブランチを動かす経路**も
-これで塞がる (上の「検証済み SHA の不変条件」)。
+週次の run 同士が同じ台帳行や同じ finding を二重に扱うのを防ぐため。**ブランチ名の
+衝突**はここではなく run id の suffix が防ぎ、**検証済み SHA が動かないこと**は
+ruleset B が保証する (上の「検証済み SHA の不変条件」) — 直列化はもうその保証の
+一部ではない。
 
 ### ブランチと PR の種別
 
@@ -474,8 +472,8 @@ agent の実行中も実行後も存在しない** (発行するのは別 runner
 
 | ブランチ | PR タイトル | 中身 |
 |---|---|---|
-| `improve/<skill>-<finding-id>` | 改善差分に応じた title | 対象 skill の差分 + その finding の台帳行 (1 commit 目) + `link-pr` (2 commit 目) |
-| `improve/ledger-reconcile-<YYYYMMDD>` | `chore(ledger): reconcile <date>` | Step 0 の突き合わせ結果 (`set-status` / `record-metrics --phase after`) だけ |
+| `improve/<skill>-<finding-id>-<run id>` | 改善差分に応じた title | 対象 skill の差分 + その finding の台帳行 (**1 commit だけ**。ブランチは凍結されるので `link-pr` の 2 commit 目は積めない) |
+| `improve/ledger-reconcile-<run id>` | `chore(ledger): reconcile <date>` | Step 0 の突き合わせ結果 (`set-status` / `record-metrics --phase after` と、前回起票した PR の `link-pr`) |
 
 次の実行は **default branch の台帳**を読む。したがって突き合わせが効くのは reconcile PR が
 merge された後で、それまで同じエントリが再び `pr_open` として並ぶ。これは承認ゲートを
@@ -492,7 +490,18 @@ gh workflow run skill-improver.yml -f focus=ci-self-heal # 対象を絞る
 ## 経路 2 — Anthropic Routine
 
 Actions を使わない (使えない) 環境では、Routine に週次で登録する。cron は UTC で
-解釈されるため、月曜 09:00 JST は `0 0 * * 1`。登録するプロンプト:
+解釈されるため、月曜 09:00 JST は `0 0 * * 1`。
+
+> **ruleset A / B はこの経路にも効く**。`improve/**` を作れるのは App だけ
+> (A) で、作った後は誰も更新できない (B) — 人間や Routine の資格情報では
+> `improve/**` を作れないし、作れたとしても 2 度目の push は通らない。
+> **この repo のように ruleset を入れている環境では、Routine / 対話セッションは
+> `gh workflow run skill-improver.yml` で workflow を起動する**のが正しい経路で、
+> 自分で push するのは ruleset が無い (consumer) 環境に限られる。どちらの環境でも
+> 手順は同じ: 改善はローカルに commit し切ってから **1 度だけ** push し、
+> 台帳の `link-pr` は次回実行の Step 0 に任せる。
+
+登録するプロンプト:
 
 ```text
 kanade0404/skills で skill-improver を 1 周回してください。
@@ -505,7 +514,7 @@ kanade0404/skills で skill-improver を 1 周回してください。
    record-metrics --phase after。closed (未 merge) なら rejected。あわせて
    ledger.py list --missing-after も列挙し、after を取り損ねた merged エントリを
    拾い直す (放置すると効果が測られないまま静かに消える)。更新は
-   improve/ledger-reconcile-<YYYYMMDD> ブランチに commit し、
+   improve/ledger-reconcile-<run ごとに一意な id> ブランチに commit し、
    "chore(ledger): reconcile <date>" として PR を出す (default branch には push
    しない)。そのうえで ledger.py report を読み、revert candidate があれば
    新規候補より先に報告する
@@ -524,7 +533,7 @@ kanade0404/skills で skill-improver を 1 周回してください。
    無いまま pending として数えると、決着させる URL が無いのにその finding が永久に
    抑止される。列挙は `ledger.py list --status proposed` と
    `ledger.py list --inconsistent` の 2 本で拾う (pending だけを直接引くサブ
-   コマンドは無い)。そのブランチで link-pr を実行して commit / push し、**修復した
+   コマンドは無い)。reconcile ブランチで link-pr を実行して commit し、**修復した
    行はそのまま通常の pending 判定に戻る** (link-pr できたなら (b) として pending、
    引ける PR が 1 件も無ければ proposed / pr=null のままで、その finding は新規
    候補として拾い直してよい)
@@ -539,15 +548,18 @@ kanade0404/skills で skill-improver を 1 周回してください。
 4. 候補ごとに ledger.py check-target を通す。exit 2 (メタスキル) なら編集せず
    improvements/ledger.jsonl に excluded_meta で記録して人間に上げる
 5. 採用する候補は 1 finding = 1 PR = 1 テーマ。改善ブランチは毎回 default branch を
-   最新化してから improve/<skill>-<finding-id> を切る (前の改善ブランチから枝分かれ
-   させない)。default branch には push しない。merge もしない
+   最新化してから improve/<skill>-<finding-id>-<run ごとに一意な id> を切る (前の
+   改善ブランチから枝分かれさせない。**同じ名前は作り直せない**ので id は毎回変える)。
+   default branch には push しない。merge もしない
 6. skill のソースを触ったら node scripts/rulesync-sync.mjs で生成物を再生成し、
    そのうえで PR を開く前に score_triggers.py / .github/scripts/check_trigger_evals.py /
    uv run python3 -m unittest discover -s tests / node scripts/rulesync-sync.mjs --check
    を通す (検証に使うのは --check。引数なしは生成物を書き込むので検証にならない)。
    Routine は workflow の外なので、検証も PR 起票も自分で行う
-7. PR を作ったら ledger.py link-pr で紐付け、その差分を同じブランチに commit して
-   push する (紐付けを commit しないと次回の Step 0 が突き合わせる相手を失う)
+7. push は **1 ブランチ 1 回だけ** (improve/** は作成後に更新できない)。PR を
+   作った後の ledger.py link-pr は**このブランチには積まない** — 台帳行は
+   proposed / pr=null のまま残し、次回実行の Step 0 が head branch の接頭辞検索で
+   回収して reconcile ブランチに紐付ける
 8. 起票した PR・除外・見送り・revert candidate を SKILL.md の実行レポート形式で報告する
 9. 候補が 0 件なら PR を作らず「今週は改善なし」と報告して終了する
 ```

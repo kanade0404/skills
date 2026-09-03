@@ -55,6 +55,10 @@ TOKEN_RE = re.compile(r"(ghs_|ghp_|github_pat_|ghu_)[A-Za-z0-9_]{10,}")
 #: ログ上で別の行に見せかける細工にも使える。
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
+#: 候補ブランチ名の**形**だけを見る。run ごとの一意性 (末尾が `-<run_id>` で
+#: あること) は run id を知っている workflow (stage job) が push の直前に
+#: 検査する — このモジュールは run の文脈を持たないので、ここで数字の suffix を
+#: 強制しても「本当にこの run の id か」は言えない。
 BRANCH_RE = re.compile(r"^improve/[A-Za-z0-9._-]+$")
 HEAD_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 LEDGER_ID_RE = re.compile(r"^IMP-[0-9]{8}-[0-9a-f]{10}$")

@@ -854,8 +854,8 @@ class TestCliRoundTrip(unittest.TestCase):
         self.assertEqual(self.entries()[0]["target_skill"], "tdd")
 
     def test_list_proposed_returns_rows_with_and_without_pr(self) -> None:
-        # 補償経路は proposed のまま pr が入った行を作る。Step 0 が
-        # list --status proposed で拾えないと、その行は回収不能になる
+        # Step 0 の回収 (link-pr --keep-status) は proposed のまま pr が入った
+        # 行を作る。list --status proposed で拾えないと、その行は回収不能になる
         for created in ("2026-09-03", "2026-09-10"):
             run(
                 self.base(
@@ -1046,8 +1046,8 @@ def backticked_names(text: str) -> set[str]:
 class TestPendingRow(unittest.TestCase):
     """Step 2.5 が新規候補を抑止してよい行の判定 (純関数)。
 
-    `link-pr --keep-status` を通ると `proposed` のまま `pr` が入る。補償経路が
-    実際にこの形を作るので、拒否せず「PR が実在する = pending」として扱う。
+    `link-pr --keep-status` を通ると `proposed` のまま `pr` が入る。Step 0 の
+    回収が実際にこの形を作るので、拒否せず「PR が実在する = pending」として扱う。
     """
 
     def test_pr_open_is_pending(self) -> None:
@@ -1266,9 +1266,9 @@ class TestVerifyDiff(unittest.TestCase):
                 self.assertEqual(ledger.check_reconcile_diff(base, head), [])
 
     def test_reconcile_allows_recovering_a_proposed_row_with_an_empty_pr(self) -> None:
-        """publish の補償が push できず残った proposed / pr=null の回収経路。
+        """publish が台帳を書かないので残る proposed / pr=null の回収経路。
 
-        Step 0 が `improve/<skill>-<id>` の PR を全状態で引き、open / merged /
+        Step 0 が `improve/<skill>-<id>-` を接頭辞に持つ PR を全状態で引き、open / merged /
         closed に応じて link-pr してから決着させる。head 側に開ける PR URL が
         入っていることが条件。
         """

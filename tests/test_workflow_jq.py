@@ -227,25 +227,35 @@ class GateHeartbeatMetricsTest(unittest.TestCase):
 class SkillImproverRulesetPreflightTest(unittest.TestCase):
     """What the `skill-improver` preflight accepts as a protecting ruleset.
 
-    A ruleset does not apply to a ref that `conditions.ref_name.exclude`
-    matches, so checking `include` alone lets a ruleset that enforces nothing
-    on the target ref pass the gate (CodeRabbit finding on PR #138).
+    `improve/**` is held immutable by *two* rulesets, and the preflight must
+    require both (CodeRabbit finding on PR #138): A lets only the workflow App
+    create such a branch, B forbids `update` and `deletion` for everyone
+    (`bypass_actors: []`), so the verified `head_sha` cannot change between
+    `git ls-remote` and `gh pr create`. A ruleset does not apply to a ref that
+    `conditions.ref_name.exclude` matches, so checking `include` alone lets a
+    ruleset that enforces nothing on the target ref pass the gate.
     """
 
     @classmethod
     def setUpClass(cls) -> None:
         cls.default_program = extract_jq(
             SKILL_IMPROVER, '--arg ref "refs/heads/$DEFAULT_BRANCH"')
-        cls.improve_program = extract_jq(
+        cls.create_program = extract_jq(
             SKILL_IMPROVER, '--argjson app_id "${APP_ID:-0}"')
+        cls.freeze_program = extract_jq(
+            SKILL_IMPROVER, '--arg improve_ref')
 
     def accepts_default(self, ruleset: dict) -> bool:
         return jq_accepts(self.default_program, "--arg", "ref",
                           "refs/heads/main", stdin=json.dumps(ruleset))
 
-    def accepts_improve(self, ruleset: dict) -> bool:
-        return jq_accepts(self.improve_program, "--argjson", "app_id", "42",
+    def accepts_create(self, ruleset: dict) -> bool:
+        return jq_accepts(self.create_program, "--argjson", "app_id", "42",
                           stdin=json.dumps(ruleset))
+
+    def accepts_freeze(self, ruleset: dict) -> bool:
+        return jq_accepts(self.freeze_program, "--arg", "improve_ref",
+                          "refs/heads/improve/**", stdin=json.dumps(ruleset))
 
     @staticmethod
     def default_ruleset(**overrides) -> dict:
@@ -260,14 +270,28 @@ class SkillImproverRulesetPreflightTest(unittest.TestCase):
         return ruleset
 
     @staticmethod
-    def improve_ruleset(**overrides) -> dict:
+    def create_ruleset(**overrides) -> dict:
+        """Ruleset A: only the App may create `improve/**`."""
         ruleset = {
             "enforcement": "active",
             "conditions": {"ref_name": {"include": ["refs/heads/improve/**"],
                                         "exclude": []}},
-            "rules": [{"type": "update"}],
+            "rules": [{"type": "creation"}],
             "bypass_actors": [{"actor_type": "Integration", "actor_id": 42,
                                "bypass_mode": "always"}],
+        }
+        ruleset.update(overrides)
+        return ruleset
+
+    @staticmethod
+    def freeze_ruleset(**overrides) -> dict:
+        """Ruleset B: nobody may update or delete `improve/**`."""
+        ruleset = {
+            "enforcement": "active",
+            "conditions": {"ref_name": {"include": ["refs/heads/improve/**"],
+                                        "exclude": []}},
+            "rules": [{"type": "update"}, {"type": "deletion"}],
+            "bypass_actors": [],
         }
         ruleset.update(overrides)
         return ruleset
@@ -299,43 +323,72 @@ class SkillImproverRulesetPreflightTest(unittest.TestCase):
             bypass_actors=[{"actor_type": "Integration", "actor_id": 42,
                             "bypass_mode": "always"}])))
 
-    def test_improve_ruleset_without_exclude_is_accepted(self) -> None:
-        self.assertTrue(self.accepts_improve(self.improve_ruleset()))
+    def test_create_ruleset_is_accepted(self) -> None:
+        self.assertTrue(self.accepts_create(self.create_ruleset()))
 
-    def test_improve_ruleset_with_any_exclude_is_rejected(self) -> None:
-        conditions = {"ref_name": {"include": ["refs/heads/improve/**"],
-                                   "exclude": ["refs/heads/improve/**"]}}
-        self.assertFalse(self.accepts_improve(
-            self.improve_ruleset(conditions=conditions)))
+    def test_create_ruleset_needs_the_creation_rule(self) -> None:
+        # Ruleset A without `creation` restricts nothing about who may create
+        # `improve/**`, so anyone with push rights could plant a branch the
+        # publish job would then treat as workflow-made.
+        self.assertFalse(self.accepts_create(
+            self.create_ruleset(rules=[{"type": "update"}])))
+        self.assertFalse(self.accepts_create(self.create_ruleset(rules=[])))
 
-    def test_improve_ruleset_still_needs_the_single_app_bypass(self) -> None:
-        self.assertFalse(self.accepts_improve(self.improve_ruleset(
+    def test_create_ruleset_still_needs_the_single_app_bypass(self) -> None:
+        self.assertFalse(self.accepts_create(self.create_ruleset(
             bypass_actors=[{"actor_type": "Integration", "actor_id": 43,
                             "bypass_mode": "always"}])))
-        self.assertFalse(self.accepts_improve(self.improve_ruleset(
+        self.assertFalse(self.accepts_create(self.create_ruleset(
             bypass_actors=[{"actor_type": "Integration", "actor_id": 42,
                             "bypass_mode": "pull_request"}])))
-        self.assertFalse(self.accepts_improve(self.improve_ruleset(
+        self.assertFalse(self.accepts_create(self.create_ruleset(
             bypass_actors=[{"actor_type": "Integration", "actor_id": 42,
                             "bypass_mode": "always"},
                            {"actor_type": "RepositoryRole", "actor_id": 5,
                             "bypass_mode": "always"}])))
+        self.assertFalse(self.accepts_create(
+            self.create_ruleset(bypass_actors=[])))
 
+    def test_create_ruleset_with_any_exclude_is_rejected(self) -> None:
+        conditions = {"ref_name": {"include": ["refs/heads/improve/**"],
+                                   "exclude": ["refs/heads/improve/**"]}}
+        self.assertFalse(self.accepts_create(
+            self.create_ruleset(conditions=conditions)))
 
-class SkillImproverLedgerInvocationTest(unittest.TestCase):
-    """`--ledger` is a top-level option of `ledger.py`, not a subcommand one.
+    def test_freeze_ruleset_is_accepted(self) -> None:
+        self.assertTrue(self.accepts_freeze(self.freeze_ruleset()))
 
-    argparse exits 2 on `ledger.py link-pr --ledger <path> ...`, so putting the
-    flag after the subcommand makes every publish-job ledger write fail
-    silently inside its `&&` chain.
-    """
+    def test_freeze_ruleset_with_any_bypass_actor_is_rejected(self) -> None:
+        # The whole point of B is that *nobody* — the App included, and the
+        # operator holding its key with it — can move a branch after it is
+        # created. One bypass actor reopens the window between `ls-remote`
+        # and `gh pr create`.
+        for actor in ({"actor_type": "Integration", "actor_id": 42,
+                       "bypass_mode": "always"},
+                      {"actor_type": "OrganizationAdmin", "actor_id": 1,
+                       "bypass_mode": "always"}):
+            with self.subTest(actor=actor):
+                self.assertFalse(self.accepts_freeze(
+                    self.freeze_ruleset(bypass_actors=[actor])))
 
-    def test_ledger_flag_precedes_the_subcommand(self) -> None:
-        text = SKILL_IMPROVER.read_text(encoding="utf-8")
-        self.assertNotIn("link-pr --ledger", text)
-        self.assertNotIn("set-status --ledger", text)
-        self.assertIn('"$TRUSTED_LEDGER" --ledger improvements/ledger.jsonl',
-                      text)
+    def test_freeze_ruleset_needs_both_update_and_deletion(self) -> None:
+        self.assertFalse(self.accepts_freeze(
+            self.freeze_ruleset(rules=[{"type": "update"}])))
+        self.assertFalse(self.accepts_freeze(
+            self.freeze_ruleset(rules=[{"type": "deletion"}])))
+
+    def test_freeze_ruleset_with_any_exclude_is_rejected(self) -> None:
+        conditions = {"ref_name": {"include": ["refs/heads/improve/**"],
+                                   "exclude": ["refs/heads/improve/**"]}}
+        self.assertFalse(self.accepts_freeze(
+            self.freeze_ruleset(conditions=conditions)))
+
+    def test_create_ruleset_does_not_satisfy_the_freeze_check(self) -> None:
+        # A repo that only has ruleset A must fail the preflight: A carries the
+        # App as a bypass actor and no update/deletion rule, so it can never be
+        # mistaken for B (and vice versa).
+        self.assertFalse(self.accepts_freeze(self.create_ruleset()))
+        self.assertFalse(self.accepts_create(self.freeze_ruleset()))
 
 
 if __name__ == "__main__":
