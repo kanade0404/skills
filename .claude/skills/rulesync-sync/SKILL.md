@@ -37,16 +37,29 @@ allowed-tools:
 > 生成物 (`.claude/` / `.agents/` / `.codex/` / root `AGENTS.md` / `CLAUDE.md`) は
 > **直接編集しない**。生成は必ず `node scripts/rulesync-sync.mjs` を経由する。
 
-**例外**: `.claude/agents/` は rulesync の生成対象外で、repo-local な agent 定義
-(例: built-in `Explore` の上書き) を手書き管理する場所。生成物直接編集禁止の
-対象外であり、`node scripts/rulesync-sync.mjs` の再実行で巻き戻らない。
+**例外 (hand-maintained — 生成物ではない)**: 次の 2 つは
+`scripts/rulesync-sync.mjs` の現行設定では生成対象外で、手書き管理する。生成物
+直接編集禁止の対象外であり、再実行でも `--check` でも触られない (stale sweep の
+対象外)。
+
+- `.claude/agents/`: repo-local な agent 定義 (例: built-in `Explore` の上書き)。
+  生成対象外なのは `scripts/rulesync-sync.mjs` の `generate` 呼び出しの `--features`
+  に `subagents` が含まれないため。ただし `--features` を足すだけでは何も生成されない
+  — この script は `.rulesync/` を作り直してから staging ブロックが列挙するソースだけを
+  コピーし、`generate` は `.rulesync/` しか読まないので、`subagents/` は入口に届かない。
+  `--features` と staging ブロックの**両方**に `subagents` を加えた場合に限り、
+  `subagents/` の配布用定義から `.claude/agents/` が生成され、手書き分を上書きしうる。
+- `.gemini/settings.json`: Gemini CLI に `AGENTS.md` を読ませるための設定。
+  詳細は「Gemini CLI に AGENTS.md を読ませる」を参照。
 
 ## いつ使うか / 使わない場面
 
 **使う**: skill / rule / hook のソースを編集した後の再生成・sync、「生成物と drift
 してる」「rulesync-sync.mjs 実行して」「.claude/ を再生成して」「CLAUDE.md /
 AGENTS.md (生成物側) を更新したい」「配布構造 / feature ディレクトリはどうなってる?」
-「新しい rule / hook をどこに置く?」のような要請。
+「新しい rule / hook をどこに置く?」「Gemini CLI に AGENTS.md を読ませたい」
+「`.gemini/settings.json` はどこで管理してる? 生成物?」「gemini が CLAUDE.md /
+AGENTS.md を読んでくれない」のような要請。
 
 **使わない** (成果物で判定):
 
@@ -89,6 +102,40 @@ or `hooks-local/`。
 third-party skill は原則ここに vendor しない — consumer は upstream リポジトリを
 直接 `rulesync fetch` する。例外的に copy-in する場合は、その skill ディレクトリ内に
 source と license 情報を記録する。
+
+## Gemini CLI に AGENTS.md を読ませる
+
+Gemini CLI が既定で context ファイルとして読むのは `GEMINI.md` だけで、生成済みの
+`AGENTS.md` はそのままでは読まれない。rulesync に `gemini` ターゲットは無いため
+`--targets` では解決できず、リポジトリルートに `.gemini/settings.json` を**手書きで**
+置いて context ファイル名に `AGENTS.md` を足す。
+
+```json
+{
+  "context": {
+    "fileName": ["GEMINI.md", "AGENTS.md"]
+  }
+}
+```
+
+- **hand-maintained**: rulesync の生成物ではない。`scripts/rulesync-sync.mjs` は
+  `.gemini/` を staging も生成もせず、stale sweep が走る `MIRRORED_DIRS` にも
+  含めないため、再生成しても消えないし `--check` でも drift 扱いにならない。
+- このファイルは feature ディレクトリではないので `rulesync fetch` では配られない。
+  consumer 側で Gemini CLI に `AGENTS.md` を読ませたいなら、上の JSON を自分の
+  リポジトリに置く (1 回コミットすれば以後 `rulesync generate` / `--check` で
+  触られない)。
+- 置いた後に効いているかは Gemini CLI の `/memory show` で確認する。読み込み済み
+  context の連結表示に `AGENTS.md` の中身が出なければ効いていない (settings v2 に
+  未対応の CLI はこのキーをエラー無しで無視する)。`context.fileName` のネスト形式を
+  解釈する最小 CLI バージョンは上流に明記が無いため、バージョン番号ではなく
+  この手順で判定する。
+- 配布元リポジトリのメンテナ向けの補足 — settings v2 のネスト形式と旧
+  `contextFileName` 表記の事情、`antigravity-cli` / `antigravity-ide` target を足した
+  ときの `AGENTS.md` 上書き衝突、user scope と project scope の優先順位 — は配布元
+  README の
+  [「Gemini CLI を使う場合」](https://github.com/kanade0404/skills/blob/master/README.md#gemini-cli-を使う場合)
+  にある。
 
 ## Skill ディレクトリの標準レイアウト
 
