@@ -127,6 +127,11 @@ Gemini CLI が既定で context ファイルとして読むのは `GEMINI.md` �
   consumer 側で Gemini CLI に `AGENTS.md` を読ませたいなら、上の JSON を自分の
   リポジトリに置く (1 回コミットすれば以後 `rulesync generate` / `--check` で
   触られない)。
+- 置いた後に効いているかは Gemini CLI の `/memory show` で確認する。読み込み済み
+  context の連結表示に `AGENTS.md` の中身が出なければ効いていない (settings v2 に
+  未対応の CLI はこのキーをエラー無しで無視する)。`context.fileName` のネスト形式を
+  解釈する最小 CLI バージョンは上流に明記が無いため、バージョン番号ではなく
+  この手順で判定する。
 - 配布元リポジトリのメンテナ向けの補足 — settings v2 のネスト形式と旧
   `contextFileName` 表記の事情、`antigravity-cli` / `antigravity-ide` target を足した
   ときの `AGENTS.md` 上書き衝突、user scope と project scope の優先順位 — は配布元

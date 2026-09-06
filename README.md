@@ -93,6 +93,11 @@ Gemini CLI は既定では `GEMINI.md` しか context ファイルとして読�
   Gemini CLI 側のマイグレーションを走らせる。旧表記の `contextFileName` を併記して
   試すのは避ける — 両キーが同時に存在するときの優先順位は文書化されておらず、
   自動マイグレーションと干渉しうる。
+- **効いているかは Gemini CLI の `/memory show` で確認する。** このコマンドは
+  読み込まれた階層 context の連結内容を表示するので、そこに `AGENTS.md` の中身が
+  現れなければこの設定は効いていない。settings v2 の `context.fileName` を解釈する
+  最小 CLI バージョンは上流ドキュメントに明記が無いため、バージョン番号ではなく
+  この確認手順で判定する。
 - これは rulesync の**生成物ではない手書き設定**なので、上の手順 3 の生成物一覧とは
   別枠。consumer 側で 1 回作成してコミットすれば、上記手順の
   `--targets claudecode,codexcli` では以後 `rulesync generate` でも `--check` でも
