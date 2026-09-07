@@ -27,3 +27,6 @@ __pycache__/
 
 # direnv's local evaluation cache for .envrc (machine-local, not distributed)
 .direnv/
+
+# ledger.py の advisory lock (実行中のみ存在するローカルファイル)
+improvements/*.lock

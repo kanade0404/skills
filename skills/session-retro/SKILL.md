@@ -48,7 +48,7 @@ claudecode:
 - release 後の振り返り
 - 「振り返りして」「retro」「学びをまとめて」「教訓を残して」「二度と起きないようにして」
 - 「この学びを CLAUDE.md に反映して」(今セッションの学び由来の最小差分提案として)
-- Stop hook / Routine からの自動起動
+- Stop hook / Routine からの自動起動。Stop hook からの自動起動は consumer 側の任意設定であり ([references/loop-ops-integration.md](references/loop-ops-integration.md))、本リポジトリは Stop hook を同梱しない
 
 **使わない** (成果物で判定):
 
@@ -97,7 +97,8 @@ jq -r 'select(.type == "user") | .. | objects | select(.is_error == true) | .con
 2. **機械で検出できるか?** (テスト・lint・CI チェック・hook で捕まえられるか)
    → yes なら **sensor**。人間や agent の注意力に頼る rule より優先する
 3. **事前の一文で防げたか?** (指示・制約・手順として書けるか)
-   → yes なら **rule**。ただし「特定の失敗にトレースできる具体文」で書けるときだけ
+   → yes なら **rule**。ただし「特定の失敗にトレースできる具体文」で書けるときだけ。
+     提案前に「個別ルールではなく原則に一般化できるか (理由を添えて)」も必ず問う
 4. **今やらない作業として切り出すべきか?**
    → yes なら **issue**。acceptance criteria + 検証方法を必ず含める (下記フォーマット)
 5. **再現可能な失敗ケースとして残す価値があるか?** (skill / loop の改訂を検証できるか)
@@ -118,7 +119,8 @@ rule は足す一方だと context rot でループ全体を劣化させる。�
 
 | 分岐 | 承認後のアクション | 実装の担当 |
 |---|---|---|
-| rule | 対象 CLAUDE.md / SKILL.md / 配布 rules へ最小差分を Edit | 本スキル (差分適用のみ)。skill の構造改訂が要るなら skill-builder へ |
+| rule (CLAUDE.md / 配布 rules) | 対象 CLAUDE.md / 配布 rules へ最小差分を Edit | 本スキル (差分適用のみ) |
+| rule (skill 本文) | `skill-improver` 経由で最小差分 PR 化し `improvements/ledger.jsonl` に記録 (メタスキルは除外) | `skill-improver` (構造改訂が要るなら skill-builder へ) |
 | sensor | テスト/CI チェックの実装 | tdd (behavioral) / tidy-first (structural) へ handoff |
 | issue | `gh issue create` (下記ドラフトのまま) | 本スキル |
 | eval-case | loop-ops `golden/cases/` への PR 起票 | 本スキル (merge は人間) |

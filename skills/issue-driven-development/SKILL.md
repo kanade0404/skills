@@ -198,6 +198,13 @@ no-progress / ambiguous-issue / repo-unresolvable / conflict / security-block / 
 `LOOP_OPS_TOKEN` があれば `escalated` イベントも送信する (無ければコメントのみで良い —
 PR クローズ時の収集がフォールバックで拾う)。
 
+## 人間フィードバックの取り込み
+
+メンテナが agent 起票の issue/PR に「期待していたこと・その理由」を書いたコメントを
+残した場合、`agent-feedback` ラベルはそれを週次実行の `skill-improver` 向けにマークする
+だけの合図。本スキル自身はそのラベルを見てもセッション内で対応しない (対応は
+`skill-improver` の責務)。
+
 ## ガードレール
 
 - **destructive git 禁止**: `reset --hard` / `push --force*` / `rebase` を使わない。修正は常に追加 commit

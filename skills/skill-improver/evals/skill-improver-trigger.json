@@ -1,0 +1,177 @@
+{
+  "target_skill": "skill-improver",
+  "version": "1",
+  "cases": [
+    {
+      "id": "t01",
+      "prompt": "skill 改善 PR 出して",
+      "should_trigger": true,
+      "rationale": "description の主要トリガ句そのもの",
+      "tags": [
+        "explicit"
+      ]
+    },
+    {
+      "id": "t02",
+      "prompt": "retro の finding を skill に反映して",
+      "should_trigger": true,
+      "rationale": "retro finding → skill 最小差分 PR が本スキルの主経路",
+      "tags": [
+        "explicit"
+      ]
+    },
+    {
+      "id": "t03",
+      "prompt": "agent-feedback を取り込んで",
+      "should_trigger": true,
+      "rationale": "agent-feedback ラベルは description が名指しする入力系統",
+      "tags": [
+        "explicit"
+      ]
+    },
+    {
+      "id": "t04",
+      "prompt": "改善ループ回して",
+      "should_trigger": true,
+      "rationale": "outer loop の 1 周実行を指す明示句",
+      "tags": [
+        "explicit"
+      ]
+    },
+    {
+      "id": "t05",
+      "prompt": "improvements/ledger.jsonl に finding 記録して改善 PR まで出して",
+      "should_trigger": true,
+      "rationale": "台帳と PR 起票は本スキルが持つ成果物",
+      "tags": [
+        "explicit"
+      ]
+    },
+    {
+      "id": "t06",
+      "prompt": "先週のフィードバックから skill 直しといて",
+      "should_trigger": true,
+      "rationale": "人間フィードバックを一次信号にした週次改善。口語の揺れ",
+      "tags": [
+        "ambiguous"
+      ]
+    },
+    {
+      "id": "t07",
+      "prompt": "retro の提案が溜まってるので形にして",
+      "should_trigger": true,
+      "rationale": "retro は提案まで、具体化 (materialize) は本スキルの責務",
+      "tags": [
+        "ambiguous"
+      ]
+    },
+    {
+      "id": "t08",
+      "prompt": "trigger eval の F1 が 0.8 割ってる skill を直す PR 出して",
+      "should_trigger": true,
+      "rationale": "F1 0.8 未満の trigger-eval は description が挙げる入力系統",
+      "tags": [
+        "ambiguous"
+      ]
+    },
+    {
+      "id": "t09",
+      "prompt": "週次の自己改善、今週の分回して",
+      "should_trigger": true,
+      "rationale": "週次スケジュールが主経路と description に明記",
+      "tags": [
+        "ambiguous"
+      ]
+    },
+    {
+      "id": "t10",
+      "prompt": "このセッションの振り返りして",
+      "should_trigger": false,
+      "rationale": "振り返りそのものは retro / session-retro (description の範囲外に明記)",
+      "tags": [
+        "adjacent"
+      ]
+    },
+    {
+      "id": "t11",
+      "prompt": "retro 回して finding を出して",
+      "should_trigger": false,
+      "rationale": "finding の生成は retro 側。本スキルは finding を受け取る側",
+      "tags": [
+        "adjacent"
+      ]
+    },
+    {
+      "id": "t12",
+      "prompt": "skill-builder で ci-self-heal の description 調整して",
+      "should_trigger": false,
+      "rationale": "単発の trigger 調整は skill-builder Mode B (description の範囲外)",
+      "tags": [
+        "adjacent"
+      ]
+    },
+    {
+      "id": "t13",
+      "prompt": "この PR の差分レビューして",
+      "should_trigger": false,
+      "rationale": "コードレビューは code-review",
+      "tags": [
+        "adjacent"
+      ]
+    },
+    {
+      "id": "t14",
+      "prompt": "CI 落ちてるから直して",
+      "should_trigger": false,
+      "rationale": "CI 修復は ci-self-heal",
+      "tags": [
+        "adjacent"
+      ]
+    },
+    {
+      "id": "t15",
+      "prompt": "skill-builder の本文を改善して PR 出して",
+      "should_trigger": false,
+      "rationale": "skill-builder はメタスキル除外リストに明記され、編集も PR 起票もしない",
+      "tags": [
+        "adjacent"
+      ]
+    },
+    {
+      "id": "t16",
+      "prompt": "PR のレビューコメント全部対応して",
+      "should_trigger": false,
+      "rationale": "既存 PR のコメント対応は pr-review-respond",
+      "tags": [
+        "adjacent"
+      ]
+    },
+    {
+      "id": "t17",
+      "prompt": "この関数の実装を改善して PR 出して",
+      "should_trigger": false,
+      "rationale": "「改善して PR」だが対象はコード。skill 改善ループではない",
+      "tags": [
+        "distractor"
+      ]
+    },
+    {
+      "id": "t18",
+      "prompt": "rulesync-sync 実行して生成物を再生成して",
+      "should_trigger": false,
+      "rationale": "生成物の再生成は rulesync-sync。skill の改善差分ではない",
+      "tags": [
+        "distractor"
+      ]
+    },
+    {
+      "id": "t19",
+      "prompt": "この rule を他の repo にも配りたい",
+      "should_trigger": false,
+      "rationale": "配布判定は harness-distribution。改善 finding の具体化ではない",
+      "tags": [
+        "distractor"
+      ]
+    }
+  ]
+}
