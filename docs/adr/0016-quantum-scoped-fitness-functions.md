@@ -6,8 +6,8 @@ supersede せず、Status は accepted のまま据え置く。0009 は
 順序を、本 ADR が適用単位と測定方法を扱う。
 Amended by [ADR 0017](0017-pipeline-code-in-agegis-until-phase-2-gate.md) — (1) Tribunal の保護パスに
 ある「検査コード」の外延に Customs のソースを含めること、および (2) 保護パスに worker 配備版の release
-経路を加えること。**本 ADR の本文は変更されておらず、閾値も変わっていない。ただし測定対象の外延は
-広がる。**
+経路を加えること。なお **Tribunal の保護パスは、0017 が定める Customs と同一の manifest を参照する**。
+**本 ADR の本文は変更されておらず、閾値も変わっていない。ただし測定対象の外延は広がる。**
 
 Driver: 本 ADR は [ADR 0009](0009-ility-priority-order.md) と同じく、下流の決定に対して Driver を供給
 する側である。用語は [CONTEXT.md](../../CONTEXT.md) に従い、本 ADR が導入する仮名は下記 Decision で

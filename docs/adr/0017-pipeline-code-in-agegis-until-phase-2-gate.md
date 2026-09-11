@@ -16,7 +16,8 @@ moderate に留まるという事実である。用語は [CONTEXT.md](../../CON
 
 ## Context
 
-#137 は「パイプラインの実装コードをどの repo に置くか」を問うた。これまでの ADR 群はこれに答えていない。
+発端の #137 は「パイプラインの実装コードをどの repo に置くか」を問うた。これまでの ADR 群はこれに
+答えていない。
 
 **設計は repo という identity を 3 つしか持っていない。** 権威レコード専用の Ledger
 ([ADR 0011](0011-authority-state-in-dedicated-state-repo.md))、Codex が実装差分を書く対象である
@@ -60,7 +61,8 @@ moderate が積み上がるだけで有界である。
 なお **#122 (Phase 0) の成果物は、どの案を採っても 2 repo に割れる。** `.coderabbit.yaml` と issue テンプレ
 は PR が起きる code repo にしか置けず、契約スキーマ・遷移表・pl-event 語彙は Charter として skills repo に
 属する一方、判定純関数 (Python、domain primitive、clock DI) はそのどちらでもないので実装側に属する。
-#122 はこの割れを書き分けていない。**本 ADR の選択に依らず有効な指摘**なので、#122 の AC 側で片付ける。
+ただし #122 はこの割れを書き分けていない。**本 ADR の選択に依らず有効な指摘**なので、#122 の AC 側で
+片付ける。
 
 ## Decision
 
@@ -78,6 +80,12 @@ worker 配備版の release 経路**とする。**Foreman の通常コードは�
 受理手順 3 が使う保護パスの一覧がどこに住むかを決めておらず、同居下でそれが被検査側の作業ツリーに
 あると、条件 1 の機構が自分で自分の対象を書き換えられることになる。scanner の設定と同じ扱い
 ([ADR 0014](0014-add-security-to-ility-priority-order.md)) にして「3 点同時 bump」に編入する。
+
+**保護パスの定義は Charter の契約配布物の一部として単一の manifest で配布し、Customs (層 2 の broker
+pre-flight) と Tribunal (層 3 の required check) は同じ manifest を参照する。** 2 箇所で別々に定義を
+持つと、Customs と Tribunal で保護範囲が乖離し、片方だけを骨抜きにできてしまう。**manifest の形式・
+schema・版の付け方は #122 (Phase 0) の契約スキーマ側で定める** — 本 ADR が決めるのは「単一の manifest を
+両者が参照する」という決定までである。
 
 あわせて、[ADR 0016](0016-quantum-scoped-fitness-functions.md) が Tribunal の改変防止で保護パスに挙げた
 **「検査コード」の外延を本 ADR で確定する — Tribunal の ac-verify に加え、Customs (broker pre-flight) の
@@ -102,8 +110,8 @@ worker 配備版の release 経路**とする。**Foreman の通常コードは�
 
 **この gate は ADR 本文ではなく issue の受け入れ条件に 1 行として埋め込む。**
 [CONTEXT.md](../../CONTEXT.md) の承認ゲートは merge と差し戻し時の再検討の 2 点しか無く、**ADR に
-「再判定する」と書いただけでは誰も止まらない**。置き場は **#121 の Phase 2 前提列を primary とする** —
-#121 が自身を single source of truth と宣言しているためである。**#130 の依存 / AC には blocked-by の
+「再判定する」と書いただけでは誰も止まらない**。置き場は **#121 の Phase 2 前提列を primary とする**
+— #121 が自身を single source of truth と宣言しているためである。**#130 の依存 / AC には blocked-by の
 注記として写す** (secondary)。**ただしこれは規約であって機構ではない** — 下記 Neutral の自己言及のとおり、
 本 ADR は repo 境界で何も強制しておらず、AC の 1 行を誰も読まなければ gate は発火しない。
 
@@ -256,8 +264,12 @@ branch protection / required check 名の再設定、(c) 実装 issue と cross-
 - **#129 側に注記が要る (本 ADR では解決しない)。** worker の push / PR / issue 起票用 job token は
   code repo を対象とするので ([ADR 0013](0013-role-separated-tokens-and-credentials.md))、App は agegis
   にも installation されているはずだが、**#129 の AC は state repo への installation しか書いていない**。
-  同居下では App の `contents:write` が自分のソース木を覆うことになるため、この含意を #129 側に書き足す
-  必要がある。follow-up であって、本 ADR の決定ではない。
+  **App が agegis に installation されていなければ、worker は code repo 向けの job token
+  (`contents:write` / `pull_requests:write` / `issues:write`) をそもそも mint できず、push・PR 作成・
+  issue 起票が失敗する。** state repo だけへの installation では足りないので、**#129 の AC には agegis
+  への installation と必要最小限の権限を明記する必要がある**。加えて同居下では App の `contents:write`
+  が自分のソース木を覆うことになるため、この含意も #129 側に書き足す。follow-up であって、本 ADR の
+  決定ではない。
 - 本 ADR は [ADR 0011](0011-authority-state-in-dedicated-state-repo.md) と違い、**repo 境界で何かを強制
   していない**。ここで決めた同居は機構ではなく配置であり、機構として効いているのは
   [ADR 0014](0014-add-security-to-ility-priority-order.md) の「scanner の設定は worker 配備版のみを使う」
