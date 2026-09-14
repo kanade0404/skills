@@ -6,7 +6,10 @@ on:
       - "skills/**"
       - "rules/**"
       - "rules-local/**"
-      - "scripts/rulesync-sync.mjs"
+      # Whole dir, not just rulesync-sync.mjs: tests/ drives several scripts/
+      # entries (explore-readonly-guard.sh, session-setup.sh,
+      # codex-workspace-roots.mjs), and a change to any of them must run them.
+      - "scripts/**"
       - ".github/scripts/**"
       - ".github/trigger-evals-known-failures.json"
       - ".github/workflows/trigger-evals.yml"
