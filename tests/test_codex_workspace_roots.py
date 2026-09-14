@@ -29,7 +29,11 @@ MODULE = REPO_ROOT / "scripts" / "codex-workspace-roots.mjs"
 WORKSPACE_ROOTS_TABLE = '[permissions.rulesync.filesystem.":workspace_roots"]'
 
 
-def config_with(*entries: str, network_domains: str | None = None) -> str:
+def config_with(
+    *entries: str,
+    network_domains: str | None = None,
+    table: str = WORKSPACE_ROOTS_TABLE,
+) -> str:
     """Build a `.codex/config.toml` shaped like the one rulesync generates."""
     lines = [
         'default_permissions = "rulesync"',
@@ -37,7 +41,7 @@ def config_with(*entries: str, network_domains: str | None = None) -> str:
         "[permissions.rulesync.filesystem]",
         '":minimal" = "read"',
         "",
-        WORKSPACE_ROOTS_TABLE,
+        table,
         *entries,
         "",
         "[permissions.rulesync.network]",
@@ -216,6 +220,72 @@ class CodexWorkspaceRootsPatchTest(PatchHarness, unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("workspace_roots", result.stderr)
         self.assertIn('"*" = { access = "write" }', result.stderr)
+
+
+class UnrecognizedFilesystemTableGateTest(PatchHarness, unittest.TestCase):
+    """The second net: catch-alls the `:workspace_roots` scoping never reaches.
+
+    Both the rewrite and the first gate only ever look inside a table header
+    matching `.filesystem.":workspace_roots"`. A rulesync serialization change
+    that renames that header moves the offending entry out of their reach
+    entirely -- nothing is rewritten, nothing is reported, `--check` compares
+    two equally broken trees and codex still refuses to start.
+    """
+
+    RENAMED_CASE = '[permissions.rulesync.filesystem.":workspaceRoots"]'
+
+    def test_exits_nonzero_when_a_filesystem_catch_all_sits_under_a_renamed_table(
+        self,
+    ) -> None:
+        drifted = config_with('"*" = "write"', table=self.RENAMED_CASE)
+
+        result, _ = self.run_patch(drifted)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unrecognized filesystem catch-all shape", result.stderr)
+        self.assertIn('"*" = "write"', result.stderr)
+
+    def test_exits_nonzero_when_the_workspace_roots_table_is_reparented(self) -> None:
+        # The other half of the same drift: the `:workspace_roots` leaf survives
+        # but its parent segment is no longer spelled `filesystem`.
+        reparented = config_with(
+            '"*" = "write"', table='[permissions.rulesync.fs.":workspace_roots"]'
+        )
+
+        result, _ = self.run_patch(reparented)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unrecognized filesystem catch-all shape", result.stderr)
+
+    def test_leaves_a_deny_catch_all_under_a_renamed_table_untouched(self) -> None:
+        # A bare `*` glob is exactly what codex-cli does accept for `deny`, so
+        # the second net must read the value too rather than fire on any `"*"`
+        # key it finds in a filesystem-ish table.
+        after = self.patch_ok(config_with('"*" = "deny"', table=self.RENAMED_CASE))
+
+        self.assertIn('"*" = "deny"', after)
+
+    def test_leaves_a_catch_all_outside_any_filesystem_table_untouched(self) -> None:
+        # The second net is deliberately not whole-file: a `"*"` key under a
+        # non-filesystem table is a different namespace (network domains being
+        # the live example) and rewriting or rejecting it would be wrong.
+        after = self.patch_ok(
+            config_with(
+                '"./**" = "write"',
+                network_domains='\n'.join(['"*" = "allow"', '"*.example.com" = "deny"']),
+            )
+        )
+
+        self.assertIn('"*" = "allow"', after)
+
+    def test_names_the_renamed_table_distinctly_from_a_recognized_survivor(self) -> None:
+        # The two gates fail for different reasons and want different fixes
+        # (teach the rewrite a new value shape vs. teach it a new table name),
+        # so a reader hitting one must not be handed the other's instructions.
+        recognized, _ = self.run_patch(config_with('"*" = { access = "write" }'))
+
+        self.assertNotEqual(recognized.returncode, 0)
+        self.assertNotIn("unrecognized filesystem catch-all shape", recognized.stderr)
 
 
 if __name__ == "__main__":

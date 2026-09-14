@@ -37,12 +37,19 @@ import { join } from 'node:path';
 // matcher in a different table and is never visited, and `"*" = "deny"` inside
 // a `:workspace_roots` table is left alone because `deny` is exactly the one
 // access codex-cli does accept for a bare `*` glob.
+// That same scoping is also the rewrite's blind spot, so two gates run over the
+// patched content before it is written: `requireNoCatchAllSurvivors`, scoped
+// exactly as the rewrite is, and then `requireNoUnrecognizedFilesystemCatchAlls`,
+// a coarser pass over every filesystem-ish table that catches what a renamed
+// header would hide from both. See the latter for what they do and do not
+// guarantee.
 export function fixCodexWorkspaceRootsCatchAll(outRoot) {
   const codexConfigPath = join(outRoot, '.codex', 'config.toml');
   if (!existsSync(codexConfigPath)) return;
   const original = readFileSync(codexConfigPath, 'utf8');
   const fixed = rewriteCatchAllEntries(original);
   requireNoCatchAllSurvivors(fixed, codexConfigPath);
+  requireNoUnrecognizedFilesystemCatchAlls(fixed, codexConfigPath);
   if (fixed !== original) writeFileSync(codexConfigPath, fixed);
 }
 
@@ -51,6 +58,12 @@ export function fixCodexWorkspaceRootsCatchAll(outRoot) {
 // quote style counts, and a trailing inline comment is tolerated.
 const TABLE_HEADER = /^\s*\[\[?([^\]]*?)\]\]?\s*(?:#.*)?$/;
 const IS_WORKSPACE_ROOTS = /\.filesystem\.["']?:workspace_roots["']?$/;
+// Deliberately loose, and only ever used to *reject*, never to rewrite: any
+// dotted header that mentions a filesystem or workspace-roots segment in any
+// spelling (`:workspaceRoots`, `workspace-roots`, a reparented
+// `permissions.rulesync.fs.":workspace_roots"`). See
+// `requireNoUnrecognizedFilesystemCatchAlls` for why this width is safe.
+const IS_FILESYSTEM_ADJACENT = /filesystem|workspace[_-]?roots/i;
 const QUOTED_KEY = /^\s*(?:"([^"]*)"|'([^']*)')\s*=/;
 const QUOTED_KEY_TOKEN = /^(\s*)(?:"[^"]*"|'[^']*')/;
 const BARE_KEY = /^\s*[A-Za-z0-9_-]+\s*=/;
@@ -139,6 +152,80 @@ function requireNoCatchAllSurvivors(toml, codexConfigPath) {
     + 'codex cannot load. Update the rewrite in scripts/codex-workspace-roots.mjs to '
     + "match rulesync's current output (see RULESYNC_VERSION in "
     + 'scripts/rulesync-sync.mjs). Offending line(s):',
+  );
+  for (const s of survivors) console.error(`  line ${s.lineNo}: ${s.text}`);
+  process.exit(1);
+}
+
+// Second net. Everything above — the rewrite and the gate that checks it —
+// only ever looks inside a table header matching IS_WORKSPACE_ROOTS, so the
+// two share one blind spot: if rulesync renames that header, the offending
+// entry moves out of reach of both. Nothing is rewritten, nothing is reported,
+// `--check` diffs two equally broken trees and reports "up to date", and the
+// first symptom is codex-cli refusing to start. This pass re-reads the same
+// patched content with the header requirement relaxed to "mentions filesystem
+// or workspace roots at all" and rejects any bare `"*"` catch-all left there.
+//
+// It does not re-exclude the recognized `:workspace_roots` tables, because
+// `requireNoCatchAllSurvivors` has already exited on anything wrong inside
+// them by the time this runs — the two nets must stay in that order, which
+// `test_names_the_renamed_table_distinctly_from_a_recognized_survivor` pins
+// (swap them and a recognized survivor gets reported with this message and its
+// wrong remedy).
+//
+// WHAT THIS GUARANTEES: a bare `"*"` key whose value is not readable as
+// `deny`, sitting under a line-form table header that names a filesystem or
+// workspace-roots segment in any spelling, stops the build.
+//
+// WHAT IT DOES NOT: it is a rejection net, not a rewrite — it never repairs
+// what it finds, so a header rename still needs IS_WORKSPACE_ROOTS taught the
+// new name. It is scoped to filesystem-ish *line-form* table headers, so it
+// misses a catch-all rulesync moves into an inline table
+// (`filesystem = { ... "*" = "write" ... }`), a multi-line array-of-tables
+// value, or a filesystem table renamed to something naming neither concept
+// (`permissions.rulesync.paths`). It requires the key to read positively as
+// `"*"`, so an unparseable *key* under an unrecognized table passes — the
+// stricter "shape I cannot read is a survivor" rule stays confined to tables
+// we positively recognize, where a false fire is a loud local bug rather than
+// a permanent block on generation. Do not treat a green run as proof the
+// generated config loads; `codex doctor` is the real check.
+//
+// The scope is the tradeoff: matching every `"*"` in the file would fire on
+// `[permissions.rulesync.network.domains]`'s `"*" = "allow"` (a domain
+// matcher, not a path glob) and on any future non-filesystem namespace with
+// the same idiom, which would wedge generation permanently. Filesystem-ish
+// headers keep the net wide enough for the realistic drift — a renamed or
+// reparented workspace-roots table — without inventing a policy for keys this
+// patch has no business judging.
+function findUnrecognizedFilesystemCatchAlls(toml) {
+  const survivors = [];
+  mapTableEntries(
+    toml,
+    (header) => IS_FILESYSTEM_ADJACENT.test(header),
+    (line, index) => {
+      // `deny` is the one access codex-cli accepts for a bare `*` glob; an
+      // unreadable value cannot be shown to be `deny`, so it counts against us.
+      if (entryKey(line) !== '*' || entryValue(line) === 'deny') return line;
+      survivors.push({ lineNo: index + 1, text: line.trim() });
+      return line;
+    },
+  );
+  return survivors;
+}
+
+function requireNoUnrecognizedFilesystemCatchAlls(toml, codexConfigPath) {
+  const survivors = findUnrecognizedFilesystemCatchAlls(toml);
+  if (survivors.length === 0) return;
+  console.error(
+    `rulesync-sync: ${codexConfigPath} carries an unrecognized filesystem catch-all `
+    + 'shape: a bare "*" key with non-deny access under a filesystem table that the '
+    + ':workspace_roots rewrite never visited, so nothing repaired it. codex-cli '
+    + 'rejects a bare "*" filesystem glob for anything but `deny` at config load, '
+    + 'so refusing to write it beats committing a config '
+    + 'codex cannot load. This usually means rulesync renamed or reparented the '
+    + 'workspace_roots table: widen IS_WORKSPACE_ROOTS in '
+    + 'scripts/codex-workspace-roots.mjs to cover the new header (see RULESYNC_VERSION '
+    + 'in scripts/rulesync-sync.mjs). Offending line(s):',
   );
   for (const s of survivors) console.error(`  line ${s.lineNo}: ${s.text}`);
   process.exit(1);
