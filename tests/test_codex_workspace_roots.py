@@ -117,6 +117,24 @@ class CodexWorkspaceRootsPatchTest(unittest.TestCase):
 
         self.assertIn('[permissions.rulesync.network.domains]\n"*" = "allow"', after)
 
+    def test_leaves_entries_above_the_first_table_header_untouched(self) -> None:
+        # The `:workspace_roots` scoping is what protects every other `"*"` key
+        # in the file, and it has to hold before the first table header too --
+        # not just after a later header has switched it back off.
+        preamble = "\n".join(
+            [
+                '"*" = "allow"',
+                "",
+                WORKSPACE_ROOTS_TABLE,
+                '"*" = "write"',
+                "",
+            ]
+        )
+
+        after = self.patch_ok(preamble)
+
+        self.assertEqual(after, preamble.replace('"*" = "write"', '"./**" = "write"'))
+
     def test_is_noop_when_entry_is_already_a_recursive_glob(self) -> None:
         already_fixed = config_with('"./**" = "write"')
 
@@ -124,10 +142,65 @@ class CodexWorkspaceRootsPatchTest(unittest.TestCase):
 
         self.assertEqual(after, already_fixed)
 
+    def test_rewrites_every_workspace_roots_catch_all_not_just_the_first(self) -> None:
+        # Nothing guarantees rulesync emits exactly one permission profile, and
+        # a second `:workspace_roots` table left unpatched is a config codex
+        # still refuses to load — with no symptom until someone runs codex.
+        two_profiles = "\n".join(
+            [
+                'default_permissions = "rulesync"',
+                "",
+                WORKSPACE_ROOTS_TABLE,
+                '"*" = "write"',
+                "",
+                '[permissions.readonly.filesystem.":workspace_roots"]',
+                '"*" = "read"',
+                "",
+            ]
+        )
+
+        after = self.patch_ok(two_profiles)
+
+        self.assertIn('"./**" = "write"', after)
+        self.assertIn('"./**" = "read"', after)
+        self.assertNotIn('"*" = ', after)
+
     def test_is_noop_when_codex_config_is_absent(self) -> None:
         after = self.patch_ok(None)
 
         self.assertIsNone(after)
+
+    def test_rewrites_catch_all_across_toml_serialization_variants(self) -> None:
+        # The exact byte shape rulesync emits today (`"*" = "write"`) is not a
+        # contract. Spacing, quote style and a trailing comment must all still
+        # be rewritten rather than trip the fail-loud gate, and the rest of the
+        # line must survive untouched (this output is diffed byte-for-byte).
+        variants = {
+            '"*"  =  "write"': '"./**"  =  "write"',
+            "'*' = 'write'": "\"./**\" = 'write'",
+            '"*" = "write" # catch-all': '"./**" = "write" # catch-all',
+            '  "*" = "read"': '  "./**" = "read"',
+        }
+
+        for entry, expected in variants.items():
+            with self.subTest(entry=entry):
+                after = self.patch_ok(config_with(entry))
+
+                self.assertIn(expected, after)
+
+    def test_exits_nonzero_when_a_catch_all_survives_the_patch(self) -> None:
+        # A value shape the rewrite does not recognize (here: an inline table
+        # instead of a plain string) must not be waved through. Staying silent
+        # ships a `.codex/config.toml` codex refuses to load, and --check
+        # compares that broken output against an equally broken committed one
+        # and reports "up to date".
+        unrecognized = config_with('"*" = { access = "write" }')
+
+        result, _ = self.run_patch(unrecognized)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("workspace_roots", result.stderr)
+        self.assertIn('"*" = { access = "write" }', result.stderr)
 
 
 if __name__ == "__main__":
