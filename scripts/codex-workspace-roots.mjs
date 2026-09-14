@@ -66,23 +66,28 @@ const entryValue = (line) => {
 };
 
 // Walk the TOML line by line, handing `visit` only the entry lines that sit
-// under a `:workspace_roots` table (table headers, blanks and comments are
-// passed through). Returns the mapped lines. Shared by the rewrite and the
-// gate so the gate can never look at a different set of lines than the rewrite.
-function mapWorkspaceRootsEntries(toml, visit) {
-  let inWorkspaceRoots = false;
+// under a table whose dotted header `selectTable` accepts (table headers,
+// blanks and comments are passed through). Entries before the first header
+// belong to no table and are never visited. Returns the mapped lines.
+function mapTableEntries(toml, selectTable, visit) {
+  let inSelectedTable = false;
   return toml.split('\n').map((line, index) => {
     const header = TABLE_HEADER.exec(line);
     if (header) {
-      inWorkspaceRoots = IS_WORKSPACE_ROOTS.test(header[1].trim());
+      inSelectedTable = selectTable(header[1].trim());
       return line;
     }
-    if (!inWorkspaceRoots) return line;
+    if (!inSelectedTable) return line;
     const text = line.trim();
     if (text === '' || text.startsWith('#')) return line;
     return visit(line, index);
   });
 }
+
+// The `:workspace_roots` slice of the above. Shared by the rewrite and the
+// gate so the gate can never look at a different set of lines than the rewrite.
+const mapWorkspaceRootsEntries = (toml, visit) =>
+  mapTableEntries(toml, (header) => IS_WORKSPACE_ROOTS.test(header), visit);
 
 // Replace only the key token, leaving spacing, value quoting and any trailing
 // comment byte-identical — the generated tree is diffed byte-for-byte by
