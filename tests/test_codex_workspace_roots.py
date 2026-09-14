@@ -188,6 +188,17 @@ class CodexWorkspaceRootsPatchTest(unittest.TestCase):
 
                 self.assertIn(expected, after)
 
+    def test_leaves_the_committed_codex_config_untouched(self) -> None:
+        # The strongest false-fire guard available: the real generated config
+        # this repo ships. Anything the patch or its fail-loud gates do must be
+        # a no-op here, or `node scripts/rulesync-sync.mjs` stops producing the
+        # tree that is committed and every run of it reports drift.
+        committed = (REPO_ROOT / ".codex" / "config.toml").read_text(encoding="utf-8")
+
+        after = self.patch_ok(committed)
+
+        self.assertEqual(after, committed)
+
     def test_exits_nonzero_when_a_catch_all_survives_the_patch(self) -> None:
         # A value shape the rewrite does not recognize (here: an inline table
         # instead of a plain string) must not be waved through. Staying silent
