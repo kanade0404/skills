@@ -50,7 +50,9 @@ def config_with(*entries: str, network_domains: str | None = None) -> str:
     return "\n".join(lines)
 
 
-class CodexWorkspaceRootsPatchTest(unittest.TestCase):
+class PatchHarness:
+    """Runs the patch over a scratch tree. Mixed into each TestCase below."""
+
     def run_patch(self, config: str | None) -> tuple[subprocess.CompletedProcess, str | None]:
         """Run the patch over a scratch output root.
 
@@ -90,6 +92,8 @@ class CodexWorkspaceRootsPatchTest(unittest.TestCase):
         )
         return after
 
+
+class CodexWorkspaceRootsPatchTest(PatchHarness, unittest.TestCase):
     def test_rewrites_bare_catch_all_write_to_recursive_glob(self) -> None:
         after = self.patch_ok(config_with('"*" = "write"'))
 
