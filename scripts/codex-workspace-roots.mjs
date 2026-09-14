@@ -37,15 +37,15 @@ import { join } from 'node:path';
 // matcher in a different table and is never visited, and `"*" = "deny"` inside
 // a `:workspace_roots` table is left alone because `deny` is exactly the one
 // access codex-cli does accept for a bare `*` glob.
-// That same scoping is also the rewrite's blind spot, so two gates run over the
-// patched content before it is written: `requireNoCatchAllSurvivors`, scoped
-// exactly as the rewrite is, and then `requireNoUnrecognizedFilesystemCatchAlls`,
-// a coarser pass over every filesystem-ish table that catches what a renamed
-// header would hide from both. See the latter for what they do and do not
-// guarantee.
+// That same scoping is also the rewrite's blind spot, so two more gates run
+// over the patched content before it is written: `requireNoCatchAllSurvivors`,
+// scoped exactly as the rewrite is, and then
+// `requireNoUnrecognizedFilesystemCatchAlls`, a coarser pass over every
+// filesystem-ish table that catches what a renamed header would hide from
+// both. See the latter for what they do and do not guarantee.
 export function fixCodexWorkspaceRootsCatchAll(outRoot) {
   const codexConfigPath = join(outRoot, '.codex', 'config.toml');
-  if (!existsSync(codexConfigPath)) return;
+  requireGeneratedCodexConfig(codexConfigPath);
   const original = readFileSync(codexConfigPath, 'utf8');
   const fixed = rewriteCatchAllEntries(original);
   requireNoCatchAllSurvivors(fixed, codexConfigPath);
@@ -132,6 +132,33 @@ function findCatchAllSurvivors(toml) {
     return line;
   });
   return survivors;
+}
+
+// Required precondition, not an optional input. `rulesync-sync.mjs` always
+// generates with `--targets claudecode,codexcli --features skills,permissions,rules`,
+// so `.codex/config.toml` is an unconditionally requested aggregate output and
+// its absence is a broken generation, never a valid state. Skipping the patch
+// silently would be invisible to every caller: `--check` diffs the GENERATED
+// tree, where a file that was never emitted is nothing to diff, and write mode
+// overlays that tree with a non-deleting `cpSync`, so yesterday's committed
+// `.codex/config.toml` survives untouched and --check keeps reporting "up to
+// date" (`findStaleFiles` only walks the mirrored skill/rule dirs, so it does
+// not cover this aggregate either). Exit 1 loudly. The check lives here rather
+// than in the caller so a standalone caller cannot forget it, and so it stays
+// reachable from `tests/test_codex_workspace_roots.py` (see the header).
+function requireGeneratedCodexConfig(codexConfigPath) {
+  if (existsSync(codexConfigPath)) return;
+  console.error(
+    `rulesync-sync: ${codexConfigPath} was not generated; rulesync emitted no `
+    + 'codexcli config to patch, which makes this a broken generation rather than '
+    + 'a valid state (refusing to silently skip the patch). Neither --check nor '
+    + 'write mode can detect this on its own: --check diffs the generated tree, '
+    + 'and write mode overlays it without deleting, so a stale committed copy '
+    + 'would survive and --check would keep reporting "up to date". This usually '
+    + 'means rulesync stopped emitting the file in this shape (see RULESYNC_VERSION '
+    + 'in scripts/rulesync-sync.mjs).',
+  );
+  process.exit(1);
 }
 
 // Fail-loud gate on the patched content. Without it the only failure mode is

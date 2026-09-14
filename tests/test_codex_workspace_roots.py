@@ -173,9 +173,18 @@ class CodexWorkspaceRootsPatchTest(PatchHarness, unittest.TestCase):
         self.assertIn('"./**" = "read"', after)
         self.assertNotIn('"*" = ', after)
 
-    def test_is_noop_when_codex_config_is_absent(self) -> None:
-        after = self.patch_ok(None)
+    def test_exits_nonzero_when_codex_config_is_absent(self) -> None:
+        # `.codex/config.toml` is an unconditionally requested aggregate output
+        # (`--targets claudecode,codexcli`), so its absence is always a broken
+        # generation. Returning silently is invisible downstream: `diffTree`
+        # only walks the generated tree, `findStaleFiles` only walks the
+        # mirrored skill/rule dirs, and write mode's non-deleting `cpSync`
+        # overlay leaves yesterday's committed config in place.
+        result, after = self.run_patch(None)
 
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(".codex/config.toml", result.stderr)
+        self.assertIn("was not generated", result.stderr)
         self.assertIsNone(after)
 
     def test_rewrites_catch_all_across_toml_serialization_variants(self) -> None:
