@@ -14,9 +14,19 @@
 import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
-// ADR 0018 abolished the rulesync `rules` feature. Root `CLAUDE.md` / `AGENTS.md`
-// were aggregated from root rules and are the only retired outputs so far;
-// `generate` with `--features skills,permissions` emits neither.
+// ADR 0018 abolished the rulesync `rules` feature and every output it produced:
+// root `CLAUDE.md` / `AGENTS.md` were aggregated from root rules, and
+// `.claude/rules/` held the path-scoped rule mirror (one file per source rule).
+// `generate` with `--features skills,permissions` emits none of them.
+//
+// `.claude/rules` is a directory, and it is not covered by `MIRRORED_DIRS`
+// (`.claude/skills` / `.agents/skills`) either — that list is deliberately
+// narrow so the stale-file walk never touches non-generated content living
+// beside it. Without this entry a checkout that predates ADR 0018 keeps its old
+// `.claude/rules/` forever: agents still read the abolished rules, while
+// `--check` reports "up to date". `tests/test_rules_feature_abolished.py` fails
+// in that state but can only report it; removal has to happen here, so that the
+// documented remedy (re-run `node scripts/rulesync-sync.mjs`) actually works.
 //
 // `.codex/rules/rulesync.rules` must never be listed here: despite the name it is
 // a `permissions` feature output that is still generated (ADR 0018 条件 4), so it
@@ -24,7 +34,7 @@ import { join } from 'node:path';
 // output. The guard is structural, not just documentary: a path is only reported
 // when generation does NOT produce it (see below), so a still-generated path
 // listed here by mistake is never returned.
-export const RETIRED_GENERATED_PATHS = ['CLAUDE.md', 'AGENTS.md'];
+export const RETIRED_GENERATED_PATHS = ['CLAUDE.md', 'AGENTS.md', '.claude/rules'];
 
 // Reports every retired path that still exists in the repo while the freshly
 // generated tree has no counterpart for it. `paths` is injectable so tests can
