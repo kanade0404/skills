@@ -1,6 +1,11 @@
 # Codex 実行コンテナから GitHub credential を排除し、worker を capability broker にする
 
 Status: accepted (2026-08-30)
+Amended by [ADR 0018](0018-abolish-rules-skills-or-deterministic-harness.md) — 下記 Decision「超過の正当性は、
+落ちた検査の種別から機械的に分類する」節の ② が置いた暫定値 (受理試行回数・bare repo のディスクサイズ) に
+ついて、**確定後の収録先を rules ではなく Charter の既定値データ**とする。0018 の区分では両値とも
+**consumer が上書きできる「上書き可能域」**に属する。**暫定値そのものも再考のトリガも変わっていない。
+収録先の名前だけが変わる。**
 
 Driver: [安全性 (Secure by Design)](0014-add-security-to-ility-priority-order.md) — 権限は既定で最小、
 境界の強制は規約ではなく機構で行い、残余は消さずに書き出す。同

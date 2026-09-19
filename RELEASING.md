@@ -8,9 +8,33 @@ consumer は `rulesync fetch kanade0404/skills@vX.Y.Z --features skills,...` で
 
 | 種別 | いつ上げるか |
 |---|---|
-| MAJOR | 互換が壊れる変更: skill の削除 / リネーム（ディレクトリ名 = `name` の変更）/ 既存 skill の挙動契約の変更 |
+| MAJOR | 互換が壊れる変更: skill の削除 / リネーム（ディレクトリ名 = `name` の変更）/ 既存 skill の挙動契約の変更 / feature 枠の削除（`--features` に渡す名前が消え、consumer の fetch コマンドが壊れる。例: [ADR 0018](docs/adr/0018-abolish-rules-skills-or-deterministic-harness.md) の `rules` feature 廃止） |
 | MINOR | 後方互換のある追加: 新規 skill、既存 skill の機能追加 |
 | PATCH | 挙動を変えない修正: description / trigger 調整、本文の言い回し、typo、references 追記 |
+
+### feature 枠を削除するとき (consumer 移行)
+
+feature 枠を削除する MAJOR リリースでは、consumer 側の `update_command` に埋め込まれた
+`rulesync fetch --features ...` から削除した feature 名を落としてもらう必要がある。
+リリースノートで明示する。
+
+- 例: `rules` feature 廃止 ([ADR 0018](docs/adr/0018-abolish-rules-skills-or-deterministic-harness.md))。
+  `agegis` は [consumer 伝播の計画メモ](docs/superpowers/plans/2026-07-19-consumer-pull-propagation.md)
+  時点で v0.8.0 の `update_command` に
+  `rulesync fetch kanade0404/skills@v0.8.0 --features skills,rules` を持つ —
+  次回更新で `--features skills` に落とす必要がある。
+
+### リリース前に確認する未検証の挙動 (feature 枠削除時)
+
+feature 枠を削除するリリースを切る前に、以下 2 点は実挙動を確認してから出す
+(未確認のままだと consumer 側で意図しない挙動になりうる — [ADR 0018](docs/adr/0018-abolish-rules-skills-or-deterministic-harness.md) Negative/Neutral 参照):
+
+1. **`rules/` を持たないタグに対して `rulesync fetch --features ...,rules` を実行した
+   ときの挙動** — エラーになるか、no-op になるか。consumer が古い `update_command`
+   のまま新タグを fetch した場合の failure mode を左右する。
+2. **`rulesync generate` が既存の生成 `CLAUDE.md` / `AGENTS.md` を削除するか、
+   古いまま残すか。** 「残る」であれば、廃止したはずの root rule 由来の指示が
+   consumer 側で生き続けることになる。
 
 ## 手順
 

@@ -65,5 +65,5 @@ review-5-rounds / no-progress / ambiguous-issue / repo-unresolvable / conflict /
 security-block / other`。
 
 `ambiguous-issue` は失敗ではなく「issue の入口品質の問題を上流に返した正常動作」。
-retro ではこれを issue の書き方の rule (例: acceptance criteria テンプレの改善) に
-昇格させる候補として扱う。
+retro ではこれを issue の書き方に関する skill-edit (例: acceptance criteria テンプレの
+改善) に昇格させる候補として扱う。

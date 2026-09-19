@@ -52,6 +52,20 @@
       "tags": ["ambiguous", "edge"]
     },
     {
+      "id": "t08",
+      "prompt": "横断的なルールを書いたんだけど、rules 枠ってまだある? どこに置けばいい?",
+      "should_trigger": true,
+      "rationale": "rules 枠は廃止済み — skills か hooks か「配らない」かの宛先判定は本スキルの担当",
+      "tags": ["ambiguous", "edge"]
+    },
+    {
+      "id": "t09",
+      "prompt": "この定型スクリプト、うちの repo 全部に効かせたい",
+      "should_trigger": true,
+      "rationale": "複数 repo への到達 = 配布層への収録判定",
+      "tags": ["explicit"]
+    },
+    {
       "id": "f01",
       "prompt": "新しい skill を作って",
       "should_trigger": false,
@@ -62,7 +76,7 @@
       "id": "f02",
       "prompt": "このセッションの学びを rule にまとめて",
       "should_trigger": false,
-      "rationale": "rule の中身の考案は session-retro (宛先判定の段になれば本スキル)",
+      "rationale": "指示の中身の考案は session-retro (宛先判定の段になれば本スキル)",
       "tags": ["adjacent", "edge"]
     },
     {
@@ -90,7 +104,14 @@
       "id": "f06",
       "prompt": "LOOP_OPS_TOKEN を各 repo に配布して",
       "should_trigger": false,
-      "rationale": "secret の配布は本スキルの対象外 (機密は配布しない判定の対象)",
+      "rationale": "secret そのものの配布要請で、ハーネス片の置き場所判定ではない (description で明示的に対象外)",
+      "tags": ["distractor", "edge"]
+    },
+    {
+      "id": "f07",
+      "prompt": "この API トークンを各 repo の GitHub Secrets に登録しておいて",
+      "should_trigger": false,
+      "rationale": "secret 管理の作業。本スキルが見るのは配布するハーネス片に機密が混ざっていないかだけ",
       "tags": ["distractor", "edge"]
     }
   ]

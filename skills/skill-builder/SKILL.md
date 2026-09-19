@@ -1,6 +1,6 @@
 ---
 name: skill-builder
-description: Claude Code skill を新規作成・既存 skill のトリガ精度を測定/改善するためのメタスキル。プロジェクトの skill ディレクトリ（`.claude/skills/<name>/SKILL.md` または top-level `<name>/SKILL.md` の両形式に対応）に新しい skill を scaffold したい時、既存 skill が適切なときに発火しない / 余計な時に発火するのを直したい時、description を eval ベースで最適化したい時、trigger 性能をベースライン測定したい時、Mode C で起動後の本文品質を subagent dispatch で測りたい時、いずれでも必ず起動すること。「skill 作って」「このスキルなんで起動しない」「スキルが暴発する」「skill description 最適化」「skill の eval 作って」「メタスキル」「skill の品質測りたい」のような要請に該当する。プロジェクト規約 (CLAUDE.md / `rules/` / `AGENTS.md` 等) との整合確認も兼ね、特定プロジェクトには依存せず本スキルが置かれたリポジトリと配布先の双方で機能する。プラグインスキル（`plugins/<plugin>/skills/...`）の編集は範囲外。
+description: Claude Code skill を新規作成・既存 skill のトリガ精度を測定/改善するためのメタスキル。プロジェクトの skill ディレクトリ（`.claude/skills/<name>/SKILL.md` または top-level `<name>/SKILL.md` の両形式に対応）に新しい skill を scaffold したい時、既存 skill が適切なときに発火しない / 余計な時に発火するのを直したい時、description を eval ベースで最適化したい時、trigger 性能をベースライン測定したい時、Mode C で起動後の本文品質を subagent dispatch で測りたい時、いずれでも必ず起動すること。「skill 作って」「このスキルなんで起動しない」「スキルが暴発する」「skill description 最適化」「skill の eval 作って」「メタスキル」「skill の品質測りたい」のような要請に該当する。プロジェクト規約 (CLAUDE.md / `AGENTS.md` / `docs/` 等。規約ファイルを持たず skill と hook に規約がある repo も含む) との整合確認も兼ね、特定プロジェクトには依存せず本スキルが置かれたリポジトリと配布先の双方で機能する。プラグインスキル（`plugins/<plugin>/skills/...`）の編集は範囲外。
 claudecode:
   allowed-tools:
     - Read
@@ -19,7 +19,7 @@ claudecode:
 
 公式 `skill-creator` の発想を踏襲しつつ、軽量・プロジェクト非依存のメタスキル。subagent や外部 LLM を立てずに、**1 セッション内で完結する eval ループ**を回す。
 
-rulesync で `kanade0404/skills@<tag>` から `skills/skill-builder/` として配布される前提で project-agnostic に書く。プロジェクト規約ファイル（CLAUDE.md / `rules/`, `docs/`, `AGENTS.md` 等）への整合は consumer 側の規約として参照する。
+rulesync で `kanade0404/skills@<tag>` から `skills/skill-builder/` として配布される前提で project-agnostic に書く。プロジェクト規約への整合は consumer 側の規約として参照する — 規約ファイル（CLAUDE.md / `AGENTS.md` / `docs/` 等）がある repo ではそれを、規約ファイルを持たない repo では既存 skill と hook / permissions / CI 設定を読む。
 
 主参照：
 - [Anthropic Agent Skills best practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices)（公式の規範）
@@ -77,9 +77,9 @@ rulesync で `kanade0404/skills@<tag>` から `skills/skill-builder/` として�
 - **既存スキルとの分担境界** — 機能が重なる skill があれば名指しで線を引く
 - **依存ツール / MCP** — `allowed-tools` に何を入れるか
 
-プロジェクト固有の確認 (規約ファイルがある場合のみ)：
+プロジェクト固有の確認：
 
-- CLAUDE.md / `rules/` / `AGENTS.md` / `docs/` 等の規約があれば、新 skill が違反していないか確認する
+- CLAUDE.md / `AGENTS.md` / `docs/` 等の規約があれば、新 skill が違反していないか確認する。規約ファイルを持たない repo では規約が既存 skill と hook / permissions / CI に入っているので、そちらを読んで確認する
 - 取り扱う対象（テスト / API / プロンプト / インフラ / プロダクト要求 etc.）が既存 skill とどう違うかを名指しで線引きする
 - 同領域の既存 skill / agent / slash command があれば、責務境界を frontmatter description に明記する
 
@@ -168,7 +168,7 @@ Mode B の入力になる。詳細は後段。
 **Triggering / boundary**
 - [A] description に should-use の典型表現が複数列挙されている
 - [L] negative space（やらないこと）が **動詞ではなく成果物** で定義されている（参照: failure-patterns.md `dual-meaning-verb-by-action`）
-- [L] consumer プロジェクトの CLAUDE.md / 規約ファイル（`rules/`, `AGENTS.md`, `docs/` 等）と矛盾しない
+- [L] consumer プロジェクトの規約（CLAUDE.md / `AGENTS.md` / `docs/`、または規約ファイルを持たない repo では既存 skill と hook / permissions / CI）と矛盾しない
 
 **Code / scripts（同梱する場合のみ）**
 - [A] スクリプトは「Claude に投げない」(solve, don't punt)。エラー処理を内側で持つ

@@ -8,6 +8,12 @@ Amended by [ADR 0017](0017-pipeline-code-in-agegis-until-phase-2-gate.md) — (1
 ある「検査コード」の外延に Customs のソースを含めること、および (2) 保護パスに worker 配備版の release
 経路を加えること。なお **Tribunal の保護パスは、0017 が定める Customs と同一の manifest を参照する**。
 **本 ADR の本文は変更されておらず、閾値も変わっていない。ただし測定対象の外延は広がる。**
+Amended by [ADR 0018](0018-abolish-rules-skills-or-deterministic-harness.md) — 下記 quantum 表の Charter の
+定義と、「特性は quantum あたり 3 つ以下」節が置いた運用パラメータの既定値群の所有者から **rules を外し、
+版付きデータに置き換える**。あわせて 0018 が、Charter のデータを **consumer が上書きできる「上書き可能域」
+(この既定値群)** と **worker 配備版だけが供給する「封緘域」(契約スキーマ / 遷移表 / pl-event 語彙 /
+保護パス manifest / scanner 設定)** に書き分ける。**閾値の値も「consumer が上書きできる」性質も変わらない**
+— 値の所有者と置き場だけが rules からデータに移る。
 
 Driver: 本 ADR は [ADR 0009](0009-ility-priority-order.md) と同じく、下流の決定に対して Driver を供給
 する側である。用語は [CONTEXT.md](../../CONTEXT.md) に従い、本 ADR が導入する仮名は下記 Decision で

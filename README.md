@@ -21,7 +21,11 @@ rulesync の `fetch` は配布元リポジトリの **トップレベルの feat
 
 ```text
 .
-├── README.md / CLAUDE.md / AGENTS.md   # このリポ自体の開発ガイド（配布対象外）
+├── README.md      # このリポ自体の開発ガイド（配布対象外）
+│                  # root の CLAUDE.md / AGENTS.md は意図的に存在しない
+│                  # （root rule 由来の生成物。ADR 0018 で廃止）
+├── permissions.json  # permissions 配布枠のソース（Claude Code の settings.json /
+│                     # Codex の exec-policy を生成する）
 ├── skills/        # Agent Skills
 │   └── <name>/
 │       ├── SKILL.md          # 必須
@@ -31,12 +35,18 @@ rulesync の `fetch` は配布元リポジトリの **トップレベルの feat
 │       └── assets/*
 ├── subagents/     # サブエージェント配布枠
 ├── commands/      # スラッシュコマンド配布枠
-├── hooks/         # フック配布枠
-└── rules/         # 横断指示ルール配布枠
+└── hooks/         # フック配布枠
 ```
 
 各 feature ディレクトリは rulesync の配布単位。空に近いディレクトリは将来の配布枠として
 README 等の placeholder だけを置くことがある。
+
+> **rulesync `rules` feature はこのリポジトリでは使わない**
+> ([ADR 0018](docs/adr/0018-abolish-rules-skills-or-deterministic-harness.md))。
+> agent への指示は skill (発火条件付き) か決定論的ハーネス (hook / permissions / CI)
+> のどちらかでしか配らない。`.codex/rules/rulesync.rules` は名前が紛らわしいが
+> `permissions` feature が `permissions.json` から生成する Codex の exec-policy
+> であり、この `rules` feature とは無関係。
 
 ## 収録内容
 
@@ -47,14 +57,16 @@ README 等の placeholder だけを置くことがある。
 
 ```bash
 # 1. 取り込み（タグ固定推奨。private repo は GITHUB_TOKEN/GH_TOKEN）
-rulesync fetch kanade0404/skills@<tag> --features skills,subagents,commands,hooks,rules
+rulesync fetch kanade0404/skills@<tag> --features skills,permissions,subagents,commands,hooks
 #   サードパーティ skill はそれぞれ upstream を直接
 rulesync fetch planetscale/database-skills@<tag> --features skills
 
 # 2. 各ツール設定を生成（Codex の command/subagent 非対応は simulate で吸収）
 rulesync generate --targets claudecode,codexcli --simulate-commands --simulate-subagents
 
-# 3. 生成物（.claude/ .codex/ .agents/skills/ CLAUDE.md AGENTS.md）をコミット
+# 3. 生成物（.claude/ .codex/ .agents/skills/）をコミット
+#    root の CLAUDE.md / AGENTS.md は本リポの配布物には含まれない（ADR 0018）。
+#    consumer 自身が書いた rules があるなら、それ由来の生成物は consumer の判断でコミットする
 
 # 4. CI でドリフト検出
 rulesync generate --targets claudecode,codexcli --check

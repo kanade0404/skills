@@ -32,14 +32,14 @@
     },
     {
       "id": "t05",
-      "prompt": "CLAUDE.md が古い気がする",
+      "prompt": ".agents/skills の中身が古い気がする、更新したい",
       "should_trigger": true,
       "rationale": "生成物側の drift 疑いを口語で表現",
       "tags": ["ambiguous"]
     },
     {
       "id": "t06",
-      "prompt": "rules はどこに置けばいい?",
+      "prompt": "新しい hook はどこに置けばいい?",
       "should_trigger": true,
       "rationale": "feature ディレクトリの意味論を問う隣接表現",
       "tags": ["adjacent"]
@@ -57,6 +57,20 @@
       "should_trigger": true,
       "rationale": "hooks-local マージ経路の確認 = 再生成ワークフローの一部",
       "tags": ["explicit", "edge"]
+    },
+    {
+      "id": "f07",
+      "prompt": "新しい rule を書いたんだけど rules/ に置けばいい?",
+      "should_trigger": false,
+      "rationale": "rules 枠廃止後の置き場所判定は harness-distribution の責務。rulesync-sync は生成物の再生成と feature dir の意味論を扱い、個別ハーネス片の宛先判定はしない。ただし境界は曖昧で、「rules/ という枠がもう無い」は rulesync-sync が持つ feature dir の意味論そのものなので、rulesync-sync が答えても誤りではない — should_trigger false は「主担当は harness-distribution」を意味するだけで、発火が誤答であることを意味しない",
+      "tags": ["distractor","adjacent","ambiguous"]
+    },
+    {
+      "id": "t10",
+      "prompt": "skill のディレクトリって何を置くのが正しい構成?",
+      "should_trigger": true,
+      "rationale": "skill 標準レイアウト (SKILL.md / references/ / evals/ / scripts/ / assets/) の説明は本スキルの担当",
+      "tags": ["adjacent"]
     },
     {
       "id": "f01",
@@ -92,6 +106,13 @@
       "should_trigger": false,
       "rationale": "本リポジトリの配布運用と無関係な一般コーディングタスク",
       "tags": ["distractor"]
+    },
+    {
+      "id": "f06",
+      "prompt": "rulesync 本体の README を読んで使い方を要約して",
+      "should_trigger": false,
+      "rationale": "ツール一般の調査・要約であって、この repo の再生成・配布構造の作業ではない",
+      "tags": ["distractor", "edge"]
     }
   ]
 }

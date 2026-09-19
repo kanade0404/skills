@@ -1,0 +1,16 @@
+{"id": "t01", "predicted": true, "actual": true, "reason": "Matches the listed trigger phrase almost verbatim: 'このルール他の repo でも使いたい' / 'rulesync で配布して'."}
+{"id": "t02", "predicted": true, "actual": true, "reason": "Matches the listed trigger phrase 'これは汎用だから skills repo に' almost verbatim."}
+{"id": "t03", "predicted": true, "actual": true, "reason": "Matches the listed trigger phrase 'クラウド実行でも効くようにして' directly."}
+{"id": "t04", "predicted": true, "actual": true, "reason": "Matches the listed trigger phrase 'この hook / command を共通化して' directly."}
+{"id": "t05", "predicted": true, "actual": true, "reason": "Matches both 'session-retro / retro の handoff で宛先を決める時' and 'どこに置くべき?' triggers."}
+{"id": "t06", "predicted": true, "actual": true, "reason": "Matches '新しい command...を書いた直後の置き場所判定' and the generic 'どこに置くべき?' trigger for a slash command."}
+{"id": "t07", "predicted": true, "actual": true, "reason": "Reads as a rephrasing of the listed trigger 'どこに置くべき?', asking whether an instruction belongs in CLAUDE.md or elsewhere."}
+{"id": "t08", "predicted": true, "actual": true, "reason": "Explicitly cross-project ('横断的なルール') and asks 'どこに置けばいい?', matching the listed trigger almost exactly."}
+{"id": "t09", "predicted": true, "actual": true, "reason": "'定型スクリプト' is named in-scope, and wanting it to apply across all repos matches the distribution-to-consumer-repos trigger intent."}
+{"id": "f01", "predicted": false, "actual": false, "reason": "Description explicitly excludes 'skill 本体の新規作成' (routed to skill-builder)."}
+{"id": "f02", "predicted": false, "actual": false, "reason": "Description explicitly excludes 'rule や教訓の中身の考案' (session-retro's job), which is content creation not placement."}
+{"id": "f03", "predicted": false, "actual": false, "reason": "Description explicitly excludes '単一プロジェクト固有の permissions / settings 変更 (update-config 系)'."}
+{"id": "f04", "predicted": false, "actual": false, "reason": "Description explicitly excludes 'リリース手順単体の質問 (RELEASING.md)'."}
+{"id": "f05", "predicted": false, "actual": false, "reason": "A generic factual question about what rulesync is doesn't match any placement/distribution-decision trigger phrase."}
+{"id": "f06", "predicted": false, "actual": false, "reason": "Description explicitly excludes requests to distribute/register secrets themselves ('このトークンを各 repo に配って')."}
+{"id": "f07", "predicted": false, "actual": false, "reason": "Description explicitly excludes secret distribution/registration requests, which this clearly is (API token to GitHub Secrets)."}
