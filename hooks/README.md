@@ -12,5 +12,6 @@ rulesync 配布元の **hooks** feature 枠 (placeholder)。
   からの移行は次フェーズ。
 
 repo-local hooks (この repo 自身の運用専用、配布されない) は
-[`hooks-local/`](../hooks-local/) に置く。`rules/` と `rules-local/` の分離と同じ
-理由・同じ命名: 配布 feature 枠と repo-local な生成入力を混在させない。
+[`hooks-local/`](../hooks-local/) に置く。配布 feature 枠 (`hooks/`) と
+repo-local な生成入力 (`hooks-local/`) を混在させないための分離であり、`-local`
+サフィックスは「consumer に配布されない、この repo 専用」を示す。

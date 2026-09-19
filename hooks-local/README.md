@@ -1,8 +1,9 @@
 # hooks-local/
 
-この repo 自身の運用専用の hooks ソース。`rules/` に対する `rules-local/` と同じ
-役割・同じ命名規則: 配布 feature 枠 (`hooks/`) には置けない repo-local な内容を
-ここに置き、`scripts/rulesync-sync.mjs` がこの repo 自身の生成物にのみ反映する。
+この repo 自身の運用専用の hooks ソース。配布 feature 枠 (`hooks/`) には置けない
+repo-local な内容をここに置き、`scripts/rulesync-sync.mjs` がこの repo 自身の
+生成物にのみ反映する。`-local` サフィックスは「consumer に配布されない、この
+repo 専用」を示す命名規則。
 
 - rulesync の `--features hooks` fetch では配布されない（consumer には渡らない）。
 - 配布 feature ではないため rulesync canonical hooks 形式ではなく、対象ツールの

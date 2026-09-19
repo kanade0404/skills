@@ -47,13 +47,21 @@ const check = process.argv.includes('--check');
 // all of `.claude`/`.agents`) also keeps it from ever touching non-generated
 // content that happens to live alongside them — e.g. `.claude/settings.json`
 // itself, or the gitignored runtime state under `.claude/.pr-monitor/`.
-const MIRRORED_DIRS = ['.claude/skills', '.claude/rules', '.agents/skills'];
+const MIRRORED_DIRS = ['.claude/skills', '.agents/skills'];
+
+// Generated root files that are single aggregated outputs (not mirrored
+// per-source-item trees like MIRRORED_DIRS). ADR 0018 abolished the rulesync
+// `rules` feature, whose root rules were the only source of these two files;
+// `generate` with `--features skills,permissions` no longer emits them at
+// all, so they never appear under `genOut` and `diffTree` (which only walks
+// paths that exist there) can never see them to flag as stale. Listed here so
+// `findStaleFiles`-equivalent handling below can assert their absence
+// explicitly instead of silently leaving old copies on disk forever.
+const ROOT_GENERATED_FILES = ['CLAUDE.md', 'AGENTS.md'];
 
 // Stage the source-of-truth feature content into `.rulesync/` for `generate`.
 // Only features with real content are staged; commands/hooks/subagents are
 // placeholder-only (README without frontmatter) and would fail rulesync parsing.
-// rules/ は配布用 (consumer が fetch で丸ごと受け取る)、rules-local/ はこの repo
-// 専用 (root rule 等。配布 feature には含まれない) — 自前生成では両方を staging する。
 // Python bytecode caches (skills/*/scripts/__pycache__/*.pyc) are gitignored
 // but reappear on disk whenever `uv run python3 -m unittest discover -s tests`
 // imports a skill's Python script (e.g. skills/retro/scripts/retro_scan.py).
@@ -74,25 +82,6 @@ cpSync(join(ROOT, 'skills'), join(stage, 'skills'), {
   filter: (src) => !isPycacheEntry(basename(src)),
 });
 copyFileSync(join(ROOT, 'permissions.json'), join(stage, 'permissions.json'));
-mkdirSync(join(stage, 'rules'), { recursive: true });
-// rulesync は nested rule (rules/**/*.md) を扱えるため再帰的に staging する
-// (top-level しか見ないと consumer の fetch (再帰) と自前生成が乖離する)
-const isRuleFile = (src) =>
-  statSync(src).isDirectory() || (src.endsWith('.md') && basename(src) !== 'README.md');
-for (const dir of ['rules', 'rules-local']) {
-  const dirPath = join(ROOT, dir);
-  // git doesn't track empty directories, so a fresh clone with no rules left
-  // in `rules/` may not have the directory on disk at all — skip rather than
-  // let cpSync throw ENOENT. Use optionalFragmentExists (not existsSync)
-  // so an unreadable-but-present dir (EACCES etc.) fails loudly instead of
-  // silently dropping its rules from the generated output.
-  if (!optionalFragmentExists(dirPath)) continue;
-  cpSync(dirPath, join(stage, 'rules'), {
-    recursive: true,
-    force: true,
-    filter: isRuleFile,
-  });
-}
 
 // Always generate into a scratch output root (never straight onto the repo, and
 // never with rulesync's own `--check`) so both modes share one generation call.
@@ -101,7 +90,7 @@ try {
   const args = [
     '-y', `rulesync@${RULESYNC_VERSION}`, 'generate',
     '--targets', 'claudecode,codexcli',
-    '--features', 'skills,permissions,rules',
+    '--features', 'skills,permissions',
     '--simulate-skills',
     '-o', genOut,
   ];
@@ -120,7 +109,7 @@ try {
     // is told which paths are already-known type mismatches (via `stale`,
     // which includes them alongside plain missing-in-genOut paths) so it can
     // skip them instead of crashing.
-    const stale = findStaleFiles(genOut, ROOT);
+    const stale = [...findStaleFiles(genOut, ROOT), ...findStaleRootFiles(genOut, ROOT)];
     const diffs = diffTree(genOut, ROOT, new Set(stale));
     if (diffs.length > 0 || stale.length > 0) {
       console.error(
@@ -141,7 +130,7 @@ try {
     // an existing conflicting path even with `force: true`. Clearing it
     // first guarantees `cpSync` only ever writes into a location that is
     // either absent or already the same type.
-    const stale = findStaleFiles(genOut, ROOT);
+    const stale = [...findStaleFiles(genOut, ROOT), ...findStaleRootFiles(genOut, ROOT)];
     for (const s of stale) rmSync(join(ROOT, s), { recursive: true, force: true });
     cpSync(genOut, ROOT, { recursive: true });
     for (const dir of MIRRORED_DIRS) pruneEmptyDirs(join(ROOT, dir));
@@ -370,6 +359,25 @@ function findStaleFiles(generatedRoot, targetRoot) {
   for (const dir of MIRRORED_DIRS) {
     const targetDir = join(targetRoot, dir);
     if (existsSync(targetDir)) walk(targetDir, dir);
+  }
+  return stale;
+}
+
+// Sibling to `findStaleFiles`, but for `ROOT_GENERATED_FILES` (single
+// aggregated root files, not a mirrored per-item tree under MIRRORED_DIRS).
+// `diffTree` can only report drift in files that still exist under
+// `generatedRoot`; when a feature (e.g. rulesync `rules`, ADR 0018) stops
+// producing a root file at all, `generatedRoot` never has it, so `diffTree`'s
+// walk never visits it and would otherwise leave an old copy on the repo
+// forever, both in --check (silently green) and in write mode (never
+// removed, since `cpSync` overlay never deletes). Report it as stale whenever
+// it exists on disk but generation no longer produces it.
+function findStaleRootFiles(generatedRoot, targetRoot) {
+  const stale = [];
+  for (const name of ROOT_GENERATED_FILES) {
+    if (existsSync(join(targetRoot, name)) && !existsSync(join(generatedRoot, name))) {
+      stale.push(name);
+    }
   }
   return stale;
 }

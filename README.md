@@ -31,12 +31,18 @@ rulesync の `fetch` は配布元リポジトリの **トップレベルの feat
 │       └── assets/*
 ├── subagents/     # サブエージェント配布枠
 ├── commands/      # スラッシュコマンド配布枠
-├── hooks/         # フック配布枠
-└── rules/         # 横断指示ルール配布枠
+└── hooks/         # フック配布枠
 ```
 
 各 feature ディレクトリは rulesync の配布単位。空に近いディレクトリは将来の配布枠として
 README 等の placeholder だけを置くことがある。
+
+> **rulesync `rules` feature はこのリポジトリでは使わない**
+> ([ADR 0018](docs/adr/0018-abolish-rules-skills-or-deterministic-harness.md))。
+> agent への指示は skill (発火条件付き) か決定論的ハーネス (hook / permissions / CI)
+> のどちらかでしか配らない。`.codex/rules/rulesync.rules` は名前が紛らわしいが
+> `permissions` feature が `permissions.json` から生成する Codex の exec-policy
+> であり、この `rules` feature とは無関係。
 
 ## 収録内容
 
@@ -47,7 +53,7 @@ README 等の placeholder だけを置くことがある。
 
 ```bash
 # 1. 取り込み（タグ固定推奨。private repo は GITHUB_TOKEN/GH_TOKEN）
-rulesync fetch kanade0404/skills@<tag> --features skills,subagents,commands,hooks,rules
+rulesync fetch kanade0404/skills@<tag> --features skills,subagents,commands,hooks
 #   サードパーティ skill はそれぞれ upstream を直接
 rulesync fetch planetscale/database-skills@<tag> --features skills
 
