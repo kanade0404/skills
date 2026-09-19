@@ -33,7 +33,7 @@ allowed-tools:
 ---
 # rulesync-sync
 
-> **原則**: ソース (`skills/` / `hooks/` / `hooks-local/`) を編集し、
+> **原則**: 生成に入るソース (`skills/` / `permissions.json` / `hooks-local/`) を編集し、
 > 生成物 (`.claude/` / `.agents/` / `.codex/`) は
 > **直接編集しない**。生成は必ず `node scripts/rulesync-sync.mjs` を経由する。
 > root `CLAUDE.md` / `AGENTS.md` と `.claude/rules/` は **生成されない** — rules
@@ -46,8 +46,9 @@ allowed-tools:
 
 ## いつ使うか / 使わない場面
 
-**使う**: skill / hook のソースを編集した後の再生成・sync、「生成物と drift
-してる」「rulesync-sync.mjs 実行して」「.claude/ を再生成して」「生成物側の設定を
+**使う**: 生成に入るソース (`skills/` / `permissions.json` / `hooks-local/`) を
+編集した後の再生成・sync、「生成物と drift してる」「rulesync-sync.mjs 実行して」
+「.claude/ を再生成して」「生成物側の設定を
 更新したい」「配布構造 / feature ディレクトリはどうなってる?」
 「新しい hook / command をどこに置く?」のような要請。
 
@@ -82,6 +83,16 @@ RELEASING.md を参照し、本スキルではタグ運用そのものは扱わ�
 | `commands/` / `hooks/` | 配布用の feature 枠。現状 placeholder (README のみ)。**repo-local な内容を置かない** — consumer の `rulesync fetch --features hooks` 等は配下を丸ごと fetch する | 配布 (該当 feature) |
 | `hooks-local/` | repo-local な hook。`claude-code-hooks.json` を `scripts/rulesync-sync.mjs` が読み、このリポジトリの生成 `.claude/settings.json` に merge する | 配布対象外 |
 
+**配布されることと、このリポジトリの生成に入ることは別**である。
+`scripts/rulesync-sync.mjs` が生成に流し込むのは `skills/` と `permissions.json`
+(+ `hooks-local/` の settings 断片) だけで、`generate` は `--features skills,permissions`
+で走る。`subagents/` `commands/` `hooks/` は consumer が `rulesync fetch` で取る配布枠
+であり、**編集しても本リポジトリの `.claude/` / `.agents/` / `.codex/` は変わらない**
+(現状 `commands/` `hooks/` は README のみの placeholder で、frontmatter を持たないため
+staging するとかえって rulesync の parse が失敗する)。これらの枠に実体を足して本リポジトリの
+生成物にも載せたくなったら、`scripts/rulesync-sync.mjs` の staging と `--features` を
+併せて変更する必要がある — SKILL.md だけ直しても反映されない。
+
 **`rules/` / `rules-local/` の枠は廃止済みで、存在しない。** 横断的な指示を置く枠は無く、
 状況依存なら `skills/`、機械で強制したいなら `hooks/` / permissions / CI に落とす。
 どちらにも落とせなかった指示は書かず、`session-retro` / `retro` の `neither` に記録する。
@@ -110,9 +121,12 @@ skill 本文の作成・改訂・trigger 調整自体は `skill-builder` が sou
 
 ## 生成 → 検証ワークフロー
 
-1. **ソースを編集する**: `skills/`, `hooks/`, `hooks-local/` のいずれか。
-   生成物 (`.claude/`, `.agents/`, `.codex/`) は
+1. **ソースを編集する**: 生成に入るのは `skills/`, `permissions.json`,
+   `hooks-local/` の 3 つだけ。生成物 (`.claude/`, `.agents/`, `.codex/`) は
    触らない — 触っても次の再生成で上書きされ、drift CI にも捕まる。
+   `subagents/`, `commands/`, `hooks/` は **配布専用枠で、このリポジトリの生成には
+   入らない** — 編集しても `.claude/` 等の生成物は変わらない (`--check` も無反応)。
+   届くのは consumer 側の `rulesync fetch --features <枠>` + `rulesync generate` 経由。
 2. **再生成する**:
 
    ```bash
