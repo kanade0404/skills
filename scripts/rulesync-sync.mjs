@@ -33,6 +33,13 @@ import { tmpdir } from 'node:os';
 // has a test seam (see scripts/codex-workspace-roots.mjs); it is still applied
 // from this script's single post-generate pipeline below.
 import { fixCodexWorkspaceRootsCatchAll } from './codex-workspace-roots.mjs';
+// Retired generated paths (outputs an abolished feature used to produce) live in
+// their own module for the same reason — a test seam. See
+// scripts/retired-generated-paths.mjs.
+import {
+  findRetiredGeneratedPaths,
+  removeRetiredGeneratedPaths,
+} from './retired-generated-paths.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const RULESYNC_VERSION = '9.1.1';
@@ -48,23 +55,14 @@ const check = process.argv.includes('--check');
 // `diffTree`'s plain content comparison already catches drift there. (Root
 // `CLAUDE.md` / `AGENTS.md` used to belong to that aggregated set, but ADR
 // 0018 removed the `rules` feature that produced them — generation no longer
-// emits them at all, which is what `ROOT_GENERATED_FILES` below handles.)
+// emits them at all, which is what `RETIRED_GENERATED_PATHS` in
+// scripts/retired-generated-paths.mjs handles.)
 // Restricting the stale-file walk (see
 // `findStaleFiles` below) to exactly these three mirrored trees (rather than
 // all of `.claude`/`.agents`) also keeps it from ever touching non-generated
 // content that happens to live alongside them — e.g. `.claude/settings.json`
 // itself, or the gitignored runtime state under `.claude/.pr-monitor/`.
 const MIRRORED_DIRS = ['.claude/skills', '.agents/skills'];
-
-// Generated root files that are single aggregated outputs (not mirrored
-// per-source-item trees like MIRRORED_DIRS). ADR 0018 abolished the rulesync
-// `rules` feature, whose root rules were the only source of these two files;
-// `generate` with `--features skills,permissions` no longer emits them at
-// all, so they never appear under `genOut` and `diffTree` (which only walks
-// paths that exist there) can never see them to flag as stale. Listed here so
-// `findStaleFiles`-equivalent handling below can assert their absence
-// explicitly instead of silently leaving old copies on disk forever.
-const ROOT_GENERATED_FILES = ['CLAUDE.md', 'AGENTS.md'];
 
 // Stage the source-of-truth feature content into `.rulesync/` for `generate`.
 // Only features with real content are staged; commands/hooks/subagents are
@@ -124,8 +122,8 @@ try {
     // the only action is deletion. One shared message would send a reader of
     // the second case hunting for a deleted skill that never existed.
     const staleMirrored = findStaleFiles(genOut, ROOT);
-    const staleRoot = findStaleRootFiles(genOut, ROOT);
-    const stale = [...staleMirrored, ...staleRoot];
+    const staleRetired = findRetiredGeneratedPaths(genOut, ROOT);
+    const stale = [...staleMirrored, ...staleRetired];
     const diffs = diffTree(genOut, ROOT, new Set(stale));
     if (diffs.length > 0 || stale.length > 0) {
       console.error(
@@ -135,7 +133,7 @@ try {
       for (const s of staleMirrored) {
         console.error(`  ${s} (stale — no longer generated in this shape; source skill likely deleted, renamed, or changed between file and directory)`);
       }
-      for (const s of staleRoot) {
+      for (const s of staleRetired) {
         console.error(`  ${s} (stale — root rule 由来の生成物は ADR 0018 で廃止済み — 削除対象)`);
       }
       process.exit(1);
@@ -155,15 +153,12 @@ try {
     // "regenerate" run reads as an unexplained deletion in the next
     // `git status` — say which path went and why while the reason is known.
     const staleMirrored = findStaleFiles(genOut, ROOT);
-    const staleRoot = findStaleRootFiles(genOut, ROOT);
+    const staleRetired = findRetiredGeneratedPaths(genOut, ROOT);
     for (const s of staleMirrored) {
       console.log(`rulesync-sync: removing ${s} (no longer generated; source skill deleted, renamed, or changed shape)`);
       rmSync(join(ROOT, s), { recursive: true, force: true });
     }
-    for (const s of staleRoot) {
-      console.log(`rulesync-sync: removing ${s} (root rule 由来の生成物は ADR 0018 で廃止済み — 削除対象)`);
-      rmSync(join(ROOT, s), { recursive: true, force: true });
-    }
+    removeRetiredGeneratedPaths(ROOT, staleRetired);
     cpSync(genOut, ROOT, { recursive: true });
     for (const dir of MIRRORED_DIRS) pruneEmptyDirs(join(ROOT, dir));
   }
@@ -395,24 +390,10 @@ function findStaleFiles(generatedRoot, targetRoot) {
   return stale;
 }
 
-// Sibling to `findStaleFiles`, but for `ROOT_GENERATED_FILES` (single
-// aggregated root files, not a mirrored per-item tree under MIRRORED_DIRS).
-// `diffTree` can only report drift in files that still exist under
-// `generatedRoot`; when a feature (e.g. rulesync `rules`, ADR 0018) stops
-// producing a root file at all, `generatedRoot` never has it, so `diffTree`'s
-// walk never visits it and would otherwise leave an old copy on the repo
-// forever, both in --check (silently green) and in write mode (never
-// removed, since `cpSync` overlay never deletes). Report it as stale whenever
-// it exists on disk but generation no longer produces it.
-function findStaleRootFiles(generatedRoot, targetRoot) {
-  const stale = [];
-  for (const name of ROOT_GENERATED_FILES) {
-    if (existsSync(join(targetRoot, name)) && !existsSync(join(generatedRoot, name))) {
-      stale.push(name);
-    }
-  }
-  return stale;
-}
+// The sibling of `findStaleFiles` for retired generated paths (outputs an
+// abolished feature used to produce) lives in
+// scripts/retired-generated-paths.mjs — see that module's header for why
+// neither `diffTree` nor `findStaleFiles` can cover them.
 
 // After deleting the stale files found by `findStaleFiles`, a fully-removed
 // skill can leave behind empty directories (e.g. `.claude/skills/<old
