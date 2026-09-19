@@ -62,8 +62,8 @@
       "id": "f07",
       "prompt": "新しい rule を書いたんだけど rules/ に置けばいい?",
       "should_trigger": false,
-      "rationale": "rules 枠廃止後の置き場所判定は harness-distribution の責務。rulesync-sync は生成物の再生成と feature dir の意味論を扱い、個別ハーネス片の宛先判定はしない",
-      "tags": ["distractor","adjacent"]
+      "rationale": "rules 枠廃止後の置き場所判定は harness-distribution の責務。rulesync-sync は生成物の再生成と feature dir の意味論を扱い、個別ハーネス片の宛先判定はしない。ただし境界は曖昧で、「rules/ という枠がもう無い」は rulesync-sync が持つ feature dir の意味論そのものなので、rulesync-sync が答えても誤りではない — should_trigger false は「主担当は harness-distribution」を意味するだけで、発火が誤答であることを意味しない",
+      "tags": ["distractor","adjacent","ambiguous"]
     },
     {
       "id": "t10",

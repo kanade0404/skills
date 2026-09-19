@@ -10,6 +10,17 @@ on:
       - ".github/workflows/trigger-evals.yml"
       - "tests/**"
       - "subagents/**"
+      # ADR 0018 条件 2 の不在テスト (tests/test_rules_feature_abolished.py) は、
+      # 禁止されたパスが「再登場した」PR でこそ走らなければ意味がない。この
+      # workflow は PR 時に `python3 -m unittest discover -s tests` を回す唯一の
+      # 経路なので、rules 系のパスを path filter から外すと、rules/ や
+      # rules-local/ や .claude/rules/ や root CLAUDE.md / AGENTS.md を再追加する
+      # PR がこの job を 1 度もトリガーせず素通りする。以下はそのためのガード。
+      - "rules/**"
+      - "rules-local/**"
+      - ".claude/rules/**"
+      - "CLAUDE.md"
+      - "AGENTS.md"
   workflow_dispatch:
 
 jobs:

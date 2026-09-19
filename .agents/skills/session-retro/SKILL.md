@@ -128,7 +128,7 @@ skill 本文は足す一方だと context rot でループ全体を劣化させ�
 | sensor | hook / permissions / テスト / lint / CI チェックの実装 | tdd (behavioral) / tidy-first (structural) へ handoff |
 | issue | `gh issue create` (下記ドラフトのまま) | 本スキル |
 | eval-case | loop-ops `golden/cases/` への PR 起票 | 本スキル (merge は人間) |
-| neither | レポートに記録として残すだけ (実装先は無い) | 人間 (件数が積み上がったら配信機構の設計判断へ) |
+| neither | レポートに記録として残すだけ (実装先は無い)。**記録は下記の固定形で書く** — `retro` の横断 sweep がログから `neither:` 行を拾って数え、**2 件以上で SessionStart hook の `additionalContext` 案を提案する** (ADR 0018 トリガ 2)。形が崩れると数えられず、トリガが原理的に発火しない | 人間 (`retro` の横断 sweep が計数し、閾値に達したら配信機構の設計判断へ) |
 
 **skill-edit / sensor の宛先はクラウド実行にも届く配布層を優先する** (配布元 skills
 リポジトリの `skills/` `hooks/`、`permissions`)。ローカル専用ファイル (`~/.claude/*`,
@@ -168,7 +168,9 @@ skill 本文は足す一方だと context rot でループ全体を劣化させ�
   「再発しないので何もしない」、neither は「再発するのに表現手段が無い」
 
 ## 承認待ちアクション
-- [ ] skill-edit handoff / [ ] sensor handoff / [ ] issue 起票 / [ ] eval-case PR / [ ] neither の記録
+- [ ] skill-edit handoff / [ ] sensor handoff / [ ] issue 起票 / [ ] eval-case PR
+
+neither 記録 (記録そのものが成果物、実装先なし): <n> 件
 ```
 
 ### neither 記録フォーマット (終端分岐)
@@ -176,8 +178,14 @@ skill 本文は足す一方だと context rot でループ全体を劣化させ�
 skill でも決定論的ハーネスでも表現できなかった指示は、次のフィールドを埋めて残す。**承認後の
 実装先は無く、記録そのものが成果物である**:
 
+**1 行目は固定形で書く** — `neither: ` で始まり、その後に指示の一文を置く。`retro` の横断
+sweep はセッションログからこの接頭辞で過去の記録を拾って件数を数え、**2 件以上で
+SessionStart hook の `additionalContext` 案を提案する** (ADR 0018 トリガ 2)。両 skill とも
+提案のみで永続ストアを持たないため、**この出力そのものが唯一の記録媒体**であり、形を崩すと
+grep で見つからず件数に入らない (= 観測不能になり、トリガが原理的に発火しない)。
+
 ```markdown
-- instruction: <書きたかった指示の一文>
+- neither: <書きたかった指示の一文>
 - trace: シグナル #N (どの失敗・訂正・エスカレーション由来か)
 - why-not-skill: <なぜ起動条件 (trigger) として書けなかったか。「常時適用」「skill の外側が
   対象」等>

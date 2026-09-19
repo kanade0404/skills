@@ -61,7 +61,7 @@ claudecode:
 
 | source | 取り方 | 採用条件 |
 |---|---|---|
-| `retro` / `session-retro` | 直近の retro 出力 (承認済み or 承認待ち) | lever が **skill edit** または **ept-handoff** のものだけ。hook / settings / rule / issue lever は対象外 (人間 or 別スキルの領分)。台帳の語彙は `skill-edit` / `ept` / `trigger` で、`--lever ept-handoff` は別名として受け付け `ept` で保存される |
+| `retro` / `session-retro` | 直近の retro 出力 (承認済み or 承認待ち) | lever が **skill edit** または **ept-handoff** のものだけ。hook / settings / permissions / issue / neither lever は対象外 (人間 or 別スキルの領分。`neither` は設計上そもそも実装先を持たない)。台帳の語彙は `skill-edit` / `ept` / `trigger` で、`--lever ept-handoff` は別名として受け付け `ept` で保存される |
 | `agent-feedback` | `gh issue list --label agent-feedback --state all --limit 200` / `gh pr list --label agent-feedback --state all --limit 200` とそのコメント | 「何を期待していたか」と「なぜか」が読み取れるコメント。詳細は `references/feedback-intake.md` |
 | `trigger-eval` | `skills/*/evals/*-trigger-results-*.jsonl` の最新 + 対応する `*-trigger.json` を `skills/skill-builder/scripts/score_triggers.py` で採点 | F1 < 0.8 |
 

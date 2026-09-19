@@ -35,14 +35,17 @@ const RULESYNC_VERSION = '9.1.1';
 const check = process.argv.includes('--check');
 
 // Generated trees that mirror source content 1:1, one subtree/file per source
-// skill or rule. When a source item is deleted or renamed, `rulesync generate`
+// skill. When a source skill is deleted or renamed, `rulesync generate`
 // simply omits it from the scratch output root — there is no "shrunk" file to
 // diff against, the whole path is just absent. That's different from the
 // single aggregated files this script also generates (`.claude/settings.json`,
-// `.codex/config.toml`, `.codex/rules/rulesync.rules`, root `CLAUDE.md`/
-// `AGENTS.md`): those still exist in the scratch output with different
-// (smaller) content after a deletion, so `diffTree`'s plain content comparison
-// already catches drift there. Restricting the stale-file walk (see
+// `.codex/config.toml`, `.codex/rules/rulesync.rules`): those still exist in
+// the scratch output with different (smaller) content after a deletion, so
+// `diffTree`'s plain content comparison already catches drift there. (Root
+// `CLAUDE.md` / `AGENTS.md` used to belong to that aggregated set, but ADR
+// 0018 removed the `rules` feature that produced them — generation no longer
+// emits them at all, which is what `ROOT_GENERATED_FILES` below handles.)
+// Restricting the stale-file walk (see
 // `findStaleFiles` below) to exactly these three mirrored trees (rather than
 // all of `.claude`/`.agents`) also keeps it from ever touching non-generated
 // content that happens to live alongside them — e.g. `.claude/settings.json`
@@ -109,15 +112,26 @@ try {
     // is told which paths are already-known type mismatches (via `stale`,
     // which includes them alongside plain missing-in-genOut paths) so it can
     // skip them instead of crashing.
-    const stale = [...findStaleFiles(genOut, ROOT), ...findStaleRootFiles(genOut, ROOT)];
+    // The two stale kinds get distinct diagnostics: a mirrored path is stale
+    // because its *source skill* moved or vanished (fixable by restoring or
+    // accepting the rename), while a root file is stale because the feature
+    // that produced it was abolished outright — no source can bring it back,
+    // the only action is deletion. One shared message would send a reader of
+    // the second case hunting for a deleted skill that never existed.
+    const staleMirrored = findStaleFiles(genOut, ROOT);
+    const staleRoot = findStaleRootFiles(genOut, ROOT);
+    const stale = [...staleMirrored, ...staleRoot];
     const diffs = diffTree(genOut, ROOT, new Set(stale));
     if (diffs.length > 0 || stale.length > 0) {
       console.error(
         'rulesync-sync: generated outputs are stale (run `node scripts/rulesync-sync.mjs`):',
       );
       for (const d of diffs) console.error(`  ${d}`);
-      for (const s of stale) {
-        console.error(`  ${s} (stale — no longer generated in this shape; source skill/rule likely deleted, renamed, or changed between file and directory)`);
+      for (const s of staleMirrored) {
+        console.error(`  ${s} (stale — no longer generated in this shape; source skill likely deleted, renamed, or changed between file and directory)`);
+      }
+      for (const s of staleRoot) {
+        console.error(`  ${s} (stale — root rule 由来の生成物は ADR 0018 で廃止済み — 削除対象)`);
       }
       process.exit(1);
     }
@@ -130,8 +144,21 @@ try {
     // an existing conflicting path even with `force: true`. Clearing it
     // first guarantees `cpSync` only ever writes into a location that is
     // either absent or already the same type.
-    const stale = [...findStaleFiles(genOut, ROOT), ...findStaleRootFiles(genOut, ROOT)];
-    for (const s of stale) rmSync(join(ROOT, s), { recursive: true, force: true });
+    // Announce every removal. This branch deletes committed files (a whole
+    // generated skill subtree, or a root file the abolished `rules` feature
+    // used to produce), and a silent delete inside an otherwise additive
+    // "regenerate" run reads as an unexplained deletion in the next
+    // `git status` — say which path went and why while the reason is known.
+    const staleMirrored = findStaleFiles(genOut, ROOT);
+    const staleRoot = findStaleRootFiles(genOut, ROOT);
+    for (const s of staleMirrored) {
+      console.log(`rulesync-sync: removing ${s} (no longer generated; source skill deleted, renamed, or changed shape)`);
+      rmSync(join(ROOT, s), { recursive: true, force: true });
+    }
+    for (const s of staleRoot) {
+      console.log(`rulesync-sync: removing ${s} (root rule 由来の生成物は ADR 0018 で廃止済み — 削除対象)`);
+      rmSync(join(ROOT, s), { recursive: true, force: true });
+    }
     cpSync(genOut, ROOT, { recursive: true });
     for (const dir of MIRRORED_DIRS) pruneEmptyDirs(join(ROOT, dir));
   }
@@ -267,7 +294,7 @@ function restoreSourceExecutableBits(outRoot, rel = '') {
 // changed (matches the non-deleting semantics of a plain `cpSync`
 // materialize — this script never passes rulesync's `--delete`). Because
 // this walk starts from `generatedRoot`, it can only ever find paths that
-// still exist there; a path whose *source* skill/rule was deleted or
+// still exist there; a path whose *source* skill was deleted or
 // renamed has no counterpart in `generatedRoot` at all and is invisible to
 // this walk no matter how it's phrased — that's what `findStaleFiles`
 // below is for (the same problem from the other direction). Executable-bit
@@ -317,10 +344,10 @@ function diffTree(generatedRoot, targetRoot, staleSet, rel = '') {
 // path under `generatedRoot`, OR whose counterpart there exists but changed
 // type (file <-> directory) at the same relative path. `diffTree` alone can
 // never surface either case because it only ever walks paths that exist in
-// `generatedRoot` in the first place — a source skill/rule deleted or renamed
+// `generatedRoot` in the first place — a source skill deleted or renamed
 // leaves its old generated mirror behind, `--check` stays green, and (since
 // materialize is a non-deleting `cpSync` overlay) `write` mode never removes
-// it either, so agents keep seeing a skill/rule that no longer has a source
+// it either, so agents keep seeing a skill that no longer has a source
 // of truth. The type-mismatch case additionally matters because `cpSync`
 // cannot overlay a directory onto an existing file, or a file onto an
 // existing directory, even with `force: true` — an existence-only check
@@ -383,7 +410,7 @@ function findStaleRootFiles(generatedRoot, targetRoot) {
 }
 
 // After deleting the stale files found by `findStaleFiles`, a fully-removed
-// skill/rule can leave behind empty directories (e.g. `.claude/skills/<old
+// skill can leave behind empty directories (e.g. `.claude/skills/<old
 // name>/scripts/` once its one file is gone). Recursively prunes any
 // directory under `dir` (bottom-up) that ends up with zero entries. Safe to
 // call unconditionally on all of MIRRORED_DIRS every write run — directories
