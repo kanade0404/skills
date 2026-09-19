@@ -4,7 +4,10 @@ on:
   pull_request:
     paths:
       - "skills/**"
-      - "scripts/rulesync-sync.mjs"
+      # Whole dir, not just rulesync-sync.mjs: tests/ drives several scripts/
+      # entries (explore-readonly-guard.sh, session-setup.sh,
+      # codex-workspace-roots.mjs), and a change to any of them must run them.
+      - "scripts/**"
       - ".github/scripts/**"
       - ".github/trigger-evals-known-failures.json"
       - ".github/workflows/trigger-evals.yml"
@@ -34,6 +37,15 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      # tests/test_codex_workspace_roots.py drives scripts/codex-workspace-roots.mjs
+      # as a `node` subprocess, so this job needs a Node that is pinned rather
+      # than whatever ubuntu-latest happens to ship. Same version as the
+      # rulesync-drift workflow, which runs the same scripts/ tree.
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
 
       - name: Run unit tests
         run: python3 -m unittest discover -s tests -v

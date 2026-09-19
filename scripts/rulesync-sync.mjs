@@ -29,6 +29,10 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
+// The `.codex/config.toml` catch-all patch lives in its own module purely so it
+// has a test seam (see scripts/codex-workspace-roots.mjs); it is still applied
+// from this script's single post-generate pipeline below.
+import { fixCodexWorkspaceRootsCatchAll } from './codex-workspace-roots.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const RULESYNC_VERSION = '9.1.1';
@@ -102,6 +106,7 @@ try {
   mergeRepoLocalHooks(genOut);
   mergeRepoLocalEnv(genOut);
   restoreSourceExecutableBits(genOut);
+  fixCodexWorkspaceRootsCatchAll(genOut);
 
   if (check) {
     // Compute stale/type-mismatch paths BEFORE diffing (not after): a
