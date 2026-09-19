@@ -1,0 +1,16 @@
+{"id": "t01", "predicted": true, "actual": true, "reason": "Exact match to the listed trigger phrase 「rulesync-sync.mjs 実行して」."}
+{"id": "t02", "predicted": true, "actual": true, "reason": "Exact match to the listed trigger phrase 「生成物を再生成して」."}
+{"id": "t03", "predicted": true, "actual": true, "reason": "Matches both 「.claude/ を再生成して」 and 「生成物と drift してる」 trigger phrases."}
+{"id": "t04", "predicted": true, "actual": true, "reason": "Exact match to the listed trigger phrase 「skill 直したから反映しといて」."}
+{"id": "t05", "predicted": true, "actual": true, "reason": "Matches 「生成物側の設定が古い気がする / 更新したい」, referring to a generated output directory (.agents/)."}
+{"id": "t06", "predicted": true, "actual": true, "reason": "Matches 「新しい hook / command をどこに置けばいい?」 trigger phrase."}
+{"id": "t07", "predicted": true, "actual": true, "reason": "Matches 「この repo の配布構造 / feature ディレクトリはどうなってる?」 trigger phrase."}
+{"id": "t08", "predicted": true, "actual": true, "reason": "Concerns whether a hooks-local source change is correctly reflected in the generated settings.json, i.e. drift/generation verification, which the description covers."}
+{"id": "f07", "predicted": false, "actual": false, "reason": "The description's stated source/feature directories are limited to skills/, hooks/, hooks-local/ (no rules/ mentioned), so a question about where to put a new rule falls outside its stated scope."}
+{"id": "t10", "predicted": true, "actual": true, "reason": "Matches the description's explanation of the skill standard layout (SKILL.md/references/evals/scripts/assets)."}
+{"id": "f01", "predicted": false, "actual": false, "reason": "Explicitly out of scope: 'consumer 側リポジトリでの harness 導入・配布判断 (harness-distribution)'."}
+{"id": "f02", "predicted": false, "actual": false, "reason": "Explicitly out of scope: 'skill 本文の作成・trigger 調整 (skill-builder)'."}
+{"id": "f03", "predicted": false, "actual": false, "reason": "Explicitly out of scope: 'リリースタグ作成 (RELEASING.md の手順)'."}
+{"id": "f04", "predicted": false, "actual": false, "reason": "Generic commit request has no relation to any trigger phrase or scope described."}
+{"id": "f05", "predicted": false, "actual": false, "reason": "Unrelated general coding task (dedupe function), not covered by the description at all."}
+{"id": "f06", "predicted": false, "actual": false, "reason": "Reading rulesync's own upstream README/usage is not one of the described sync/verification/layout-explanation triggers."}

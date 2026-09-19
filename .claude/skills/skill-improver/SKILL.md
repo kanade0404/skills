@@ -460,7 +460,7 @@ git commit improvements/ledger.jsonl -m "chore(ledger): reconcile <date>"
 ## このスキルがやらないこと
 
 - **default branch への push / PR の merge**: 承認ゲートは PR レビュー。merge は人間。
-- **`settings.json` / hook / `rules/` の編集**: lever がそれらの finding は対象外 (`retro` の提案として人間に残る)。
+- **`settings.json` / hook / permissions / CI 設定の編集**: lever がそれらの finding は対象外 (`retro` の提案として人間に残る)。
 - **SKILL.md 本文の直接執筆**: 実体は `skill-builder` / `empirical-prompt-tuning` に委譲する (`model-policy`: main は実行しない)。
 - **retro / session-retro の実行**: finding を作るのは向こう。本スキルは finding を受け取る側。
 - **メタスキルの編集**: 上記の除外リスト。台帳記録と人間へのエスカレーションまで。

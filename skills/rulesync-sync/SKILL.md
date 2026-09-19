@@ -1,19 +1,19 @@
 ---
 name: rulesync-sync
 description: |
-  この skill カタログ / rulesync 配布元リポジトリで、skill・rule・hook のソース
-  (`skills/`, `rules/`, `rules-local/`, `hooks-local/`) を編集した後に、生成物
-  (`.claude/`, `.agents/`, `.codex/`, root `AGENTS.md` / `CLAUDE.md`) を
+  この skill カタログ / rulesync 配布元リポジトリで、skill・hook のソース
+  (`skills/`, `hooks/`, `hooks-local/`) を編集した後に、生成物
+  (`.claude/`, `.agents/`, `.codex/`) を
   `node scripts/rulesync-sync.mjs` で再生成し `--check` で drift が無いことを
-  検証する手順、および feature ディレクトリ (`skills/` `rules/` `rules-local/`
+  検証する手順、および feature ディレクトリ (`skills/`
   `subagents/` `commands/` `hooks/` `hooks-local/`) の意味論と skill 標準レイアウト
   (`SKILL.md` / `references/` / `evals/` / `scripts/` / `assets/`) を説明するスキル。
 
   「rulesync-sync.mjs 実行して」「生成物を再生成して」「.claude/ を再生成して」
-  「生成物と drift してる」「skill 直したから反映しといて」「CLAUDE.md / AGENTS.md
-  (生成物側) が古い気がする / 更新したい」「この repo の配布構造 / feature
-  ディレクトリはどうなってる?」「新しい rule / hook をどこに置けばいい?」のような
-  要請、および skill / rule / hook のソースを編集した直後、いずれでも必ず起動する
+  「生成物と drift してる」「skill 直したから反映しといて」「生成物側の設定が
+  古い気がする / 更新したい」「この repo の配布構造 / feature
+  ディレクトリはどうなってる?」「新しい hook / command をどこに置けばいい?」のような
+  要請、および skill / hook のソースを編集した直後、いずれでも必ず起動する
   こと。
 
   範囲外: consumer 側リポジトリでの harness 導入・配布判断 (`harness-distribution`)、
@@ -35,9 +35,12 @@ claudecode:
 
 # rulesync-sync
 
-> **原則**: ソース (`skills/` / `rules/` / `rules-local/` / `hooks-local/`) を編集し、
-> 生成物 (`.claude/` / `.agents/` / `.codex/` / root `AGENTS.md` / `CLAUDE.md`) は
+> **原則**: ソース (`skills/` / `hooks/` / `hooks-local/`) を編集し、
+> 生成物 (`.claude/` / `.agents/` / `.codex/`) は
 > **直接編集しない**。生成は必ず `node scripts/rulesync-sync.mjs` を経由する。
+> root `CLAUDE.md` / `AGENTS.md` と `.claude/rules/` は **生成されない** — rules
+> feature は廃止済みで、指示は skill か決定論的ハーネス (hook / permissions / CI) の
+> どちらかにしか置かない。
 
 **例外**: `.claude/agents/` は rulesync の生成対象外で、repo-local な agent 定義
 (例: built-in `Explore` の上書き) を手書き管理する場所。生成物直接編集禁止の
@@ -45,10 +48,10 @@ claudecode:
 
 ## いつ使うか / 使わない場面
 
-**使う**: skill / rule / hook のソースを編集した後の再生成・sync、「生成物と drift
-してる」「rulesync-sync.mjs 実行して」「.claude/ を再生成して」「CLAUDE.md /
-AGENTS.md (生成物側) を更新したい」「配布構造 / feature ディレクトリはどうなってる?」
-「新しい rule / hook をどこに置く?」のような要請。
+**使う**: skill / hook のソースを編集した後の再生成・sync、「生成物と drift
+してる」「rulesync-sync.mjs 実行して」「.claude/ を再生成して」「生成物側の設定を
+更新したい」「配布構造 / feature ディレクトリはどうなってる?」
+「新しい hook / command をどこに置く?」のような要請。
 
 **使わない** (成果物で判定):
 
@@ -64,7 +67,7 @@ AGENTS.md (生成物側) を更新したい」「配布構造 / feature ディ�
 の**配布元**でもある。consumer は次の 2 手順で取り込む:
 
 ```bash
-rulesync fetch kanade0404/skills@<tag> --features skills,rules,...
+rulesync fetch kanade0404/skills@<tag> --features skills,permissions,...
 rulesync generate
 ```
 
@@ -77,16 +80,17 @@ RELEASING.md を参照し、本スキルではタグ運用そのものは扱わ�
 | ディレクトリ | 意味 | 配布対象か |
 |---|---|---|
 | `skills/<name>/` | Agent Skills。ディレクトリと `SKILL.md` frontmatter が inventory の source of truth | 配布 (`skills` feature) |
-| `rules/` | 横断的な rule。**配布用** — consumer は中の全ファイルを fetch するため、frontmatter 付き rule ファイルのみを置く。README 禁止、repo-local な内容も禁止 (`tests/` で機械チェック) | 配布 (`rules` feature) |
-| `rules-local/` | repo-local な rule (root rule `orchestration-policy.md` を含む)。`scripts/rulesync-sync.mjs` がこのリポジトリ自身の生成物に staging する | 配布対象外 |
 | `subagents/` | 配布用の feature 枠。rulesync canonical 形式の subagent 定義を 1 ファイル 1 エージェントで置く（例: `problem-solver.md`）。**repo-local な内容を置かない** — consumer の `rulesync fetch --features subagents` は配下を丸ごと fetch する | 配布 (`subagents` feature) |
 | `commands/` / `hooks/` | 配布用の feature 枠。現状 placeholder (README のみ)。**repo-local な内容を置かない** — consumer の `rulesync fetch --features hooks` 等は配下を丸ごと fetch する | 配布 (該当 feature) |
 | `hooks-local/` | repo-local な hook。`claude-code-hooks.json` を `scripts/rulesync-sync.mjs` が読み、このリポジトリの生成 `.claude/settings.json` に merge する | 配布対象外 |
 
-新しい rule / hook をどこに置くか迷ったら: 「他の consumer リポジトリにも配りたいか」
-で分岐する。配りたい → `rules/` or `hooks/` (配布用 canonical 形式、判定自体は
-`harness-distribution` が担う)。このリポジトリ自身の運用にしか関係ない → `rules-local/`
-or `hooks-local/`。
+**`rules/` / `rules-local/` の枠は廃止済みで、存在しない。** 横断的な指示を置く枠は無く、
+状況依存なら `skills/`、機械で強制したいなら `hooks/` / permissions / CI に落とす。
+どちらにも落とせなかった指示は書かず、`session-retro` / `retro` の `neither` に記録する。
+
+新しい hook / command をどこに置くか迷ったら: 「他の consumer リポジトリにも配りたいか」
+で分岐する。配りたい → `hooks/` or `commands/` (配布用 canonical 形式、判定自体は
+`harness-distribution` が担う)。このリポジトリ自身の運用にしか関係ない → `hooks-local/`。
 
 third-party skill は原則ここに vendor しない — consumer は upstream リポジトリを
 直接 `rulesync fetch` する。例外的に copy-in する場合は、その skill ディレクトリ内に
@@ -108,8 +112,8 @@ skill 本文の作成・改訂・trigger 調整自体は `skill-builder` が sou
 
 ## 生成 → 検証ワークフロー
 
-1. **ソースを編集する**: `skills/`, `rules/`, `rules-local/`, `hooks-local/` のいずれか。
-   生成物 (`.claude/`, `.agents/`, `.codex/`, root `AGENTS.md` / `CLAUDE.md`) は
+1. **ソースを編集する**: `skills/`, `hooks/`, `hooks-local/` のいずれか。
+   生成物 (`.claude/`, `.agents/`, `.codex/`) は
    触らない — 触っても次の再生成で上書きされ、drift CI にも捕まる。
 2. **再生成する**:
 
