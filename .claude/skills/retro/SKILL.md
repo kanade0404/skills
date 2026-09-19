@@ -194,6 +194,7 @@ session-retro 出力そのものにしか残らない。**横断 sweep は既に
   行の出現回数をそのまま件数にすると 1 事例で閾値を超える
 - 件数は **0 件・1 件でも確認日と共に出力に明記する**。2c-1 と同じ理由 — 確認した事実が
   残らないと次回の sweep が同じ範囲を再確認できない
+- instruction が literal の placeholder `<書きたかった指示の一文>` のままの行 (skill 本文の引用) は数えない
 
 **2 件以上なら finding として上げる** (priority は人間判断)。lever は **hook** で、proposal は
 「SessionStart hook の `additionalContext` に載せる案の設計」。**rule の復活は選択肢に含めない**
