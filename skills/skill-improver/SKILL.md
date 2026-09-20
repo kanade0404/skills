@@ -61,7 +61,7 @@ claudecode:
 
 | source | 取り方 | 採用条件 |
 |---|---|---|
-| `retro` / `session-retro` | 直近の retro 出力 (承認済み or 承認待ち) | lever が **skill edit** または **ept-handoff** のものだけ。hook / settings / rule / issue lever は対象外 (人間 or 別スキルの領分)。台帳の語彙は `skill-edit` / `ept` / `trigger` で、`--lever ept-handoff` は別名として受け付け `ept` で保存される |
+| `retro` / `session-retro` | 直近の retro 出力 (承認済み or 承認待ち) | lever が **skill edit** または **ept-handoff** のものだけ。hook / settings / permissions / issue / neither lever は対象外 (人間 or 別スキルの領分。`neither` は設計上そもそも実装先を持たない)。台帳の語彙は `skill-edit` / `ept` / `trigger` で、`--lever ept-handoff` は別名として受け付け `ept` で保存される |
 | `agent-feedback` | `gh issue list --label agent-feedback --state all --limit 200` / `gh pr list --label agent-feedback --state all --limit 200` とそのコメント | 「何を期待していたか」と「なぜか」が読み取れるコメント。詳細は `references/feedback-intake.md` |
 | `trigger-eval` | `skills/*/evals/*-trigger-results-*.jsonl` の最新 + 対応する `*-trigger.json` を `skills/skill-builder/scripts/score_triggers.py` で採点 | F1 < 0.8 |
 
@@ -444,7 +444,7 @@ git commit improvements/ledger.jsonl -m "chore(ledger): reconcile <date>"
 ## このスキルがやらないこと
 
 - **default branch への push / PR の merge**: 承認ゲートは PR レビュー。merge は人間。
-- **`settings.json` / hook / `rules/` の編集**: lever がそれらの finding は対象外 (`retro` の提案として人間に残る)。
+- **`settings.json` / hook / permissions / CI 設定の編集**: lever がそれらの finding は対象外 (`retro` の提案として人間に残る)。
 - **SKILL.md 本文の直接執筆**: 実体は `skill-builder` / `empirical-prompt-tuning` に委譲する (`model-policy`: main は実行しない)。
 - **retro / session-retro の実行**: finding を作るのは向こう。本スキルは finding を受け取る側。
 - **メタスキルの編集**: 上記の除外リスト。台帳記録と人間へのエスカレーションまで。

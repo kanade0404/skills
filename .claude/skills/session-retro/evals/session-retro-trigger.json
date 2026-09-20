@@ -18,7 +18,7 @@
     },
     {
       "id": "t03",
-      "prompt": "今回の学びを rule / sensor / issue に振り分けて",
+      "prompt": "今回の学びを skill / sensor / issue に振り分けて",
       "should_trigger": true,
       "rationale": "4 分岐そのものの要請",
       "tags": ["explicit"]
@@ -41,14 +41,14 @@
       "id": "t06",
       "prompt": "さっきのミス、二度と起きないようにしておいて",
       "should_trigger": true,
-      "rationale": "再発防止 = rule/sensor 昇格の口語形",
+      "rationale": "再発防止 = skill-edit/sensor 昇格の口語形",
       "tags": ["ambiguous"]
     },
     {
       "id": "t07",
-      "prompt": "今回わかったこと、CLAUDE.md に反映しといて",
+      "prompt": "今回わかったこと、次から効くように skill に反映しといて",
       "should_trigger": true,
-      "rationale": "今セッションの学び由来の rule 提案 (全体監査ではない)",
+      "rationale": "今セッションの学び由来の skill-edit 提案 (全体監査ではない)",
       "tags": ["ambiguous", "edge"]
     },
     {

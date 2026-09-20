@@ -1,0 +1,20 @@
+{"id": "t01", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): verbatim match to listed phrase 「振り返り」."}
+{"id": "t02", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): verbatim match to listed 「retro」."}
+{"id": "t03", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): matches listed 「セッション分析」 plus improvement-proposal output."}
+{"id": "t04", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): paraphrase of listed 「ハーネス改善したい」."}
+{"id": "t05", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): verbatim match to listed 「allow リスト見直したい」."}
+{"id": "t06", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): verbatim match to listed 「hooks 候補ある?」."}
+{"id": "t07", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): matches listed 「なんでこの skill 起動しなかった?」."}
+{"id": "t08", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): vague session-inefficiency complaint maps to the explicitly listed 'token waste' sweep concern."}
+{"id": "t09", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): 'wrap up after PR merge' matches the described use-after-pr-monitor-merge/close context."}
+{"id": "t10", "predicted": false, "actual": false, "reason": "blind judge (description-only, cases unseen): bug root-cause analysis is explicitly out of scope ('not code review or bug analysis')."}
+{"id": "t11", "predicted": false, "actual": false, "reason": "blind judge (description-only, cases unseen): new-skill scaffolding belongs to skill-builder, not listed here."}
+{"id": "t12", "predicted": false, "actual": false, "reason": "blind judge (description-only, cases unseen): description tuning is handed to skill-builder/empirical-prompt-tuning, not a retro trigger phrase."}
+{"id": "t13", "predicted": false, "actual": false, "reason": "blind judge (description-only, cases unseen): PR comment handling is pr-review-respond's job, no listed overlap."}
+{"id": "t14", "predicted": false, "actual": false, "reason": "blind judge (description-only, cases unseen): CI repair is ci-self-heal's job, not harness-improvement analysis."}
+{"id": "t15", "predicted": false, "actual": false, "reason": "blind judge (description-only, cases unseen): asking what retro means is a definitional question, not a request to run it."}
+{"id": "t16", "predicted": false, "actual": false, "reason": "blind judge (description-only, cases unseen): explicitly excluded ('not code review or bug analysis')."}
+{"id": "t17", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): near-verbatim match to listed log-history sweep phrase."}
+{"id": "t18", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): verbatim match to listed 「全セッション横断で振り返って」."}
+{"id": "t19", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): matches the unused/low-fire-rate harness sweep intent."}
+{"id": "t20", "predicted": false, "actual": false, "reason": "blind judge (description-only, cases unseen): ad-hoc SQL-writing request only shares DuckDB vocabulary, not a retro/harness-improvement intent."}

@@ -1,0 +1,16 @@
+{"id": "t01", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): verbatim match to listed 「振り返りをして」."}
+{"id": "t02", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): verbatim match to listed 「retro」."}
+{"id": "t03", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): directly names the skill-edit/sensor/issue 4-branch classification."}
+{"id": "t04", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): matches 'release 後' plus 振り返って教訓をまとめて phrasing."}
+{"id": "t05", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): matches the eval-case (golden set candidate) branch."}
+{"id": "t06", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): verbatim match to listed 「二度と起きないようにして」."}
+{"id": "t07", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): matches listed 「学びを skill に反映して」."}
+{"id": "t08", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): matches listed 「詰まったことを issue 化しておいて」."}
+{"id": "t09", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): end-of-session reflection request fits the described session-end trigger context."}
+{"id": "f01", "predicted": false, "actual": false, "reason": "blind judge (description-only, cases unseen): explicitly excluded (CLAUDE.md 全体監査 belongs to claude-md-improver)."}
+{"id": "f02", "predicted": false, "actual": false, "reason": "blind judge (description-only, cases unseen): explicitly excluded (root-cause debugging belongs to systematic-debugging)."}
+{"id": "f03", "predicted": false, "actual": false, "reason": "blind judge (description-only, cases unseen): explicitly excluded (skill description tuning belongs to skill-builder)."}
+{"id": "f04", "predicted": false, "actual": false, "reason": "blind judge (description-only, cases unseen): explicitly excluded (plain session summary, no 4-branch classification needed)."}
+{"id": "f05", "predicted": false, "actual": false, "reason": "blind judge (description-only, cases unseen): PR review-comment handling is pr-review-respond's job, not listed here."}
+{"id": "f06", "predicted": false, "actual": false, "reason": "blind judge (description-only, cases unseen): asking about a generic team retrospective process, not this session's transcript."}
+{"id": "f07", "predicted": false, "actual": false, "reason": "blind judge (description-only, cases unseen): ad-hoc log aggregation request, not a learnings-classification request."}

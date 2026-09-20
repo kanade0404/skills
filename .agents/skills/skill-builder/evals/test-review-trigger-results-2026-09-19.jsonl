@@ -1,0 +1,20 @@
+{"id": "t01", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): verbatim direct test-file review request, core use case."}
+{"id": "t02", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): verbatim match to listed 「このテストいい?」."}
+{"id": "t03", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): matches listed 「テスト見て」 colloquial pattern."}
+{"id": "t04", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): new test file audit request, matches new-test-file-audit use case."}
+{"id": "t05", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): matches listed RLS negative-path test coverage check."}
+{"id": "t06", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): file path matches listed `supabase/tests/**` pattern."}
+{"id": "t07", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): matches listed LLM/agent eval rigor assessment."}
+{"id": "t08", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): matches listed flaky-test root-cause classification."}
+{"id": "t09", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): verbatim match to listed 「認可のテスト足りてる?」."}
+{"id": "t10", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): description explicitly covers 'workflow definition' framework test quality."}
+{"id": "t11", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): verbatim match to listed 「このプロンプトテストでカバーできてる?」."}
+{"id": "t12", "predicted": true, "actual": true, "reason": "blind judge (description-only, cases unseen): near-verbatim match to listed 「テストスイート大丈夫?」."}
+{"id": "t13", "predicted": false, "actual": false, "reason": "blind judge (description-only, cases unseen): reviewing implementation code, not test code — code-review's job, not listed here."}
+{"id": "t14", "predicted": false, "actual": false, "reason": "blind judge (description-only, cases unseen): explicitly excluded (lint violation fixes)."}
+{"id": "t15", "predicted": false, "actual": false, "reason": "blind judge (description-only, cases unseen): design task, unrelated to reviewing existing test code."}
+{"id": "t16", "predicted": false, "actual": false, "reason": "blind judge (description-only, cases unseen): schema change task, not a test review request."}
+{"id": "t17", "predicted": false, "actual": false, "reason": "blind judge (description-only, cases unseen): explicitly excluded (test parallelization)."}
+{"id": "t18", "predicted": false, "actual": false, "reason": "blind judge (description-only, cases unseen): building a new workflow, not reviewing existing test code."}
+{"id": "t19", "predicted": false, "actual": false, "reason": "blind judge (description-only, cases unseen): prompt optimization task, unrelated to test-code review."}
+{"id": "t20", "predicted": false, "actual": false, "reason": "blind judge (description-only, cases unseen): explicitly excluded (test framework migration)."}
