@@ -1,32 +1,11 @@
-# rulesync staging dir (throwaway; recreated by scripts/rulesync-sync.mjs)
-.rulesync/
-
 # node
 node_modules/
 
-# python bytecode (skills ship stdlib scripts; consumers run them in place)
+# python bytecode
 __pycache__/
 
 # local Claude Code overrides (per-machine, not distributed)
 .claude/settings.local.json
 
-# best-effort local sinks for skill telemetry that couldn't reach their
-# remote target (e.g. test-mutation-gate's emit_gate_event.sh fallback)
-.cache/
-
-# pr-monitor's per-PR polling state (consumer-side runtime state, not
-# distributed content). Without this, a consumer dogfooding pr-monitor
-# against this very repo could accidentally commit their local monitor
-# state file (`.claude/.pr-monitor/PR-<n>.yml`) since nothing else in this
-# repo's .gitignore covers paths under `.claude/`.
-.claude/.pr-monitor/
-
-# This repo intentionally commits its generated Codex skills under .agents/
-# (dogfooding). Override a personal global ~/.gitignore that ignores .agents/.
-!.agents/
-
 # direnv's local evaluation cache for .envrc (machine-local, not distributed)
 .direnv/
-
-# ledger.py の advisory lock (実行中のみ存在するローカルファイル)
-improvements/*.lock
