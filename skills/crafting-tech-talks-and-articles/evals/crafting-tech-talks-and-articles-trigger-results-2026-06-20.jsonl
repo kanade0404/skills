@@ -1,0 +1,18 @@
+{"id":"t01","predicted":true,"actual":true,"reason":"『登壇資料』『構成』が description の should-use 名詞に直接マッチ"}
+{"id":"t02","predicted":true,"actual":true,"reason":"『Zenn の記事の構成』が should-use に明示"}
+{"id":"t03","predicted":true,"actual":true,"reason":"『LT のスライド作って』が should-use に逐語的に存在"}
+{"id":"t04","predicted":true,"actual":true,"reason":"『スライドが情報過多で伝わらない』が should-use に存在"}
+{"id":"t05","predicted":true,"actual":true,"reason":"『勉強会で何話そう』が should-use に存在（ネタ決め）"}
+{"id":"t06","predicted":true,"actual":true,"reason":"『発表が時間内に収まらない』が should-use に存在"}
+{"id":"t07","predicted":true,"actual":true,"reason":"『この技術記事わかりにくいから直したい』に対応"}
+{"id":"t08","predicted":true,"actual":true,"reason":"『CFP のネタが決まらない』が should-use に存在"}
+{"id":"t09","predicted":false,"actual":false,"reason":"negative space『ADR は adr-writer』で明示除外"}
+{"id":"t10","predicted":false,"actual":false,"reason":"negative space『PRD は product-discovery』で除外"}
+{"id":"t11","predicted":false,"actual":false,"reason":"negative space『調査レポートは research-practices』で除外"}
+{"id":"t12","predicted":false,"actual":false,"reason":"『社外向けの発表・記事に限定』境界に該当せず（PR は開発成果物）"}
+{"id":"t13","predicted":false,"actual":false,"reason":"『社内設計ドキュメントは範囲外』に明示"}
+{"id":"t14","predicted":false,"actual":false,"reason":"紙面 Tips は方針までで実デザイン作り込みは『やらないこと』で除外"}
+{"id":"t15","predicted":false,"actual":false,"reason":"社外向けでも商談/提案書は技術的知見の発信ではなく対象外"}
+{"id":"t16","predicted":false,"actual":false,"reason":"『書き方』だが発表・記事ではない開発作業で境界外"}
+{"id":"t17","predicted":true,"actual":true,"reason":"ターゲット連想・抽象度チューニングは description の機能説明に合致"}
+{"id":"t18","predicted":true,"actual":true,"reason":"スライドのサンプルコードは紙面 Tips として description に含意"}
