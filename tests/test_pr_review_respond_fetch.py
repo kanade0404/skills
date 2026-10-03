@@ -90,6 +90,60 @@ THREADS = [
             ]
         },
     },
+    # 未解決・最新・未返信 → Phase A の triage 対象 (eligible)
+    {
+        "id": "PRRT_3",
+        "isResolved": False,
+        "isOutdated": False,
+        "comments": {
+            "nodes": [
+                {
+                    "databaseId": 301,
+                    "body": "Devin: race on retry counter",
+                    "path": "src/payment/retry.ts",
+                    "line": 40,
+                    "startLine": None,
+                    "originalLine": 40,
+                    "url": "https://github.com/o/r/pull/7#discussion_r301",
+                    "createdAt": "2026-10-02T00:00:00Z",
+                    "author": {"login": "devin-ai-integration"},
+                },
+                # PR 作者以外の追記は self_replied にしない
+                {
+                    "databaseId": 302,
+                    "body": "+1",
+                    "path": "src/payment/retry.ts",
+                    "line": 40,
+                    "startLine": None,
+                    "originalLine": 40,
+                    "url": "https://github.com/o/r/pull/7#discussion_r302",
+                    "createdAt": "2026-10-02T01:00:00Z",
+                    "author": {"login": "someone-else"},
+                },
+            ]
+        },
+    },
+    # 未解決だが outdated → Phase A で skip (未解決数には入るが最終 gate の分母には入らない)
+    {
+        "id": "PRRT_4",
+        "isResolved": False,
+        "isOutdated": True,
+        "comments": {
+            "nodes": [
+                {
+                    "databaseId": 401,
+                    "body": "old line",
+                    "path": "src/payment/client.ts",
+                    "line": None,
+                    "startLine": None,
+                    "originalLine": 3,
+                    "url": "https://github.com/o/r/pull/7#discussion_r401",
+                    "createdAt": "2026-09-29T00:00:00Z",
+                    "author": {"login": "coderabbitai"},
+                }
+            ]
+        },
+    },
 ]
 REVIEWS = [
     {
@@ -255,9 +309,11 @@ class TestNormalizeFetch(unittest.TestCase):
 
     def test_threads_shape_unchanged(self) -> None:
         threads = self.doc["threads"]
-        self.assertEqual([t["thread_id"] for t in threads], ["PRRT_1", "PRRT_2"])
+        self.assertEqual([t["thread_id"] for t in threads], ["PRRT_1", "PRRT_2", "PRRT_3", "PRRT_4"])
         self.assertTrue(threads[0]["self_replied"])
         self.assertFalse(threads[1]["self_replied"])
+        self.assertFalse(threads[2]["self_replied"])
+        self.assertTrue(threads[3]["is_outdated"])
         self.assertEqual(threads[0]["root_comment"]["vendor"], "devin")
         self.assertEqual(threads[0]["root_comment"]["id"], 101)
 
@@ -265,8 +321,12 @@ class TestNormalizeFetch(unittest.TestCase):
         self.assertEqual(
             self.doc["counts"],
             {
-                "threads": 2,
-                "unresolved_threads": 1,
+                "threads": 4,
+                # PRRT_1 (self-replied) + PRRT_3 + PRRT_4 (outdated)
+                "unresolved_threads": 3,
+                # Phase A の triage 対象は PRRT_3 だけ。最終 gate はこれで照合する (skills#157 Devin 指摘)
+                "eligible_threads": 1,
+                "skipped_threads": 2,
                 "review_bodies": 3,
                 "embedded_findings": 6,
                 "issue_comments": 1,

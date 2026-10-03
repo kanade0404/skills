@@ -201,6 +201,11 @@ def embedded_findings:
 | .counts = {
     threads: (.threads | length),
     unresolved_threads: ([.threads[] | select(.is_resolved | not)] | length),
+    # Phase A triages only these: unresolved, not outdated, not already
+    # answered by the PR author. The final gate reconciles against this.
+    eligible_threads: ([.threads[] | select((.is_resolved | not) and (.is_outdated | not) and (.self_replied | not))] | length),
+    # unresolved but skipped by Phase A (outdated or self-replied) — reported separately
+    skipped_threads: ([.threads[] | select((.is_resolved | not) and (.is_outdated or .self_replied))] | length),
     review_bodies: (.review_bodies | length),
     embedded_findings: ([.review_bodies[].embedded_findings[]] | length),
     issue_comments: (.issue_comments | length)

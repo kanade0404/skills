@@ -64,8 +64,10 @@
 #     { "id": int, "author": str, "vendor": str, "body": str, "url": str, "created_at": str }
 #   ],
 #   "counts": {                   # report these per source — never just "N comments"
-#     "threads": int, "unresolved_threads": int, "review_bodies": int,
-#     "embedded_findings": int, "issue_comments": int
+#     "threads": int, "unresolved_threads": int,
+#     "eligible_threads": int,   # unresolved ∧ ¬outdated ∧ ¬self_replied (= Phase A triage target)
+#     "skipped_threads": int,    # unresolved but outdated or self_replied
+#     "review_bodies": int, "embedded_findings": int, "issue_comments": int
 #   }
 # }
 #

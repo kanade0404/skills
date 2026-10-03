@@ -129,7 +129,7 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prr" -R <owner>/<repo> fetch <PR>   # → 正�
 - `threads[]` — GraphQL `reviewThreads` を cursor pagination で全取得。root comment + `is_resolved` / `is_outdated` / `self_replied`
 - `review_bodies[]` — `pulls/<PR>/reviews` のうち body が空でない提出済みレビュー (`id, author, vendor, state, body, submitted_at, url, commit_id`)。**`body` は常に全文**。CodeRabbit の Outside diff range / Nitpick / Additional / Duplicate セクションは `embedded_findings[]` (`category, path, start_line, end_line, title, body`) にベストエフォートで分解される
 - `issue_comments[]` — `issues/<PR>/comments` の会話コメント。body 全文 (CodeRabbit walkthrough 内の actionable 指摘も含む)
-- `counts` — `threads` / `unresolved_threads` / `review_bodies` / `embedded_findings` / `issue_comments` のソース別件数。**報告時はこれをそのまま使う**
+- `counts` — `threads` / `unresolved_threads` / `eligible_threads` (未解決 ∧ 非 outdated ∧ 非 self_replied = 下記の除外後に triage する行スレッド数) / `skipped_threads` (未解決だが outdated または self_replied) / `review_bodies` / `embedded_findings` / `issue_comments` のソース別件数。**報告時はこれをそのまま使う**
 - 各要素に `vendor` (`coderabbit` / `devin` / `human`、author login から判定、bot suffix のような表面ルールは持たない)
 
 呼出側 (本スキル本体) は得られた JSON から:
@@ -304,13 +304,14 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prr" summary <PR> <body-file>
 - [<review-url>] `<path>:<line>` (Nitpick) <1 行サマリ> → Pushback: <根拠 1 行>
 - [<comment-url>] <1 行サマリ> → Tracked in #<issue>
 
-取得件数: 行スレッド <n> (未解決 <n>) / レビュー本文 <n> (分解済み指摘 <n>) / 会話コメント <n>
+取得件数: 行スレッド <n> (未解決 <n>、うち対応対象 <eligible_threads>) / レビュー本文 <n> (分解済み指摘 <n>) / 会話コメント <n>
+skip した未解決スレッド: <skipped_threads> 件 (outdated / 返信済み)
 各スレッドへの返信は thread 内に投稿済み。行スレッド外の指摘への応答は本コメントが正。
 ```
 
 最終 gate：
 
-- 未解決スレッド総数 + 行スレッド外の指摘数 - サマリの (Fixed + Pushback + Deferred + Duplicate) = 0 を確認 (レビュー本文由来の指摘も Total に数える)
+- `counts.eligible_threads` (未解決 ∧ 非 outdated ∧ 非 self_replied — Phase A の除外と同じ基準) + 行スレッド外の指摘数 = サマリの (Fixed + Pushback + Deferred + Duplicate) を確認 (レビュー本文由来の指摘も Total に数える)。`unresolved_threads` は outdated / 返信済みを含むので照合に使わない。skip したスレッド数 (`counts.skipped_threads`) はこの式に入れず、サマリと最終報告に別行で書く
 - ローカル検証は **`verify-done` を呼んで** PASS を取る (`should/probably/seems` 系の語彙はそこで弾かれる)
 - CI 完了待ちも `prr` 経由:
 
@@ -349,7 +350,8 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prr" escalate <PR> <reason> <body-file>
 # PR Review Response: #<n>
 
 ## Stats
-- Fetched: 行スレッド <n> (未解決 <n>) / レビュー本文 <n> (分解済み指摘 <n>) / 会話コメント <n>   ← `prr fetch` の `counts`
+- Fetched: 行スレッド <n> (未解決 <n>、うち対応対象 <eligible_threads>) / レビュー本文 <n> (分解済み指摘 <n>) / 会話コメント <n>   ← `prr fetch` の `counts`
+- Skipped unresolved threads: <skipped_threads> (outdated / 返信済み)
 - Findings processed: <total>
 - Fixed: <n>  / Pushback: <n>  / Deferred: <n>  / Duplicate: <n>
 
@@ -373,7 +375,7 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prr" escalate <PR> <reason> <body-file>
 # PR Review Check: #<n> (読み取り専用 — 修正・返信・resolve はしていない)
 
 ## Fetched
-- 行スレッド <n> (未解決 <n>) / レビュー本文 <n> (分解済み指摘 <n>) / 会話コメント <n>
+- 行スレッド <n> (未解決 <n>、うち対応対象 <eligible_threads>) / レビュー本文 <n> (分解済み指摘 <n>) / 会話コメント <n>
 - 前回サマリ以降の新着: <n> 件
 
 ## Findings (要対応候補)
@@ -430,6 +432,7 @@ PR 作者本人 (= 自分) のコメントは fetcher 側ではフィルタし�
 ## 既知の限界
 
 - **`embedded_findings` はベストエフォート**: CodeRabbit のレビュー本文レイアウト (旧: カテゴリ `<details>` > ファイル `<details>` > `` `range`: `` 形式 / 現行: `> [!CAUTION]` callout 内の太字見出し > 指摘ごとの `<details>` + `` `path:range` `` 形式) の 2 種に対応。未知レイアウトでは分解が空になるが `body` 全文は常に残るので、Phase A の規律どおり本文を読んで補う。
+- **レビュー本文・会話コメントだけの新規指摘は `pr-monitor` 経由では起動されない**: `pr-monitor` は新規の未解決行スレッドだけを契機に本スキルを dispatch するため、行コメントを伴わない指摘は手動起動 (または push 後の起動) まで拾われない (kanade0404/skills#158 で対応予定)。
 - **Devin protocol の表面追跡が必要**: Devin の出力フォーマットは更新される。本文判定の文字列マッチが滑ったら「人間扱い」に倒れるが、resolve 誤発行の害より対応漏れの害が小さいので意図通り。
 - **GraphQL `reviewThreads.isResolved` への依存**: REST だけでは resolve 判定が取れないため GraphQL 併用。`gh` 認証スコープに graphql 必須。
 - **`resolveReviewThread` mutation は書き込み権限が必要**: 読み取り専用の `gh` 認証や外部フォークからの実行では失敗する。自分の PR / write 権限のあるリポジトリで動かす前提。
