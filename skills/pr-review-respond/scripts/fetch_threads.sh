@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
-# Fetch unresolved review threads + general PR comments for a given PR.
-# Outputs a single JSON document on stdout with normalized fields.
+# Fetch ALL review feedback for a given PR and emit one normalized JSON doc.
+#
+# Three sources, all required — reading only one of them is how findings get
+# missed (observed: only Devin's 2 inline comments were picked up while
+# CodeRabbit's "Outside diff range" findings lived in the review body):
+#   1. inline review threads        (GraphQL reviewThreads)
+#   2. review bodies                (REST pulls/{n}/reviews — CodeRabbit puts
+#                                    "Outside diff range" / "Nitpick" /
+#                                    "Additional" / "Duplicate" comments in
+#                                    collapsed <details> here; Devin and humans
+#                                    may also write findings only here)
+#   3. PR conversation comments     (REST issues/{n}/comments — walkthroughs,
+#                                    summaries, free-form findings)
 #
 # Usage: fetch_threads.sh <pr-number>
 # Requires: gh (authenticated), jq
@@ -28,18 +39,39 @@
 #       "self_replied": bool     # true if any subsequent comment in thread is by the PR author
 #     }
 #   ],
-#   "issue_comments": [           # PR-level (non-inline) comments
+#   "review_bodies": [            # submitted reviews with a non-blank body (PENDING excluded)
+#     {
+#       "id": int, "author": str, "vendor": str,
+#       "state": "COMMENTED" | "APPROVED" | "CHANGES_REQUESTED" | "DISMISSED",
+#       "body": str,             # full body, ALWAYS kept verbatim
+#       "submitted_at": str, "url": str, "commit_id": str,
+#       "embedded_findings": [   # best-effort split of CodeRabbit <details> sections;
+#         {                      # [] when the body does not follow that layout
+#           "category": "outside_diff_range" | "nitpick" | "additional" | "duplicate",
+#           "path": str, "start_line": int, "end_line": int,
+#           "title": str, "body": str
+#         }
+#       ]
+#     }
+#   ],
+#   "issue_comments": [           # PR-level (non-inline) comments, full body kept
 #     { "id": int, "author": str, "vendor": str, "body": str, "url": str, "created_at": str }
-#   ]
+#   ],
+#   "counts": {                   # report these per source — never just "N comments"
+#     "threads": int, "unresolved_threads": int, "review_bodies": int,
+#     "embedded_findings": int, "issue_comments": int
+#   }
 # }
 #
 # Design notes:
-# - Vendor detection is based on author login + body shape, not bot suffix.
+# - Vendor detection is based on author login, not bot suffix.
 #   - login starts with "coderabbit" → coderabbit
-#   - login starts with "devin" or contains "devin-ai-integration" → devin
+#   - login starts with "devin" or contains "devin-ai" → devin
 #   - everything else → human (safe default to avoid resolve-misfire)
 # - is_resolved/is_outdated filtering is the caller's responsibility; this
 #   script returns ALL threads so the caller can audit history if needed.
+# - The pure normalization lives in normalize_fetch.jq so it can be tested
+#   against fixtures without network access.
 
 set -euo pipefail
 
@@ -54,17 +86,22 @@ if [ "$#" -ne 1 ]; then
   exit 2
 fi
 
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 pr="$1"
 owner=$(gh repo view --json owner --jq '.owner.login')
 repo=$(gh repo view --json name --jq '.name')
 
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
 # PR metadata
-pr_meta=$(gh pr view "$pr" --json number,title,url,headRefOid,baseRefName \
-  --jq '{number, title, url, head_oid: .headRefOid, base: .baseRefName}')
+gh pr view "$pr" --json number,title,url,headRefOid,baseRefName \
+  --jq '{number, title, url, head_oid: .headRefOid, base: .baseRefName}' >"$tmp/meta.json"
 
 # Review threads (with cursor pagination)
 threads_json='[]'
 cursor=""
+pr_author=""
 while :; do
   args=(-F owner="$owner" -F repo="$repo" -F pr="$pr")
   if [ -n "$cursor" ]; then
@@ -104,57 +141,19 @@ while :; do
   pr_author=$(jq -r '.data.repository.pullRequest.author.login // ""' <<<"$resp")
   [ "$hasNext" = "true" ] || break
 done
+printf '%s\n' "$threads_json" >"$tmp/threads.json"
+
+# Review bodies — CodeRabbit "Outside diff range" / "Nitpick" etc. live ONLY here.
+gh api --paginate "repos/$owner/$repo/pulls/$pr/reviews" \
+  | jq -s 'add // []' >"$tmp/reviews.json"
 
 # General (issue-level) comments — coderabbit summary, devin overview, etc.
-issue_comments=$(gh api --paginate "repos/$owner/$repo/issues/$pr/comments" \
-  --jq '[.[] | {id, author: .user.login, body, url: .html_url, created_at}]' \
-  | jq -s 'add // []')
+gh api --paginate "repos/$owner/$repo/issues/$pr/comments" \
+  | jq -s 'add // []' >"$tmp/issue_comments.json"
 
-vendor_filter='
-def vendor(login):
-  (login // "" | ascii_downcase) as $l
-  | if   ($l | startswith("coderabbit")) then "coderabbit"
-    elif ($l | startswith("devin")) or ($l | contains("devin-ai")) then "devin"
-    else "human" end;
-'
-
-normalized=$(jq -n \
-  --argjson meta "$pr_meta" \
-  --argjson threads "$threads_json" \
-  --argjson issue_comments "$issue_comments" \
-  --arg pr_author "${pr_author:-}" \
-  "$vendor_filter"'
-{
-  pr: $meta,
-  threads: [
-    $threads[]
-    | . as $t
-    | ($t.comments.nodes[0]) as $root
-    | {
-        thread_id: $t.id,
-        is_resolved: $t.isResolved,
-        is_outdated: $t.isOutdated,
-        root_comment: {
-          id: $root.databaseId,
-          author: $root.author.login,
-          vendor: vendor($root.author.login),
-          path: $root.path,
-          line: $root.line,
-          start_line: $root.startLine,
-          original_line: $root.originalLine,
-          body: $root.body,
-          url: $root.url,
-          created_at: $root.createdAt
-        },
-        self_replied: ([$t.comments.nodes[1:][] | select(.author.login == $pr_author)] | length > 0)
-      }
-  ],
-  issue_comments: [
-    $issue_comments[]
-    | . + { vendor: vendor(.author) }
-  ]
-}
-'
-)
-
-echo "$normalized"
+jq -n -f "$SCRIPT_DIR/normalize_fetch.jq" \
+  --slurpfile meta "$tmp/meta.json" \
+  --slurpfile threads "$tmp/threads.json" \
+  --slurpfile reviews "$tmp/reviews.json" \
+  --slurpfile issue_comments "$tmp/issue_comments.json" \
+  --arg pr_author "$pr_author"
