@@ -47,7 +47,7 @@ CodeRabbit / Devin / 人間レビュアーが残したコメントを **盲信�
 
 PR 指摘の取得を subagent に委譲する場合も、ad-hoc な `gh api` / `gh pr view --comments` を並べさせず、**本スキル (`prr fetch`) を使わせる**。委譲プロンプトには次を含める:
 
-- 「pr-review-respond skill を (読み取り専用モード / 対応モードで) 使い、`prr fetch` で取得すること」
+- 「pr-review-respond skill を (読み取り専用モード / 対応モードで) 使い、`prr -R <owner>/<repo> fetch <PR>` で取得すること」 (subagent の cwd が PR のクローンとは限らないので `-R` を省かせない)
 - 「取得件数を **行スレッド (未解決数) / レビュー本文 (うち分解済み指摘数) / 会話コメント** の別で必ず報告すること」 (`prr fetch` 出力の `counts` をそのまま転記させる)
 
 件数がソース別に報告されていない結果は「取得が網羅的だった」証拠にならないので、受け取った側は再取得させる。
@@ -79,7 +79,8 @@ PR 指摘の取得を subagent に委譲する場合も、ad-hoc な `gh api` / 
 
 ```text
 scripts/
-├── prr                  # entry point (subcommand dispatcher)
+├── prr                  # entry point (subcommand dispatcher、-R owner/repo を解釈)
+├── lib_repo.sh          # 対象リポジトリの解決 (-R / GH_REPO / cwd)。各スクリプトが source
 ├── fetch_threads.sh     # prr fetch (API 取得)
 ├── normalize_fetch.jq   # prr fetch の正規化 (純関数、fixture テスト対象)
 ├── reply_thread.sh      # prr reply
@@ -92,11 +93,13 @@ scripts/
 
 ### Subcommand 一覧
 
-すべて `bash "${CLAUDE_SKILL_DIR}/scripts/prr" <subcommand> <args>` で呼び出す:
+すべて `bash "${CLAUDE_SKILL_DIR}/scripts/prr" [-R owner/repo] <subcommand> <args>` で呼び出す。
+
+**対象リポジトリ**: `-R owner/repo` (subcommand の直前・直後どちらでも可。環境変数 `GH_REPO` でも同じ) で明示する。省略時は cwd のリポジトリ (`gh repo view`) を使う。解決したリポジトリは毎回 stderr に `prr: repository <owner/repo> (source: -R|GH_REPO|cwd)` と出る。**cwd が PR のクローンでない場合 (別リポジトリにいる、subagent の cwd が不明) は必ず `-R` を付ける** — cwd の別リポジトリに同番号の PR があると、その PR を正常に読んでしまう。
 
 | Subcommand | 役割 |
 |---|---|
-| `prr fetch <PR>` | 行スレッド (GraphQL) + レビュー本文 (`pulls/{n}/reviews`) + 会話コメント (`issues/{n}/comments`) を全件取得し、vendor 判定 (`coderabbit` / `devin` / `human`)・`self_replied` フラグ・レビュー本文の `embedded_findings`・ソース別 `counts` を付けた正規化 JSON を stdout に出力 |
+| `prr fetch <PR>` | 行スレッド (GraphQL) + レビュー本文 (`pulls/{n}/reviews`) + 会話コメント (`issues/{n}/comments`) を全件取得し、vendor 判定 (`coderabbit` / `devin` / `human`)・`self_replied` フラグ・レビュー本文の `embedded_findings`・ソース別 `counts` を付けた正規化 JSON を stdout に出力。解決したリポジトリに PR が無い・PR がそのリポジトリに属さない場合は空の結果を返さず非ゼロ exit (stderr に理由) |
 | `prr reply <PR> <comment-id> <body-file>` | 正しい `/repos/{O}/{R}/pulls/{PR}/comments/{id}/replies` エンドポイントで返信投稿。本文は file 経由で multi-line / 引用符事故を防ぐ |
 | `prr resolve <PR> <comment-id> <classification> <vendor> [body-file]` | vendor (`coderabbit`/`devin`/`human`、**必須・省略不可**) 別に返信本文を組み立てたうえで (coderabbit のみ `@coderabbitai resolve` を併記)、GraphQL `resolveReviewThread` mutation で全 vendor のスレッドを直接 resolve。`classification` は `VALID` / `VALID_DEFER` / `DUPLICATE` のみ許可。**`INVALID_PUSH` を渡すと非ゼロ exit で拒否する** (誤 resolve ガード、後述)。vendor を省略・誤指定すると usage を表示して非ゼロ exit で拒否する (暗黙デフォルト廃止 — 誤 vendor 判定で人間スレッドに `@coderabbitai resolve` を投稿する事故を防ぐ) |
 | `prr summary <PR> <body-file>` | 集約 Review Response Summary を **新規** issue comment として投稿 (毎回新規投稿、過去サマリは履歴として残す) |
@@ -115,8 +118,11 @@ scripts/
 行スレッド・レビュー本文・会話コメントの 3 種を 1 コマンドで取得・正規化する。`gh api` は `prr` wrapper 経由で呼び出して毎回の許可確認を不要にする。**ad-hoc な `gh` コマンドで代用しない** (どれか 1 種が抜けるのが典型的な取りこぼし経路)。
 
 ```bash
-bash "${CLAUDE_SKILL_DIR}/scripts/prr" fetch <PR>   # → 正規化 JSON を stdout
+bash "${CLAUDE_SKILL_DIR}/scripts/prr" -R <owner>/<repo> fetch <PR>   # → 正規化 JSON を stdout
+# PR のクローン内で実行する場合に限り -R は省略可
 ```
+
+取得後、**`pr.url` (と `pr.repo`) が意図した PR か確認してから** 件数を読む。非ゼロ exit は「指摘ゼロ」ではなく取得失敗として扱い、stderr の理由 (PR が見つからない / 別リポジトリ) を報告する。
 
 出力の主要フィールド:
 
@@ -427,4 +433,5 @@ PR 作者本人 (= 自分) のコメントは fetcher 側ではフィルタし�
 - **GraphQL `reviewThreads.isResolved` への依存**: REST だけでは resolve 判定が取れないため GraphQL 併用。`gh` 認証スコープに graphql 必須。
 - **`resolveReviewThread` mutation は書き込み権限が必要**: 読み取り専用の `gh` 認証や外部フォークからの実行では失敗する。自分の PR / write 権限のあるリポジトリで動かす前提。
 - **`gh pr checks --watch` の長時間ブロック**: 大規模 CI で 30 分超を想定。バックグラウンド実行 + 通知に切り替える運用余地あり。
+- **別リポジトリの同番号 PR は `-R` 無しでは検出できない**: cwd 由来で解決したリポジトリに同じ番号の PR が実在すると、`prr fetch` はそれを正しい PR として読む (PR 不在・リポジトリ不一致は非ゼロ exit で検出する)。stderr の `prr: repository ...` と出力の `pr.url` で対象を確認し、クローン外からは `-R` を必須とする。
 - **multi-PR 並走の分離**: 1 セッション内で複数 PR を同時に捌く運用は想定していない。PR ごとに 1 セッション。

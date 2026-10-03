@@ -35,9 +35,11 @@ if [ ! -f "$body_file" ]; then
   exit 2
 fi
 
-owner=$(gh repo view --json owner --jq '.owner.login')
-repo=$(gh repo view --json name --jq '.name')
-pr_url=$(gh pr view "$pr" --json url --jq '.url')
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source-path=SCRIPTDIR source=lib_repo.sh
+. "$SCRIPT_DIR/lib_repo.sh"
+prr_resolve_repo
+pr_url=$(gh pr view "$pr" -R "$GH_REPO" --json url --jq '.url')
 
 # Retry-safe: a prior invocation for this exact thread may have already
 # created the follow-up issue (e.g. this step succeeded but a later step in

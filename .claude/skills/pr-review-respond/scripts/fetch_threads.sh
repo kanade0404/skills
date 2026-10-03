@@ -13,12 +13,18 @@
 #   3. PR conversation comments     (REST issues/{n}/comments — walkthroughs,
 #                                    summaries, free-form findings)
 #
-# Usage: fetch_threads.sh <pr-number>
+# Usage: fetch_threads.sh <pr-number>      (normally via `prr [-R owner/repo] fetch`)
 # Requires: gh (authenticated), jq
+#
+# Repository: GH_REPO (set by `prr -R owner/repo`) or the current directory's
+# repository — see lib_repo.sh. The resolved repository is printed on stderr.
+# Exits non-zero (stderr says why) when the PR does not exist in that
+# repository or belongs to another one, instead of emitting an empty document.
 #
 # Output schema:
 # {
-#   "pr": { "number": int, "title": str, "url": str, "head_oid": str, "base": str },
+#   "pr": { "number": int, "title": str, "url": str, "head_oid": str, "base": str,
+#           "repo": "owner/repo" (base repository), "head_repo": "owner/repo" | null },
 #   "threads": [
 #     {
 #       "thread_id": str,        # GraphQL node id
@@ -87,16 +93,46 @@ if [ "$#" -ne 1 ]; then
 fi
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source-path=SCRIPTDIR source=lib_repo.sh
+. "$SCRIPT_DIR/lib_repo.sh"
 pr="$1"
-owner=$(gh repo view --json owner --jq '.owner.login')
-repo=$(gh repo view --json name --jq '.name')
+prr_resolve_repo
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-# PR metadata
-gh pr view "$pr" --json number,title,url,headRefOid,baseRefName \
-  --jq '{number, title, url, head_oid: .headRefOid, base: .baseRefName}' >"$tmp/meta.json"
+wrong_repo_hint() {
+  if [ "$repo_source" = "cwd" ]; then
+    echo "hint: the repository was taken from the current directory; if the PR lives elsewhere, run 'prr -R owner/repo fetch $pr'" >&2
+  fi
+}
+
+# PR metadata. This also proves the PR exists in the resolved repository —
+# a missing PR must be an error, never an empty (= "no findings") document.
+if ! gh pr view "$pr" -R "$GH_REPO" \
+  --json number,title,url,headRefOid,baseRefName,headRepository,headRepositoryOwner \
+  >"$tmp/pr.json" 2>"$tmp/pr.err"; then
+  echo "error: PR #$pr not found in $owner/$repo (source: $repo_source): $(tr '\n' ' ' <"$tmp/pr.err")" >&2
+  wrong_repo_hint
+  exit 1
+fi
+jq '{
+    number, title, url, head_oid: .headRefOid, base: .baseRefName,
+    repo: (.url | capture("^https?://[^/]+/(?<o>[^/]+)/(?<r>[^/]+)/pull/") | "\(.o)/\(.r)"),
+    head_repo: (if .headRepositoryOwner.login and .headRepository.name
+                then "\(.headRepositoryOwner.login)/\(.headRepository.name)" else null end)
+  }' "$tmp/pr.json" >"$tmp/meta.json"
+# The PR must belong to the resolved repository (as its base, or as the head
+# of a same-repo PR). Anything else means we are about to read another
+# repository's threads under this PR's name.
+target=$(printf '%s/%s' "$owner" "$repo" | tr '[:upper:]' '[:lower:]')
+if ! jq -e --arg t "$target" \
+  '[.repo, .head_repo] | map(select(. != null) | ascii_downcase) | index($t) != null' \
+  "$tmp/meta.json" >/dev/null; then
+  echo "error: PR #$pr resolved to $(jq -r '.url' "$tmp/meta.json"), which is not in $owner/$repo (source: $repo_source)" >&2
+  wrong_repo_hint
+  exit 1
+fi
 
 # Review threads (with cursor pagination)
 threads_json='[]'
@@ -135,6 +171,10 @@ while :; do
       }
     }
   }')
+  if ! jq -e '.data.repository.pullRequest != null' >/dev/null <<<"$resp"; then
+    echo "error: GraphQL returned no pull request #$pr for $owner/$repo: $(jq -c '.errors // empty' <<<"$resp" 2>/dev/null)" >&2
+    exit 1
+  fi
   threads_json=$(jq -c --argjson r "$resp" '. + $r.data.repository.pullRequest.reviewThreads.nodes' <<<"$threads_json")
   hasNext=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$resp")
   cursor=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // empty' <<<"$resp")
