@@ -108,7 +108,7 @@ scripts/
 | `prr resolve <PR> <comment-id> <classification> <vendor> [body-file]` | vendor (`coderabbit`/`devin`/`human`、**必須・省略不可**) 別に返信本文を組み立てたうえで (coderabbit のみ `@coderabbitai resolve` を併記)、GraphQL `resolveReviewThread` mutation で全 vendor のスレッドを直接 resolve。`classification` は `VALID` / `VALID_DEFER` / `DUPLICATE` のみ許可。**`INVALID_PUSH` を渡すと非ゼロ exit で拒否する** (誤 resolve ガード、後述)。vendor を省略・誤指定すると usage を表示して非ゼロ exit で拒否する (暗黙デフォルト廃止 — 誤 vendor 判定で人間スレッドに `@coderabbitai resolve` を投稿する事故を防ぐ) |
 | `prr summary <PR> <body-file>` | 集約 Review Response Summary を **新規** issue comment として投稿 (毎回新規投稿、過去サマリは履歴として残す) |
 | `prr wait-ci <PR> [interval]` | `gh pr checks --watch` をラップし全 check 完了まで block。失敗時は exit 非ゼロで呼出側に通知 (本スキルは retry しない) |
-| `prr defer <PR> <thread-url> <title> <body-file>` | `VALID_DEFER` 判定のフォロー issue を作成し、`<issue-number> <issue-url>` を stdout に出力。本文に元スレッド URL と PR URL を自動付記する |
+| `prr defer <PR> <thread-url> <title> <body-file>` | `VALID_DEFER` 判定のフォロー issue を作成し、`<issue-number> <issue-url>` を stdout に出力。本文に元スレッド URL と PR URL を自動付記する。`<thread-url>` は指摘固有 (レビュー本文・会話コメント由来は `#finding-...` キー付き、後述) |
 | `prr escalate <PR> <reason> <body-file>` | 無人実行で `WAITING` を返す相手がいない時のフォールバック。PR に `needs-human` ラベルを付け、`body-file` を構造化コメントとして投稿する |
 
 スクリプト本体は最小依存 (`gh`, `jq`, `bash`) のみ前提。Python / Node 等は使わない。
@@ -225,6 +225,7 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prr" defer <PR> <thread-url> "<title>" <body-f
 # stdout: "<issue-number> <issue-url>"
 ```
 
+- **`<thread-url>` は指摘 1 件に固有であること** (重複 issue 防止の検索キーを兼ねる): 行スレッドはスレッド URL (`#discussion_r<id>`) をそのまま渡す。**レビュー本文・会話コメント由来の指摘**は、同じレビュー / コメントの全指摘が URL を共有するため、指摘固有キーを付けて渡す — `<review_bodies[].url または comment url>#finding-<category>-<path>-<start>-<end>-<ordinal>` (例: `https://github.com/o/r/pull/7#pullrequestreview-9001#finding-outside_diff_range-src/a.ts-88-96-1`)。`category` は `embedded_findings[].category` (自分で切り出した指摘は `body`)、path / 行が無ければ `-` 、`ordinal` はそのレビュー内での 1 始まりの通し番号、path 中の空白は `_` に置換する。キー無しの `#pullrequestreview-` / `#issuecomment-` URL は `prr defer` が非ゼロ exit で拒否する。同じキーで再実行すれば既存 issue が返る
 - **タイトル規約**: 指摘内容を要約した命令形 1 行 (例: `Extract retry policy into shared helper`)。skill 名等のプレフィックスは付けない。
 - **本文必須項目**: 指摘の要約、スコープ外と判断した理由 (1 文)。元スレッド URL と PR URL は `prr defer` が自動で付記する。
 - 生成された issue 番号を Phase D の返信 (`Tracked in #<issue>`) と Phase E のサマリ (`[<thread-url>] → #<issue>`) の両方に使う。
@@ -261,7 +262,7 @@ vendor 別の使い分け:
 
 対応済み (修正 commit 済み / issue 化済み / 重複参照済み) のスレッドは vendor を問わず resolve し、PR の未解決スレッド数を実態に一致させる。これは `pr-monitor` の `prm` が持つ `unresolved_count` (`isResolved == false` の全スレッド数) が収束判定の前提にしている値そのものであり、CodeRabbit 以外のスレッドを resolve せず放置すると、対応済みでも `unresolved_count` が減らず収束ループが成立しない。
 
-**行スレッドが無い指摘 (レビュー本文・会話コメント由来) の返信先**: `prr reply` / `prr resolve` は行スレッド専用で使えない。これらは Phase E の集約サマリ内「Review body / conversation findings」節で、元レビュー (`review_bodies[].url`) または元コメントの URL と `path:line` を引用して 1 件ずつ分類・対応内容 (Fixed in `<SHA>` / pushback 根拠 / Tracked in #`<issue>` / Duplicate of `<thread-url>`) を書く。個別の会話コメントを指摘ごとに乱発しない — サマリ 1 本に集約する方針はここでも同じ。
+**行スレッドが無い指摘 (レビュー本文・会話コメント由来) の返信先**: `prr reply` / `prr resolve` は行スレッド専用で使えない。これらは Phase E の集約サマリ内「Review body / conversation findings」節で、元レビュー (`review_bodies[].url`) または元コメントの URL と `path:line` を引用して 1 件ずつ分類・対応内容 (Fixed in `<SHA>` / pushback 根拠 / Tracked in #`<issue>` / Duplicate of `<thread-url>`) を書く。個別の会話コメントを指摘ごとに乱発しない — サマリ 1 本に集約する方針はここでも同じ。`VALID_DEFER` の issue は指摘ごとに `#finding-...` キー付き URL で `prr defer` する (VALID_DEFER 節参照。review URL のままだと同じレビューの 2 件目以降が 1 件目の issue に吸収される)。
 
 **重要**: `INVALID_PUSH` は **どのレビュアーに対しても resolve コマンドを発行しない** (`prr reply` のみ使用)。reviewer 側に「無視された」と取られる余地を消すため。この規律は運用 (書き手の注意) だけに頼らず、`resolve_thread.sh` 自身が `classification` 引数に `INVALID_PUSH` を渡された時点で非ゼロ exit するガードとして実装されている。
 

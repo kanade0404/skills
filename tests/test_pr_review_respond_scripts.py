@@ -156,5 +156,58 @@ class TestOtherSubcommandsHonorRepo(PrrTestCase):
         self.assertIn("-R o/r", comments[0])
 
 
+REVIEW_URL = "https://github.com/o/r/pull/7#pullrequestreview-9001"
+
+
+class TestDeferPerFindingKey(PrrTestCase):
+    """skills#157 Devin 指摘: 同一レビュー本文の 2 指摘が review URL を共有すると、
+    `prr defer` の既存 issue 検索 (body に URL を含むか) が 1 件目の issue を 2 件目にも返していた。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.add_pr("o/r", 7)
+        self.body = self.tmp / "body.md"
+        self.body.write_text("summary + why out of scope", encoding="utf-8")
+
+    def defer(self, url: str) -> subprocess.CompletedProcess[str]:
+        return self.prr("-R", "o/r", "defer", "7", url, "Title", str(self.body))
+
+    def issue_number(self, proc: subprocess.CompletedProcess[str]) -> int:
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return int(proc.stdout.split()[0])
+
+    def test_two_findings_of_one_review_get_separate_issues(self) -> None:
+        first = self.issue_number(self.defer(f"{REVIEW_URL}#finding-outside_diff_range-src/a.ts-10-15-1"))
+        second = self.issue_number(self.defer(f"{REVIEW_URL}#finding-nitpick-src/b.ts-3-3-2"))
+        self.assertNotEqual(first, second)
+        self.assertEqual(len(list((self.state / "issues").glob("*.json"))), 2)
+
+    def test_retry_of_the_same_finding_reuses_its_issue(self) -> None:
+        url = f"{REVIEW_URL}#finding-outside_diff_range-src/a.ts-10-15-1"
+        first = self.issue_number(self.defer(url))
+        self.assertEqual(self.issue_number(self.defer(url)), first)
+        self.assertEqual(len(list((self.state / "issues").glob("*.json"))), 1)
+
+    def test_key_that_is_a_prefix_of_another_key_is_not_confused(self) -> None:
+        tenth = self.issue_number(self.defer(f"{REVIEW_URL}#finding-nitpick-a.ts-1-1-10"))
+        first = self.issue_number(self.defer(f"{REVIEW_URL}#finding-nitpick-a.ts-1-1-1"))
+        self.assertNotEqual(tenth, first)
+
+    def test_bare_review_or_comment_url_is_rejected(self) -> None:
+        for url in (REVIEW_URL, "https://github.com/o/r/pull/7#issuecomment-5001"):
+            with self.subTest(url=url):
+                proc = self.defer(url)
+                self.assertEqual(proc.returncode, 2)
+                self.assertIn("#finding-", proc.stderr)
+        self.assertEqual(list((self.state / "issues").glob("*.json")), [])
+
+    def test_inline_thread_url_still_works_and_dedups(self) -> None:
+        url = "https://github.com/o/r/pull/7#discussion_r101"
+        first = self.issue_number(self.defer(url))
+        self.assertEqual(self.issue_number(self.defer(url)), first)
+        created = json.loads((self.state / "issues" / f"{first}.json").read_text(encoding="utf-8"))
+        self.assertTrue(created["body"].rstrip().endswith(f"review thread: {url}"))
+
+
 if __name__ == "__main__":
     unittest.main()
