@@ -37,11 +37,22 @@ prr_resolve_repo() {
       echo "error: invalid repository '$GH_REPO' (expected owner/repo)" >&2
       return 2
     fi
+    # Only github.com is supported: the REST / GraphQL calls are built from
+    # owner/repo and `gh api` targets github.com unless --hostname is passed,
+    # so a GHE host would silently read github.com/<owner>/<repo> instead.
+    # Reject other hosts up front rather than query the wrong server.
+    if [[ "$spec" == */*/* ]]; then
+      local host="${spec%%/*}"
+      if [ "$host" != "github.com" ]; then
+        echo "error: host '$host' in '$GH_REPO' is not supported (prr only targets github.com; pass owner/repo)" >&2
+        return 2
+      fi
+      spec="${spec#*/}"
+    fi
     repo="${spec##*/}"
-    spec="${spec%/*}"
-    owner="${spec##*/}"
+    owner="${spec%/*}"
     repo_source="${PRR_REPO_SOURCE:-GH_REPO}"
-    export GH_REPO
+    export GH_REPO="$owner/$repo"
   else
     if ! spec=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null) || [ -z "$spec" ]; then
       echo "error: could not resolve a GitHub repository from the current directory; pass -R owner/repo" >&2

@@ -14,7 +14,8 @@
 #   - `gh repo view` IGNORES GH_REPO (always the cwd repository)
 #   - `gh pr view` honors -R, then GH_REPO, then the cwd repository
 #   - `gh search issues` matching is fuzzy, so this fake returns EVERY stored
-#     issue of the repo; callers must filter exactly themselves
+#     issue of the repo (up to --limit, newest first); callers must filter
+#     exactly themselves
 set -euo pipefail
 : "${FAKE_GH_STATE:?}"
 mkdir -p "$FAKE_GH_STATE/issues"
@@ -22,12 +23,14 @@ touch "$FAKE_GH_STATE/prs"
 printf 'GH_REPO=%s %s\n' "${GH_REPO:-}" "$*" >>"$FAKE_GH_STATE/calls.log"
 
 repo_flag=""
+limit=30 # gh search default
 jqf=""
 fields=()
 rest=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -R|--repo) repo_flag="$2"; shift 2 ;;
+    --limit|-L) limit="$2"; shift 2 ;;
     --jq) jqf="$2"; shift 2 ;;
     -f|-F) fields+=("$2"); shift 2 ;;
     *) rest+=("$1"); shift ;;
@@ -87,8 +90,11 @@ case "${rest[0]:-} ${rest[1]:-}" in
     echo '{"data":{"repository":{"pullRequest":{"author":{"login":"me"},"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}'
     ;;
   "search issues")
-    # --repo is captured as repo_flag; the query itself is ignored on purpose
-    jq -s --arg r "$repo_flag" '[.[] | select(.repo == $r) | {number, url, body}]' \
+    # --repo is captured as repo_flag; the query itself is ignored on purpose.
+    # Like real gh, at most --limit results come back (newest first here), so
+    # an older matching issue can fall outside a small limit.
+    jq -s --arg r "$repo_flag" --argjson lim "$limit" \
+      '[.[] | select(.repo == $r) | {number, url, body}] | sort_by(-.number) | .[:$lim]' \
       "$FAKE_GH_STATE"/issues/*.json 2>/dev/null || echo '[]'
     ;;
   *)

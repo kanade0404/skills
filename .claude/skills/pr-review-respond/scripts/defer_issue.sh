@@ -74,8 +74,12 @@ pr_url=$(gh pr view "$pr" -R "$GH_REPO" --json url --jq '.url')
 # #finding- key, to stay well under the 256-char query limit). The match is
 # exact on the footer line this script writes, so "...-1" never matches an
 # issue for "...-10" and a bare review URL never matches a finding's issue.
+# Every finding of one review shares that candidate query, so the candidate
+# pool grows with the number of deferred findings in the review. Ask for the
+# search API's ceiling (1000 results) instead of one page of 100, or an older
+# finding's issue falls outside the page and a retry duplicates it.
 search_json=$(gh search issues --repo "$owner/$repo" --match body "${thread_url%%#finding-*}" \
-  --json number,url,body --limit 100)
+  --json number,url,body --limit 1000)
 existing=$(jq -r --arg url "$thread_url" \
   '[.[] | select(.body // "" | split("\n") | map(rtrimstr("\r"))
                  | any(endswith(" review thread: " + $url)))][0]

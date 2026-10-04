@@ -134,6 +134,18 @@ class TestFetchRepositoryResolution(PrrTestCase):
         self.assertIn("owner/repo", proc.stderr)
         self.assertEqual(self.calls(), [])
 
+    def test_non_github_com_host_is_rejected_before_any_call(self) -> None:
+        # skills#157 Devin 指摘: HOST/OWNER/REPO の HOST を捨てて github.com の o/r を読んでいた
+        self.add_pr("o/r", 7)
+        proc = self.prr("-R", "ghe.example.com/o/r", "fetch", "7")
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("ghe.example.com", proc.stderr)
+        self.assertEqual(self.calls(), [])
+
+    def test_explicit_github_com_host_is_normalized_to_owner_repo(self) -> None:
+        self.add_pr("o/r", 7)
+        self.assert_fetched_from(self.prr("-R", "github.com/o/r", "fetch", "7"), "o/r")
+
 
 class TestOtherSubcommandsHonorRepo(PrrTestCase):
     def test_reply_posts_to_the_explicit_repo(self) -> None:
@@ -207,6 +219,28 @@ class TestDeferPerFindingKey(PrrTestCase):
         self.assertEqual(self.issue_number(self.defer(url)), first)
         created = json.loads((self.state / "issues" / f"{first}.json").read_text(encoding="utf-8"))
         self.assertTrue(created["body"].rstrip().endswith(f"review thread: {url}"))
+
+    def test_retry_finds_its_issue_beyond_the_first_100_candidates(self) -> None:
+        # skills#157 Devin 指摘: 検索は review URL 単位なので、同じレビューの issue が 100 件を
+        # 超えると --limit 100 の外に既存 issue が落ち、再実行で重複 issue を作っていた
+        target = f"{REVIEW_URL}#finding-nitpick-a.ts-1-1-1"
+        issues = self.state / "issues"
+        issues.mkdir(exist_ok=True)
+        for n in range(1, 102):
+            url = target if n == 1 else f"{REVIEW_URL}#finding-nitpick-a.ts-1-1-{n}"
+            (issues / f"{n}.json").write_text(
+                json.dumps(
+                    {
+                        "repo": "o/r",
+                        "number": n,
+                        "url": f"https://github.com/o/r/issues/{n}",
+                        "body": f"s\n\nDeferred from PR https://github.com/o/r/pull/7 review thread: {url}\n",
+                    }
+                ),
+                encoding="utf-8",
+            )
+        self.assertEqual(self.issue_number(self.defer(target)), 1)
+        self.assertEqual(len(list(issues.glob("*.json"))), 101)
 
 
 if __name__ == "__main__":

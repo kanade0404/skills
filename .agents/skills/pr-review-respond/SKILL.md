@@ -438,4 +438,6 @@ PR 作者本人 (= 自分) のコメントは fetcher 側ではフィルタし�
 - **`resolveReviewThread` mutation は書き込み権限が必要**: 読み取り専用の `gh` 認証や外部フォークからの実行では失敗する。自分の PR / write 権限のあるリポジトリで動かす前提。
 - **`gh pr checks --watch` の長時間ブロック**: 大規模 CI で 30 分超を想定。バックグラウンド実行 + 通知に切り替える運用余地あり。
 - **別リポジトリの同番号 PR は `-R` 無しでは検出できない**: cwd 由来で解決したリポジトリに同じ番号の PR が実在すると、`prr fetch` はそれを正しい PR として読む (PR 不在・リポジトリ不一致は非ゼロ exit で検出する)。stderr の `prr: repository ...` と出力の `pr.url` で対象を確認し、クローン外からは `-R` を必須とする。
+- **github.com 専用**: `-R` / `GH_REPO` は `owner/repo` (または `github.com/owner/repo`) のみ受け付ける。GitHub Enterprise の `HOST/owner/repo` は、API 呼び出しが github.com の同名リポジトリを読んでしまうため非ゼロ exit で拒否する。
+- **`prr defer` の重複検出は 1 レビューあたり 1000 件まで**: 既存 issue の候補検索は search API の上限 (1000 件) までしか見ない。同じレビューから 1000 件超を defer する運用は想定しない。
 - **multi-PR 並走の分離**: 1 セッション内で複数 PR を同時に捌く運用は想定していない。PR ごとに 1 セッション。
