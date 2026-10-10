@@ -12,7 +12,7 @@
         "x86_64-linux"
       ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
-      pythonVersion = "3.13";
+      pythonVersion = "3.14";
       pythonVersionParts = builtins.match "([0-9]+)\\.([0-9]+)(\\..*)?" pythonVersion;
       pythonPackage = "python${builtins.elemAt pythonVersionParts 0}${builtins.elemAt pythonVersionParts 1}";
     in
