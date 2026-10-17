@@ -1,0 +1,32 @@
+{
+  "name": "ja-writing",
+  "displayName": "ja-writing",
+  "version": "0.1.0",
+  "description": "日本語の文章を textlint（ja-technical-writing、ja-spacing、ai-writing）で検査するフックとスキル、推敲スキル yomiyasu",
+  "author": { "name": "kanade0404" },
+  "repository": "https://github.com/kanade0404/skills",
+  "license": "MIT",
+  "keywords": ["textlint", "japanese", "writing", "lint", "markdown", "yomiyasu"],
+  "userConfig": {
+    "hook_mode": {
+      "type": "string",
+      "title": "ファイル検査のモード",
+      "description": "書き換えた .md・.txt に textlint の指摘があったときの挙動。block は直させる、warn は文脈として渡すだけ、off は検査しない",
+      "options": ["block", "warn", "off"],
+      "default": "block"
+    },
+    "stop_mode": {
+      "type": "string",
+      "title": "答えの検査のモード",
+      "description": "ターンの最後の答えに指摘があったときの挙動。notify は利用者にだけ表示する、block は書き直させる（1回まで）、off は検査しない",
+      "options": ["notify", "block", "off"],
+      "default": "notify"
+    },
+    "session_context": {
+      "type": "boolean",
+      "title": "文章の規約を渡す",
+      "description": "セッションの開始時に、textlint のルールに沿った文章の規約を文脈に入れる（数百トークン）",
+      "default": true
+    }
+  }
+}

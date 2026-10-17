@@ -1,0 +1,14 @@
+[
+  {
+    "destination": "plugins/ja-writing/skills/yomiyasu",
+    "repository": "https://github.com/nanaism/yomiyasu",
+    "path": "skills/yomiyasu",
+    "exclude": ["assets"]
+  },
+  {
+    "destination": "plugins/productivity/skills/handoff",
+    "repository": "https://github.com/mattpocock/skills",
+    "path": "skills/productivity/handoff",
+    "exclude": []
+  }
+]
