@@ -174,6 +174,18 @@ class TestLintDocumentsWithKernel:
         assert report.results[0].output is None
         assert report.source == "test"
 
+    def test_project_bunfig_is_not_loaded(
+        self, tmp_path: Path, real_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # プロジェクトの bunfig.toml の preload は、プロジェクトのコードを実行できてしまう。
+        marker = tmp_path / "marker"
+        _ = (tmp_path / "bunfig.toml").write_text('preload = ["./evil.ts"]\n', encoding="utf-8")
+        _ = (tmp_path / "evil.ts").write_text(f'await Bun.write("{marker}", "ran");\n', encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        report = lint_documents([Document("a.md", AI_LIKE)], config=load_config(CHAT_CONFIG), env=real_env)
+        assert report.results[0].messages
+        assert not marker.exists()
+
     def test_unknown_names_are_ignored(self, real_env: dict[str, str]) -> None:
         config = Config({"rules": {"./evil": True, "/abs/evil.js": True}, "filters": {"../x": True}}, "test")
         report = lint_documents([Document("a.md", AI_LIKE)], config=config, env=real_env)

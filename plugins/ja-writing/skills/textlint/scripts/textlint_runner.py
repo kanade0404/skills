@@ -43,6 +43,9 @@ _PROJECT_OTHER_CONFIGS = (
 )
 # 依存は bun.lock のとおりに入れる。依存のインストールスクリプトは実行しない。
 _BUN_INSTALL = ("install", "--frozen-lockfile", "--production", "--ignore-scripts", "--no-progress", "--silent")
+# bun はカレントディレクトリの bunfig.toml(preload など)と .env を読む。プロジェクトのコードや設定が混ざらないよう、
+# bun は自分で管理するディレクトリで起動し、.env も読ませない。
+_BUN_RUN = ("--no-env-file",)
 
 
 class TextlintError(Exception):
@@ -176,7 +179,7 @@ def ensure_installed(env: Mapping[str, str]) -> Path:
 def _bun(env: Mapping[str, str]) -> str:
     bun = _which("bun", env)
     result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - bun は which で解決した絶対パス、引数は固定
-        [bun, "--version"], capture_output=True, text=True, check=False, env=dict(env)
+        [bun, "--version"], cwd=SKILL_ROOT, capture_output=True, text=True, check=False, env=dict(env)
     )
     match = _BUN_VERSION.fullmatch(result.stdout.strip())
     if match is None or (int(match.group(1)), int(match.group(2))) < MINIMUM_BUN:
@@ -290,7 +293,8 @@ def lint_documents(
         "items": [{"filePath": doc.file_path, "ext": _ext(doc.file_path), "text": doc.text} for doc in documents],
     }
     result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - bun は which で解決した絶対パス、ランナーは同梱のファイル
-        [bun, str(RUNNER)],
+        [bun, *_BUN_RUN, str(RUNNER)],
+        cwd=directory,
         input=json.dumps(request),
         capture_output=True,
         text=True,
