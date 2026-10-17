@@ -57,6 +57,11 @@ class TestRun:
         assert lint.run(["a.md"], {"PATH": str(tmp_path)}, tmp_path) == 2
         assert "node が見つかりません" in capsys.readouterr().err
 
+    def test_unreadable_file(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        _ = (tmp_path / "a.md").write_bytes("テスト".encode("cp932"))
+        assert lint.run(["a.md"], {}, tmp_path) == 2
+        assert "UTF-8 として読めません" in capsys.readouterr().err
+
     def test_errors(self, tmp_path: Path, real_env: dict[str, str], capsys: pytest.CaptureFixture[str]) -> None:
         _ = write(tmp_path, "a.md", AI_LIKE)
         assert lint.run(["a.md"], real_env, tmp_path) == 1

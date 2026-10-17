@@ -58,9 +58,12 @@ def upstream(tmp_path: Path) -> Path:
         path = skill / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         _ = path.write_text(body, encoding="utf-8")
+    _ = (repo / ".gitignore").write_text("secret.txt\n", encoding="utf-8")
     git(repo, "init", "-q")
     git(repo, "add", ".")
     git(repo, "commit", "-q", "-m", "init")
+    # git が無視するファイルは写さない。
+    _ = (skill / "secret.txt").write_text("token", encoding="utf-8")
     return repo
 
 
@@ -98,6 +101,27 @@ class TestVendor:
         ]
         assert (destination / "LICENSE").read_text(encoding="utf-8") == "MIT License\n"
         assert sha in (destination / "references" / "b.md").read_text(encoding="utf-8")
+
+    def test_replaces_existing_copy(self, upstream: Path, tmp_path: Path) -> None:
+        destination = tmp_path / "out"
+        destination.mkdir()
+        _ = (destination / "stale.md").write_text("old", encoding="utf-8")
+        _ = vendor_yomiyasu.vendor(upstream, destination)
+        assert not (destination / "stale.md").exists()
+        assert (destination / "SKILL.md").is_file()
+        assert sorted(path.name for path in tmp_path.iterdir()) == ["out", "upstream"]
+
+    def test_symlink_is_rejected_and_existing_copy_is_kept(self, upstream: Path, tmp_path: Path) -> None:
+        (upstream / "skills" / "yomiyasu" / "link").symlink_to("/etc/hosts")
+        git(upstream, "add", ".")
+        git(upstream, "commit", "-q", "-m", "link")
+        destination = tmp_path / "out"
+        destination.mkdir()
+        _ = (destination / "keep.md").write_text("keep", encoding="utf-8")
+        with pytest.raises(vendor_yomiyasu.VendorError, match="シンボリックリンクは写しません"):
+            _ = vendor_yomiyasu.vendor(upstream, destination)
+        assert (destination / "keep.md").read_text(encoding="utf-8") == "keep"
+        assert sorted(path.name for path in tmp_path.iterdir()) == ["out", "upstream"]
 
     def test_dirty_tree(self, upstream: Path, tmp_path: Path) -> None:
         _ = (upstream / "new.txt").write_text("x", encoding="utf-8")

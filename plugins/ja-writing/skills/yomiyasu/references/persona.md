@@ -1,4 +1,4 @@
-<!-- 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/references/persona.md （MIT License。著作権表示は skills/yomiyasu/LICENSE を参照） -->
+<!-- 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/references/persona.md (MIT License。著作権表示は skills/yomiyasu/LICENSE を参照) -->
 # 書き手と読み手（ペルソナ）
 
 SKILL.md 2章 Step 1 の1の、書き手の立場と読み手との関係の細部。どの値でも、意味（数値、否定、条件、確度、誰が何をしたか）を保つこと、原文にない内容（担当者、説明、主張、気持ち、挨拶、お詫び）を足さないこと、構成を変えないことは同じ。例はすべて合成。

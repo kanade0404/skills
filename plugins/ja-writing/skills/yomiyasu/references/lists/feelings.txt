@@ -1,4 +1,4 @@
-# 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/references/lists/feelings.txt （MIT License。著作権表示は skills/yomiyasu/LICENSE を参照）
+# 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/references/lists/feelings.txt (MIT License。著作権表示は skills/yomiyasu/LICENSE を参照)
 # 気持ちの語の一覧（元の文書にない気持ちの語を足した推敲を、意味が変わる恐れ feeling として出す。yomiyasu_diff.py が読む）
 # 推敲後の変わった文に、元の文書のどこにもない気持ちの語（ほっとした、安堵した、うれしかった など）が出たら候補にする。
 # 書き方: 1行に1つ、「名前<TAB>正規表現」。1行が語の家族（嬉し・うれし など）で、元の文書に同じ家族の語があれば出さない。

@@ -1,0 +1,5 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+reviews:
+  path_filters:
+    # 上流（nanaism/yomiyasu）の写し。手を加えないので、レビューの対象にしない。
+    - "!plugins/ja-writing/skills/yomiyasu/**"

@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import] - git を固定の引数で起動するために使う
 import sys
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -27,6 +28,8 @@ DESTINATION = Path(__file__).resolve().parent.parent / "plugins" / "ja-writing" 
 # 写さないもの: 上流のプラグイン設定(入れ子のプラグインとして読まれるのを避ける)と、SKILL.md から参照されない画像。
 _EXCLUDE = frozenset({".claude-plugin", "assets"})
 _ANNOTATED_SUFFIXES = frozenset({".py", ".txt", ".md"})
+# git の記録でシンボリックリンクを表すモード。
+_SYMLINK_MODE = "120000"
 _SHA = re.compile(r"[0-9a-f]{40}")
 _FRONTMATTER_END = "\n---\n"
 
@@ -88,10 +91,6 @@ def annotate(body: str, relative: str, sha: str) -> str:
     return comment + body
 
 
-def _ignore(_directory: str, names: list[str]) -> set[str]:
-    return {name for name in names if name in _EXCLUDE}
-
-
 def vendor(source: Path, destination: Path = DESTINATION) -> str:
     """Source の skills/yomiyasu を destination へ写す.
 
@@ -99,7 +98,7 @@ def vendor(source: Path, destination: Path = DESTINATION) -> str:
         写したコミットの SHA。
 
     Raises:
-        VendorError: git が失敗したとき、作業ツリーに変更があるとき、写す元がないとき。
+        VendorError: git が失敗したとき、作業ツリーに変更があるとき、写す元がないとき、シンボリックリンクがあるとき。
     """
     origin = source / "skills" / "yomiyasu"
     sha = _git(source, "rev-parse", "HEAD").strip()
@@ -109,18 +108,47 @@ def vendor(source: Path, destination: Path = DESTINATION) -> str:
     if _git(source, "status", "--porcelain").strip():
         msg = f"作業ツリーに変更があります: {source}"
         raise VendorError(msg)
-    # 既存の写しを消す前に、写す元があることを確かめる。
-    if not (origin / "SKILL.md").is_file():
+    files = _tracked_files(source)
+    if "SKILL.md" not in files:
         msg = f"{origin} に SKILL.md がありません"
         raise VendorError(msg)
 
-    shutil.rmtree(destination, ignore_errors=True)
-    _ = shutil.copytree(origin, destination, ignore=_ignore)
-    for path in sorted(destination.rglob("*")):
-        if path.is_file() and path.suffix in _ANNOTATED_SUFFIXES:
-            relative = path.relative_to(destination).as_posix()
-            _ = path.write_text(annotate(path.read_text(encoding="utf-8"), relative, sha), encoding="utf-8")
+    # 新しい写しを隣の一時ディレクトリで完成させてから、既存の写しと置き換える。途中で失敗しても既存の写しは残る。
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{destination.name}.new-", dir=destination.parent))
+    retired = destination.parent / f".{destination.name}.old"
+    try:
+        for relative, mode in sorted(files.items()):
+            if mode == _SYMLINK_MODE:
+                msg = f"シンボリックリンクは写しません: skills/yomiyasu/{relative}"
+                raise VendorError(msg)
+            target = staging / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            body = (origin / relative).read_bytes()
+            if Path(relative).suffix in _ANNOTATED_SUFFIXES:
+                body = annotate(body.decode("utf-8"), relative, sha).encode("utf-8")
+            _ = target.write_bytes(body)
+        shutil.rmtree(retired, ignore_errors=True)
+        if destination.exists():
+            _ = destination.rename(retired)
+        _ = staging.rename(destination)
+        shutil.rmtree(retired, ignore_errors=True)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
     return sha
+
+
+def _tracked_files(source: Path) -> dict[str, str]:
+    # git に記録されたファイルだけを写す。.gitignore で無視されたファイルや、作業ツリーにだけあるファイルは含めない。
+    # 出力は「<mode> <object> <stage>\t<path>」を NUL で区切ったもの。
+    listing = _git(source, "ls-files", "-s", "-z", "--", "skills/yomiyasu")
+    files: dict[str, str] = {}
+    for record in filter(None, listing.split("\0")):
+        meta, path = record.split("\t", 1)
+        relative = path.removeprefix("skills/yomiyasu/")
+        if relative.split("/", 1)[0] not in _EXCLUDE:
+            files[relative] = meta.split(" ", 1)[0]
+    return files
 
 
 def run(args: Sequence[str]) -> int:

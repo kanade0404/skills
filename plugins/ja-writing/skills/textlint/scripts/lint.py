@@ -75,6 +75,14 @@ def _diff(before: str, after: str, name: str) -> str:
     return "".join(difflib.unified_diff(before.splitlines(keepends=True), after.splitlines(keepends=True), name, name))
 
 
+def _read(path: Path) -> Document | None:
+    try:
+        return Document(str(path), path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError) as error:
+        _ = sys.stderr.write(f"ja-writing: {path} を UTF-8 として読めません: {error}\n")
+        return None
+
+
 def run(args: Sequence[str], env: Mapping[str, str], cwd: Path) -> int:
     """引数に従って検査か修正をする.
 
@@ -87,14 +95,16 @@ def run(args: Sequence[str], env: Mapping[str, str], cwd: Path) -> int:
     if not patterns or (dry_run and not fix):
         _ = sys.stderr.write(_USAGE)
         return 2
-    paths = expand(patterns, cwd)
-    documents = [Document(str(path), path.read_text(encoding="utf-8")) for path in paths]
+    documents = [_read(path) for path in expand(patterns, cwd)]
+    if None in documents:
+        return 2
+    readable = [document for document in documents if document is not None]
     try:
-        report = lint_documents(documents, config=choose_file_config(cwd, env), env=env, fix=fix)
+        report = lint_documents(readable, config=choose_file_config(cwd, env), env=env, fix=fix)
     except TextlintError as error:
         _ = sys.stderr.write(f"ja-writing: {error}\n")
         return 2
-    for document, result in zip(documents, report.results):
+    for document, result in zip(readable, report.results):
         if result.output is None or result.output == document.text:
             continue
         if dry_run:
