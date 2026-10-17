@@ -15,7 +15,7 @@
     {
       "name": "productivity",
       "source": "plugins/productivity",
-      "description": "会話を次のエージェントへ引き継ぐなど、作業を進めるためのスキル"
+      "description": "会話の引き継ぎ、不要なコードコメントの削除、不具合の再現、教訓の仕組み化など、作業を進めるためのスキル"
     }
   ]
 }
