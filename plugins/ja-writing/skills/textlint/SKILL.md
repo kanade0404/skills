@@ -40,10 +40,10 @@ python3 <このスキルのディレクトリ>/scripts/lint.py --fix --dry-run <
 
 Claude Code と Codex にプラグインとして入れたときは、次のフックも動く。
 
-| フック | 内容 | 切り替え |
-| --- | --- | --- |
-| SessionStart | 依存を入れ、`config/guidelines.md` の規約を文脈に渡す | `TEXTLINT_SESSION_CONTEXT`（`session_context`） |
-| PostToolUse | 書き換えた `.md`・`.txt` を検査する。かなを含まないファイルは対象外 | `TEXTLINT_HOOK_MODE`（`hook_mode`）: `block`・`warn`・`off` |
-| Stop | ターンの最後の答えを、チャット用の設定 `config/chat.json` で検査する | `TEXTLINT_STOP_MODE`（`stop_mode`）: `notify`・`block`・`off` |
+| フック       | 内容                                                                 | 切り替え                                                      |
+| ------------ | -------------------------------------------------------------------- | ------------------------------------------------------------- |
+| SessionStart | 依存を入れ、`config/guidelines.md` の規約を文脈に渡す                | `TEXTLINT_SESSION_CONTEXT`（`session_context`）               |
+| PostToolUse  | 書き換えた `.md`・`.txt` を検査する。かなを含まないファイルは対象外  | `TEXTLINT_HOOK_MODE`（`hook_mode`）: `block`・`warn`・`off`   |
+| Stop         | ターンの最後の答えを、チャット用の設定 `config/chat.json` で検査する | `TEXTLINT_STOP_MODE`（`stop_mode`）: `notify`・`block`・`off` |
 
 括弧の中は Claude Code のプラグイン設定の名前。
