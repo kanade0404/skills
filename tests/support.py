@@ -30,5 +30,4 @@ def write_executable(directory: Path, name: str, body: str) -> Path:
 
 
 def set_stdin(monkeypatch: pytest.MonkeyPatch, text: str) -> None:
-    """標準入力を text に差し替える."""
     monkeypatch.setattr(sys, "stdin", io.StringIO(text))

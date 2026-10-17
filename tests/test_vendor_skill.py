@@ -1,4 +1,4 @@
-"""vendor_skill のテスト."""
+"""vendor_skill.py のテスト. 一時ディレクトリに作った git リポジトリを上流として写す."""
 
 from __future__ import annotations
 
@@ -28,7 +28,6 @@ GIT_ENV = {
 
 
 def git(repo: Path, *args: str) -> None:
-    """テスト用のリポジトリで git を実行する."""
     executable = shutil.which("git")
     assert executable is not None
     _ = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - テストで固定の引数の git を実行する
@@ -40,7 +39,7 @@ def make_repo(repo: Path, files: dict[str, str]) -> Path:
     """ファイルを置いてコミットしたリポジトリを作る.
 
     Returns:
-        リポジトリのパス。
+        渡した repo。
     """
     for relative, body in files.items():
         path = repo / relative
@@ -65,10 +64,10 @@ SKILL_FILES = {
 
 @pytest.fixture
 def upstream(tmp_path: Path) -> Path:
-    """スキルのディレクトリにライセンスがある上流を作る.
+    """スキルのディレクトリにライセンスがあり、git が無視するファイルも置いた上流を作る.
 
     Returns:
-        リポジトリのパス。
+        上流のリポジトリ。
     """
     repo = make_repo(tmp_path / "upstream", {**SKILL_FILES, "skills/s/LICENSE": "MIT (skill)\n"})
     # git が無視するファイルは写さない。

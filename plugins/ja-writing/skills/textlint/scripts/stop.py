@@ -101,14 +101,14 @@ def build_output(lines: list[str], mode: str) -> dict[str, object]:
 
 
 def run(stdin_text: str, env: Mapping[str, str]) -> tuple[str, str]:
-    """フックを1回実行する.
+    """フックの入力と環境変数から、出力する内容を決める. テストから直接呼べるよう、入出力を引数と戻り値にしている.
 
     Returns:
         (標準出力, 標準エラー) に書く内容。
     """
     mode = env.get("TEXTLINT_STOP_MODE") or env.get("CLAUDE_PLUGIN_OPTION_STOP_MODE") or "notify"
     payload = as_dict(parse_json(stdin_text))
-    # 書き直させたあとの Stop では何もしない(書き直しは1回だけ)。
+    # stop_hook_active が真なのは、block で書き直させたあとの Stop。
     if mode == "off" or not payload or payload.get("stop_hook_active") is True:
         return _NOTHING
     text = answer_text(payload)
@@ -130,7 +130,7 @@ def run(stdin_text: str, env: Mapping[str, str]) -> tuple[str, str]:
 
 
 def main() -> int:
-    """標準入力からフックの入力を読み、結果を書き出す.
+    """標準入力と os.environ で run を呼び、結果を書き出す. フックの失敗で作業を止めないよう、常に 0 を返す.
 
     Returns:
         常に 0。

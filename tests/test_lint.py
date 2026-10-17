@@ -1,4 +1,4 @@
-"""Lint のテスト."""
+"""lint.py のテスト. 検査と修正の結果は、本物の bun と kernel ランナー(real_env)で確かめる."""
 
 from __future__ import annotations
 
@@ -18,11 +18,6 @@ FIXABLE = "# 紹介\n\nこれは test です。\n"
 
 
 def write(directory: Path, name: str, text: str) -> Path:
-    """ファイルを書く.
-
-    Returns:
-        書いたファイルのパス。
-    """
     path = directory / name
     path.parent.mkdir(parents=True, exist_ok=True)
     _ = path.write_text(text, encoding="utf-8")

@@ -1,4 +1,4 @@
-"""Textlint の依存を入れ、設定を選び、kernel ランナーで文章を検査する共通処理.
+"""依存の準備・設定の選択・kernel ランナーの呼び出しをまとめた、フックと CLI の共通処理.
 
 Claude Code・Codex・その他のエージェントのどこから呼ばれても動くよう、標準ライブラリだけを使い、
 エージェント固有の環境変数には依存しない(あれば使う)。
@@ -31,7 +31,6 @@ LINTABLE_EXTENSIONS = frozenset({".md", ".markdown", ".mdown", ".mkdn", ".txt", 
 MINIMUM_BUN = (1, 3)
 SEVERITY_ERROR = 2
 
-# bun のバージョン表記(例: 1.4.2)。
 _BUN_VERSION = re.compile(r"(\d+)\.(\d+)\.\d+")
 # プロジェクトの設定のうち、JSON として自前で読めるもの。YAML・JS の設定は読まない。
 _PROJECT_JSON_CONFIGS = (".textlintrc.json", ".textlintrc")
@@ -42,7 +41,7 @@ _PROJECT_OTHER_CONFIGS = (
     ".textlintrc.js",
     ".textlintrc.cjs",
 )
-# 依存は bun.lock のとおりに入れる。依存のインストールスクリプトは実行しない。
+# 依存のインストールスクリプトは任意のコードを実行できるので、動かさない。
 _BUN_INSTALL = ("install", "--frozen-lockfile", "--production", "--ignore-scripts", "--no-progress", "--silent")
 # bun はカレントディレクトリの bunfig.toml(preload など)と .env を読む。プロジェクトのコードや設定が混ざらないよう、
 # bun は自分で管理するディレクトリで起動し、.env も読ませない。
@@ -50,7 +49,10 @@ _BUN_RUN = ("--no-env-file",)
 
 
 class TextlintError(Exception):
-    """Textlint を準備または実行できないときの誤り."""
+    """bun・依存・設定を用意できないとき、kernel ランナーが失敗したときの誤り.
+
+    フックはこれを標準エラーに出して、エージェントの作業を止めない。
+    """
 
 
 @dataclass(frozen=True)
@@ -63,7 +65,7 @@ class Document:
 
 @dataclass(frozen=True)
 class Message:
-    """1件の指摘."""
+    """kernel ランナーが返した指摘1件. severity は 1 = warning、2 = error、3 = info."""
 
     rule_id: str
     message: str
@@ -83,7 +85,7 @@ class DocumentResult:
 
 @dataclass(frozen=True)
 class Report:
-    """検査結果の全体."""
+    """lint_documents の結果. ignored は同梱にないため無視した設定の名前、source は表示用の設定の出どころ."""
 
     results: tuple[DocumentResult, ...]
     ignored: tuple[str, ...]
@@ -92,7 +94,7 @@ class Report:
 
 @dataclass(frozen=True)
 class Config:
-    """Kernel ランナーに渡す設定と、その出どころ."""
+    """設定の中身(kernel ランナーへそのまま渡す)と、表示用の出どころ."""
 
     data: dict[str, object]
     source: str
@@ -115,7 +117,10 @@ def deps_dir(env: Mapping[str, str]) -> Path:
 
 
 def installed(directory: Path) -> bool:
-    """Directory に依存が入っているかを判定する.
+    """依存を入れ終えたディレクトリかを判定する.
+
+    ensure_installed は一時ディレクトリで bun install が成功してから名前を変えてここへ置くので、
+    @textlint/kernel があれば入れ終えている。
 
     Returns:
         @textlint/kernel が入っていれば True。
@@ -203,7 +208,7 @@ def load_config(path: Path) -> Config:
     """JSON の設定ファイルを読む.
 
     Returns:
-        読んだ設定。
+        出どころをファイルのパスにした設定。
 
     Raises:
         TextlintError: 読めないか、JSON のオブジェクトでないとき。

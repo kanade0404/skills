@@ -59,7 +59,7 @@ def format_report(report: Report, cwd: Path) -> str:
     """指摘を人が読む形にする.
 
     Returns:
-        1行に1件の指摘を並べた文字列。
+        1行に1件の指摘と、同梱にないため無視した設定の名前を並べた文字列。
     """
     lines: list[str] = []
     for result in report.results:
@@ -119,10 +119,10 @@ def run(args: Sequence[str], env: Mapping[str, str], cwd: Path) -> int:
 
 
 def main() -> int:
-    """コマンドライン引数で実行する.
+    """sys.argv・os.environ・カレントディレクトリで run を呼ぶ. テストしやすいよう、処理は run に置いている.
 
     Returns:
-        終了コード。
+        run の終了コード。
     """
     return run(sys.argv[1:], os.environ, Path.cwd())
 

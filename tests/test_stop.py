@@ -1,4 +1,4 @@
-"""Stop のテスト."""
+"""stop.py のテスト. 会話記録から最後の答えを取り出す処理と、notify・block の出力を確かめる."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ def entry(kind: str, content: object) -> str:
     """会話記録の1行を作る.
 
     Returns:
-        JSON の文字列。
+        JSONL の1行(改行なし)。
     """
     return json.dumps({"type": kind, "message": {"content": content}})
 

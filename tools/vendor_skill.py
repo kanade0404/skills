@@ -38,12 +38,12 @@ _FRONTMATTER_END = "\n---\n"
 
 
 class VendorError(Exception):
-    """写せないときの誤り."""
+    """設定・git・写す元の問題で写せないときの誤り. run は終了コード 1 にする."""
 
 
 @dataclass(frozen=True)
 class Spec:
-    """写すスキル1つ分の設定."""
+    """tools/vendored.json の1項目. exclude はスキルのディレクトリ直下で写さない名前."""
 
     destination: str
     repository: str
@@ -180,7 +180,7 @@ def _files_to_copy(source: Path, spec: Spec) -> dict[str, tuple[str, str]]:
 
 
 def vendor(source: Path, spec: Spec, root: Path = ROOT) -> str:
-    """Source にある spec.path のスキルを、root からの spec.destination へ写す.
+    """上流を clone した source から spec.path のスキルを、root からの spec.destination へ写す.
 
     Returns:
         写したコミットの SHA。
@@ -234,7 +234,7 @@ def _spec_for(destination: str, config: Path) -> Spec:
 
 
 def run(args: Sequence[str], config: Path = CONFIG, root: Path = ROOT) -> int:
-    """コマンドライン引数で実行する.
+    """引数(写す先と clone したディレクトリ)を検証して写す.
 
     Returns:
         成功なら 0、写せなければ 1、引数の誤りなら 2。
@@ -253,10 +253,10 @@ def run(args: Sequence[str], config: Path = CONFIG, root: Path = ROOT) -> int:
 
 
 def main() -> int:
-    """コマンドライン引数で実行する.
+    """sys.argv で run を呼ぶ. テストしやすいよう、処理は run に置いている.
 
     Returns:
-        終了コード。
+        run の終了コード。
     """
     return run(sys.argv[1:])
 

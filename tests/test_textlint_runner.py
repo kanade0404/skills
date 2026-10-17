@@ -1,4 +1,4 @@
-"""textlint_runner のテスト."""
+"""textlint_runner.py のテスト. 依存の準備やランナーの失敗は偽の bun で、検査結果は本物の bun で確かめる."""
 
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ def fake_env(tmp_path: Path, **extra: str) -> dict[str, str]:
     """偽の bun だけが見える環境変数を作る.
 
     Returns:
-        環境変数。
+        PATH に偽の bun だけを置き、依存の置き場所を tmp_path の下にした環境変数。extra で上書きできる。
     """
     bin_dir = tmp_path / "bin"
     _ = write_executable(bin_dir, "bun", FAKE_BUN)

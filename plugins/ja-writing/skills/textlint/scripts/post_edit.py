@@ -36,7 +36,7 @@ _PATCH_PATH = re.compile(r"^\*\*\* (?:Add File|Update File|Move to): (.+)$", re.
 KANA = re.compile(
     r"[\N{HIRAGANA LETTER SMALL A}-\N{HIRAGANA DIGRAPH YORI}\N{KATAKANA LETTER SMALL A}-\N{KATAKANA DIGRAPH KOTO}]"
 )
-# textlint の severity: 1 = warning, 2 = error, 3 = info。info の提案はフックでは扱わない。
+# info(3)は提案なので、フックでは知らせない。
 REPORTED_SEVERITIES = frozenset({1, 2})
 _INSTRUCTION = (
     "指摘された箇所を自然な日本語に書き直してください。指摘を消すために内容を削らないでください。"
@@ -57,7 +57,7 @@ def as_dict(value: object) -> dict[str, object]:
 
 
 def parse_json(text: str) -> object | None:
-    """JSON を読む.
+    """JSON の文字列を読む. 壊れた入力(フックの入力や会話記録の行)でも例外にしない.
 
     Returns:
         読んだ値。JSON でなければ None。
@@ -150,7 +150,7 @@ def _documents(payload: dict[str, object], project_dir: Path) -> list[Document]:
 
 
 def run(stdin_text: str, env: Mapping[str, str]) -> tuple[str, str]:
-    """フックを1回実行する.
+    """フックの入力と環境変数から、出力する内容を決める. テストから直接呼べるよう、入出力を引数と戻り値にしている.
 
     Returns:
         (標準出力, 標準エラー) に書く内容。
@@ -174,7 +174,7 @@ def run(stdin_text: str, env: Mapping[str, str]) -> tuple[str, str]:
 
 
 def main() -> int:
-    """標準入力からフックの入力を読み、結果を書き出す.
+    """標準入力と os.environ で run を呼び、結果を書き出す. フックの失敗で作業を止めないよう、常に 0 を返す.
 
     Returns:
         常に 0。

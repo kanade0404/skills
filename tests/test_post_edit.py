@@ -1,4 +1,4 @@
-"""post_edit のテスト."""
+"""post_edit.py のテスト. Claude Code と Codex のどちらのツール入力からも検査するファイルを拾えるかを確かめる."""
 
 from __future__ import annotations
 
@@ -17,11 +17,6 @@ if TYPE_CHECKING:
 
 
 def payload(cwd: Path, tool_input: object) -> str:
-    """フックの入力を作る.
-
-    Returns:
-        JSON の文字列。
-    """
     return json.dumps({"cwd": str(cwd), "tool_input": tool_input})
 
 

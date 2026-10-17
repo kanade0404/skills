@@ -91,7 +91,6 @@ const ruleOptions = (value: unknown): RuleOptions => {
   return true;
 };
 
-// ルールは関数か、linter を持つオブジェクト。
 const isRuleModule = (value: unknown): value is RuleModule =>
   typeof value === "function" || (isRecord(value) && typeof value["linter"] === "function");
 

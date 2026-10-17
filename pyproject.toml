@@ -46,7 +46,7 @@ ignore = [
   "implicit-namespace-package",
   "magic-value-comparison", # テストの期待値はそのまま書く
   "assert", # pytest の assert
-  # テストは名前で意図を書く。docstring は付けない。
+  # テストは名前で意図を書く。テストのクラスと関数には docstring を付けない。
   "undocumented-public-class",
   "undocumented-public-method",
   "undocumented-public-function",
