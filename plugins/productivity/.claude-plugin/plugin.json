@@ -1,10 +1,10 @@
 {
   "name": "productivity",
   "displayName": "productivity",
-  "version": "0.1.0",
-  "description": "作業を進めるためのスキル。会話を次のエージェントへ引き継ぐ handoff（mattpocock/skills の写し）",
+  "version": "0.2.0",
+  "description": "作業を進めるためのスキル。会話を次のエージェントへ引き継ぐ handoff（mattpocock/skills の写し）、意味のないコードコメントを消す prune-comments、不具合を報告する前に再現する reproduce-bug、教訓を仕組みにする persist-lesson",
   "author": { "name": "kanade0404" },
   "repository": "https://github.com/kanade0404/skills",
   "license": "MIT",
-  "keywords": ["handoff", "productivity"]
+  "keywords": ["handoff", "comments", "debugging","productivity"]
 }

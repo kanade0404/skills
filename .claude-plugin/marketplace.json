@@ -13,7 +13,7 @@
     {
       "name": "productivity",
       "source": "./plugins/productivity",
-      "description": "会話を次のエージェントへ引き継ぐ handoff などのスキル"
+      "description": "会話を次のエージェントへ引き継ぐ handoff、意味のないコードコメントを消す prune-comments、不具合を報告する前に再現する reproduce-bug、教訓を仕組みにする persist-lesson などのスキル"
     }
   ]
 }
