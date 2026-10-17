@@ -39,6 +39,12 @@ class TestExpand:
         assert lint.expand(patterns, tmp_path) == sorted([a, b, c])
 
 
+def test_format_report_outside_cwd(tmp_path: Path) -> None:
+    outside = tmp_path / "other" / "a.md"
+    report = Report((DocumentResult(str(outside), (Message("r", "m", 1, 2, 2),), None),), (), "s")
+    assert lint.format_report(report, tmp_path / "cwd") == f"{outside}:1:2  error  m  r\n"
+
+
 def test_format_report(tmp_path: Path) -> None:
     messages = (Message("r", "m", 1, 2, 2), Message("r", "n", 3, 4, 9))
     report = Report((DocumentResult(str(tmp_path / "a.md"), messages, None),), ("./evil",), "s")

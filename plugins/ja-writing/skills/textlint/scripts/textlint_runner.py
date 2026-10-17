@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import] - bun を固定の引数で起動するために使う
@@ -240,6 +241,20 @@ def choose_file_config(project_dir: Path, env: Mapping[str, str]) -> Config:
             note = f"{bundled.source}({project_dir / name} は JSON でないため使っていません)"
             return Config(bundled.data, note)
     return bundled
+
+
+def display_path(file_path: str, base: Path) -> str:
+    """表示用のパスを作る.
+
+    Returns:
+        base の中のファイルなら base からの相対パス。外のファイル(../ をたどる)や、
+        Windows でドライブが違うときは、渡されたパスのまま。
+    """
+    try:
+        relative = os.path.relpath(file_path, base)
+    except ValueError:
+        return file_path
+    return file_path if relative.startswith(os.pardir) else relative
 
 
 def _ext(file_path: str) -> str:

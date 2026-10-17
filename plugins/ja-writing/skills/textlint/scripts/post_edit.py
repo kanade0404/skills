@@ -25,6 +25,7 @@ from textlint_runner import (
     Report,
     TextlintError,
     choose_file_config,
+    display_path,
     lint_documents,
 )
 
@@ -111,13 +112,7 @@ def format_messages(report: Report, project_dir: Path) -> list[str]:
     """
     lines: list[str] = []
     for result in report.results:
-        try:
-            shown = os.path.relpath(result.file_path, project_dir)
-        except ValueError:  # Windows でドライブが違うとき
-            shown = result.file_path
-        # プロジェクトの外のファイルは、../ をたどる相対パスより絶対パスのほうが読みやすい。
-        if shown.startswith(os.pardir):
-            shown = result.file_path
+        shown = display_path(result.file_path, project_dir)
         lines.extend(
             f"{shown}:{message.line}:{message.column} [{message.rule_id}] {message.message}"
             for message in result.messages

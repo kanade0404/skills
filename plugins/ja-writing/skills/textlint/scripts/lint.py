@@ -25,6 +25,7 @@ from textlint_runner import (
     Report,
     TextlintError,
     choose_file_config,
+    display_path,
     lint_documents,
 )
 
@@ -62,7 +63,7 @@ def format_report(report: Report, cwd: Path) -> str:
     """
     lines: list[str] = []
     for result in report.results:
-        shown = os.path.relpath(result.file_path, cwd)
+        shown = display_path(result.file_path, cwd)
         lines.extend(
             f"{shown}:{m.line}:{m.column}  {_SEVERITY_NAMES.get(m.severity, m.severity)}  {m.message}  {m.rule_id}"
             for m in result.messages
@@ -108,7 +109,7 @@ def run(args: Sequence[str], env: Mapping[str, str], cwd: Path) -> int:
         if result.output is None or result.output == document.text:
             continue
         if dry_run:
-            _ = sys.stdout.write(_diff(document.text, result.output, os.path.relpath(document.file_path, cwd)))
+            _ = sys.stdout.write(_diff(document.text, result.output, display_path(document.file_path, cwd)))
         else:
             _ = Path(document.file_path).write_text(result.output, encoding="utf-8")
     _ = sys.stdout.write(format_report(report, cwd))
