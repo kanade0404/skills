@@ -1,0 +1,5 @@
+interface:
+  display_name: "Prune comments"
+  short_description: "Delete comments except a fixed keep-list, using a fresh subagent"
+policy:
+  allow_implicit_invocation: false
