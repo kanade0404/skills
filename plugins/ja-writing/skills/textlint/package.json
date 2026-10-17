@@ -1,7 +1,7 @@
 {
   "name": "ja-writing-textlint",
   "private": true,
-  "description": "textlint スキルの kernel ランナーと依存。dependencies は利用者のキャッシュへ npm ci --omit=dev で入る",
+  "description": "textlint スキルの kernel ランナーと依存。dependencies は利用者のキャッシュへ bun install --production で入る",
   "type": "module",
   "scripts": {
     "check": "tsc -p . && oxfmt --check . && oxlint --type-aware --deny-warnings --report-unused-disable-directives ."
@@ -17,13 +17,13 @@
     "textlint-rule-preset-ja-technical-writing": "12.0.2"
   },
   "devDependencies": {
-    "@types/node": "26.6.5",
+    "@types/bun": "1.4.3",
     "oxfmt": "0.73.0",
     "oxlint": "1.88.0",
     "oxlint-tsgolint": "7.0.2004",
     "typescript": "7.0.2"
   },
   "engines": {
-    "node": ">=22.18.0"
+    "bun": ">=1.3.0"
   }
 }

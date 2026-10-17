@@ -55,7 +55,7 @@ class TestRun:
     def test_textlint_error(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         _ = write(tmp_path, "a.md", CLEAN)
         assert lint.run(["a.md"], {"PATH": str(tmp_path)}, tmp_path) == 2
-        assert "node が見つかりません" in capsys.readouterr().err
+        assert "bun が見つかりません" in capsys.readouterr().err
 
     def test_unreadable_file(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         _ = (tmp_path / "a.md").write_bytes("テスト".encode("cp932"))

@@ -60,8 +60,8 @@ Claude Code と Codex では、次のフックが動く。括弧の中は Claude
 ### 依存
 
 - Python 3.9 以上（フックとスキル、yomiyasu）
-- Node.js 22.18 以上と npm（textlint。kernel ランナーは TypeScript で、Node.js の型除去でそのまま動く）
-- textlint の依存は、初回に `~/.cache/ja-writing-textlint/<ロックファイルのハッシュ>/` へ `npm ci --omit=dev --ignore-scripts` で入れる。バージョンは `skills/textlint/package-lock.json` で固定している
+- bun 1.3 以上（textlint。kernel ランナーは TypeScript で、bun でそのまま動く）
+- textlint の依存は、初回に `~/.cache/ja-writing-textlint/<ロックファイルのハッシュ>/` へ入れる。コマンドは `bun install --frozen-lockfile --production --ignore-scripts` で、バージョンは `skills/textlint/bun.lock` で固定している
 
 ### yomiyasu の更新
 
@@ -75,11 +75,12 @@ uv run python tools/vendor_yomiyasu.py /tmp/yomiyasu
 
 ## 開発
 
-Python は uv で、TypeScript は npm で管理する。
+開発に使うツール（uv、Python、bun、semgrep、git）は `flake.nix` の開発シェルで用意し、バージョンは `flake.lock` で固定する。CI も同じシェルで動く。Python の依存は `uv.lock`、TypeScript の依存は `bun.lock` で固定する。
 
 ```
+nix develop
 uv sync
-npm ci --ignore-scripts --prefix plugins/ja-writing/skills/textlint
+bun install --frozen-lockfile --ignore-scripts --cwd plugins/ja-writing/skills/textlint
 ```
 
 CI と同じ検査は次のとおり。
@@ -90,7 +91,7 @@ CI と同じ検査は次のとおり。
 | Python | `uv run mypy` | strict と追加のエラーコード |
 | Python | `uv run basedpyright` | 全ルール（`all`） |
 | Python | `uv run pytest` と `uv run --python 3.9 pytest` | 警告をエラーにし、分岐カバレッジ 100% を求める |
-| TypeScript | `npm run check --prefix plugins/ja-writing/skills/textlint` | tsc（strict と追加フラグ）、oxfmt、oxlint（nursery を含む全カテゴリ、型を使うルールを含む） |
-| 全体 | `uv run --python 3.13 --only-group semgrep semgrep scan ...` | semgrep の python・security-audit・secrets・github-actions・typescript |
+| TypeScript | `bun --bun run --cwd plugins/ja-writing/skills/textlint check` | tsc（strict と追加フラグ）、oxfmt、oxlint（nursery を含む全カテゴリ、型を使うルールを含む） |
+| 全体 | `semgrep scan ...`（引数は `.github/workflows/ci.yml`） | semgrep の python・security-audit・secrets・github-actions・typescript |
 
 ruff と oxlint で外したルールは、それぞれ `pyproject.toml` と `.oxlintrc.json` に理由を書いている。yomiyasu の写しは上流のコードなので検査しない。

@@ -89,7 +89,7 @@ class TestRun:
     def test_reports_textlint_error(self, tmp_path: Path) -> None:
         stdout, stderr = stop.run(json.dumps({"last_assistant_message": CLEAN}), {"PATH": str(tmp_path)})
         assert not stdout
-        assert "node が見つかりません" in stderr
+        assert "bun が見つかりません" in stderr
 
     def test_clean(self, real_env: dict[str, str]) -> None:
         assert stop.run(json.dumps({"last_assistant_message": CLEAN}), real_env) == ("", "")

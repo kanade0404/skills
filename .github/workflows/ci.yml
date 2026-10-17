@@ -12,6 +12,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# ツール(uv・Python・bun・semgrep・git)は flake.nix の開発シェルから使い、バージョンは flake.lock で固定する。
+defaults:
+  run:
+    shell: nix develop --command bash -euo pipefail {0}
+
 env:
   SKILL_DIR: plugins/ja-writing/skills/textlint
 
@@ -23,32 +28,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
       # テストは本物の kernel ランナーを動かすので、スキルの依存を入れておく。
-      - run: npm ci --ignore-scripts --no-audit --no-fund --prefix "$SKILL_DIR"
+      - run: bun install --frozen-lockfile --ignore-scripts --cwd "$SKILL_DIR"
       - run: uv sync --locked
       - run: uv run ruff format --check .
       - run: uv run ruff check .
       - run: uv run mypy
       - run: uv run basedpyright
       - run: uv run pytest
-
-  python-39:
-    # フックは利用者の python3 で直接動くので、macOS 標準の 3.9 でもテストする。
-    name: Python 3.9 (tests)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22.18.0
-      - run: npm ci --ignore-scripts --no-audit --no-fund --prefix "$SKILL_DIR"
+      # フックは利用者の python3 で直接動くので、macOS 標準の 3.9 でもテストする。
       - run: uv run --locked --python 3.9 pytest
 
   typescript:
@@ -58,12 +47,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24
-      # oxlint-tsgolint はプラットフォーム別のバイナリを optionalDependencies で入れるので、インストールスクリプトは不要。
-      - run: npm ci --ignore-scripts --no-audit --no-fund --prefix "$SKILL_DIR"
-      - run: npm run check --prefix "$SKILL_DIR"
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
+      - run: bun install --frozen-lockfile --ignore-scripts --cwd "$SKILL_DIR"
+      - run: bun --bun run --cwd "$SKILL_DIR" check
 
   semgrep:
     name: Semgrep
@@ -72,9 +58,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
       - run: >-
-          uv run --locked --python 3.13 --isolated --only-group semgrep
           semgrep scan --metrics=off --error
           --config p/python --config p/security-audit --config p/secrets
           --config p/github-actions --config p/typescript

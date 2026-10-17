@@ -37,7 +37,7 @@ def test_injects_guidelines(real_env: dict[str, str]) -> None:
 def test_install_failure_still_injects(tmp_path: Path) -> None:
     stdout, stderr = session_start.run({"PATH": str(tmp_path), "TEXTLINT_SKILL_DEPS_DIR": str(tmp_path / "d")})
     assert "additionalContext" in stdout
-    assert "npm が見つかりません" in stderr
+    assert "bun が見つかりません" in stderr
 
 
 def test_disabled(real_env: dict[str, str]) -> None:

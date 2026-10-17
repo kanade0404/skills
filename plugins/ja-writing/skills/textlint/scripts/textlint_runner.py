@@ -13,7 +13,7 @@ import hashlib
 import json
 import re
 import shutil
-import subprocess  # ruff: ignore[suspicious-subprocess-import] - npm と node を固定の引数で起動するために使う
+import subprocess  # ruff: ignore[suspicious-subprocess-import] - bun を固定の引数で起動するために使う
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,11 +27,11 @@ RUNNER = SKILL_ROOT / "scripts" / "kernel_runner.ts"
 FILE_CONFIG = SKILL_ROOT / "config" / "textlintrc.json"
 CHAT_CONFIG = SKILL_ROOT / "config" / "chat.json"
 LINTABLE_EXTENSIONS = frozenset({".md", ".markdown", ".mdown", ".mkdn", ".txt", ".text"})
-MINIMUM_NODE = (22, 18)
+MINIMUM_BUN = (1, 3)
 SEVERITY_ERROR = 2
 
-# Node のバージョン表記(例: v22.18.0)。
-_NODE_VERSION = re.compile(r"v(\d+)\.(\d+)\.\d+")
+# bun のバージョン表記(例: 1.4.2)。
+_BUN_VERSION = re.compile(r"(\d+)\.(\d+)\.\d+")
 # プロジェクトの設定のうち、JSON として自前で読めるもの。YAML・JS の設定は読まない。
 _PROJECT_JSON_CONFIGS = (".textlintrc.json", ".textlintrc")
 _PROJECT_OTHER_CONFIGS = (
@@ -41,7 +41,8 @@ _PROJECT_OTHER_CONFIGS = (
     ".textlintrc.js",
     ".textlintrc.cjs",
 )
-_NPM_CI = ("ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error")
+# 依存は bun.lock のとおりに入れる。依存のインストールスクリプトは実行しない。
+_BUN_INSTALL = ("install", "--frozen-lockfile", "--production", "--ignore-scripts", "--no-progress", "--silent")
 
 
 class TextlintError(Exception):
@@ -104,7 +105,7 @@ def deps_dir(env: Mapping[str, str]) -> Path:
     override = env.get("TEXTLINT_SKILL_DEPS_DIR")
     if override:
         return Path(override)
-    digest = hashlib.sha256((SKILL_ROOT / "package-lock.json").read_bytes()).hexdigest()[:12]
+    digest = hashlib.sha256((SKILL_ROOT / "bun.lock").read_bytes()).hexdigest()[:12]
     cache = Path(env.get("XDG_CACHE_HOME") or Path.home() / ".cache")
     return cache / "ja-writing-textlint" / digest
 
@@ -127,28 +128,28 @@ def _which(command: str, env: Mapping[str, str]) -> str:
 
 
 def ensure_installed(env: Mapping[str, str]) -> Path:
-    """依存がなければ npm ci で入れる.
+    """依存がなければ bun install で入れる.
 
     Returns:
         依存を入れたディレクトリ。
 
     Raises:
-        TextlintError: npm が見つからないか、npm ci が失敗したとき。
+        TextlintError: bun が見つからないか古いとき、bun install が失敗したとき。
         OSError: 入れた依存を置けず、別のプロセスも入れ終えていないとき。
     """
     directory = deps_dir(env)
     if installed(directory):
         return directory
 
-    npm = _which("npm", env)
+    bun = _bun(env)
     directory.parent.mkdir(parents=True, exist_ok=True)
     # 途中で失敗しても壊れたディレクトリを残さないよう、同じ場所の一時ディレクトリに入れてから置き換える。
     work = Path(tempfile.mkdtemp(prefix=f"{directory.name}.tmp-", dir=directory.parent))
     try:
-        for name in ("package.json", "package-lock.json"):
+        for name in ("package.json", "bun.lock"):
             _ = shutil.copyfile(SKILL_ROOT / name, work / name)
-        result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - npm は which で解決した絶対パス、引数は固定
-            [npm, *_NPM_CI],
+        result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - bun は which で解決した絶対パス、引数は固定
+            [bun, *_BUN_INSTALL],
             cwd=work,
             env=dict(env),
             stdin=subprocess.DEVNULL,
@@ -158,7 +159,7 @@ def ensure_installed(env: Mapping[str, str]) -> Path:
             check=False,
         )
         if result.returncode != 0:
-            msg = f"textlint の依存を入れられませんでした(npm ci)\n{result.stderr}"
+            msg = f"textlint の依存を入れられませんでした(bun install)\n{result.stderr}"
             raise TextlintError(msg)
         # 依存は全セッション・全エージェントで共有するので、別のプロセスが先に入れ終えていることがある。
         # 完成済みのディレクトリは消さず、自分の一時ディレクトリを捨てる。
@@ -172,16 +173,16 @@ def ensure_installed(env: Mapping[str, str]) -> Path:
     return directory
 
 
-def _node(env: Mapping[str, str]) -> str:
-    node = _which("node", env)
-    result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - node は which で解決した絶対パス、引数は固定
-        [node, "--version"], capture_output=True, text=True, check=False, env=dict(env)
+def _bun(env: Mapping[str, str]) -> str:
+    bun = _which("bun", env)
+    result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - bun は which で解決した絶対パス、引数は固定
+        [bun, "--version"], capture_output=True, text=True, check=False, env=dict(env)
     )
-    match = _NODE_VERSION.fullmatch(result.stdout.strip())
-    if match is None or (int(match.group(1)), int(match.group(2))) < MINIMUM_NODE:
-        msg = f"Node.js {MINIMUM_NODE[0]}.{MINIMUM_NODE[1]} 以上が必要です(見つかったもの: {result.stdout.strip()})"
+    match = _BUN_VERSION.fullmatch(result.stdout.strip())
+    if match is None or (int(match.group(1)), int(match.group(2))) < MINIMUM_BUN:
+        msg = f"bun {MINIMUM_BUN[0]}.{MINIMUM_BUN[1]} 以上が必要です(見つかったもの: {result.stdout.strip()})"
         raise TextlintError(msg)
-    return node
+    return bun
 
 
 def _as_dict(value: object) -> dict[str, object] | None:
@@ -278,9 +279,9 @@ def lint_documents(
         本文ごとの結果、設定のうち同梱にないため無視した名前、設定の出どころ。
 
     Raises:
-        TextlintError: Node.js や依存を用意できないか、ランナーが失敗したとき。
+        TextlintError: bun や依存を用意できないか、ランナーが失敗したとき。
     """
-    node = _node(env)
+    bun = _bun(env)
     directory = ensure_installed(env)
     request = {
         "depsDir": str(directory),
@@ -288,8 +289,8 @@ def lint_documents(
         "config": config.data,
         "items": [{"filePath": doc.file_path, "ext": _ext(doc.file_path), "text": doc.text} for doc in documents],
     }
-    result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - node は which で解決した絶対パス、ランナーは同梱のファイル
-        [node, "--disable-warning=ExperimentalWarning", str(RUNNER)],
+    result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - bun は which で解決した絶対パス、ランナーは同梱のファイル
+        [bun, str(RUNNER)],
         input=json.dumps(request),
         capture_output=True,
         text=True,

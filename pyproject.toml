@@ -14,15 +14,9 @@ dev = [
   "pytest-cov",
   "ruff",
 ]
-# semgrep の依存はまだ新しい Python 向けのビルド済みパッケージがないので、別のグループに分けて 3.13 で動かす。
-# 実行: uv run --python 3.13 --only-group semgrep semgrep scan ...
-semgrep = [
-  "semgrep; python_version >= '3.10' and python_version < '3.14'",
-]
 
 [tool.uv]
 package = false
-default-groups = ["dev"]
 
 # --- ruff: すべてのルールを有効にし、衝突するものと理由のあるものだけを外す ---
 [tool.ruff]

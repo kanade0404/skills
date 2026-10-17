@@ -26,50 +26,50 @@ from textlint_runner import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-# 偽の npm: ENV で挙動を変える。成功時は cwd に @textlint/kernel を置く。
-FAKE_NPM = """
+# 偽の bun:
+# - --version: FAKE_BUN_VERSION を返す
+# - install: FAKE_INSTALL_MODE で挙動を変える。成功時は cwd に @textlint/kernel を置く
+# - それ以外(ランナーの実行): FAKE_RUNNER_STDOUT を出して FAKE_RUNNER_CODE で終わる
+FAKE_BUN = """
 import os, pathlib, sys
-mode = os.environ.get("FAKE_NPM_MODE", "ok")
-if mode == "fail":
-    sys.stderr.write("boom")
-    sys.exit(1)
-if mode == "race":
-    # 別のプロセスが先に入れ終えた状態を作る。
-    target = pathlib.Path(os.environ["FAKE_NPM_TARGET"])
-    (target / "node_modules/@textlint/kernel").mkdir(parents=True)
-    (target / "node_modules/@textlint/kernel/package.json").write_text("{}")
-if mode == "occupied":
-    # 依存の入っていないディレクトリが先に置かれた状態を作る。
-    target = pathlib.Path(os.environ["FAKE_NPM_TARGET"])
-    target.mkdir(parents=True)
-    (target / "junk").write_text("x")
-kernel = pathlib.Path.cwd() / "node_modules/@textlint/kernel"
-kernel.mkdir(parents=True)
-(kernel / "package.json").write_text("{}")
-"""
-
-# 偽の node: --version には FAKE_NODE_VERSION を返し、それ以外は FAKE_NODE_STDOUT を出して FAKE_NODE_CODE で終わる。
-FAKE_NODE = """
-import os, sys
-if sys.argv[1:] == ["--version"]:
-    print(os.environ.get("FAKE_NODE_VERSION", "v22.18.0"))
+args = sys.argv[1:]
+if args == ["--version"]:
+    print(os.environ.get("FAKE_BUN_VERSION", "1.4.2"))
+    sys.exit(0)
+if args[:1] == ["install"]:
+    mode = os.environ.get("FAKE_INSTALL_MODE", "ok")
+    if mode == "fail":
+        sys.stderr.write("boom")
+        sys.exit(1)
+    if mode == "race":
+        # 別のプロセスが先に入れ終えた状態を作る。
+        target = pathlib.Path(os.environ["FAKE_INSTALL_TARGET"])
+        (target / "node_modules/@textlint/kernel").mkdir(parents=True)
+        (target / "node_modules/@textlint/kernel/package.json").write_text("{}")
+    if mode == "occupied":
+        # 依存の入っていないディレクトリが先に置かれた状態を作る。
+        target = pathlib.Path(os.environ["FAKE_INSTALL_TARGET"])
+        target.mkdir(parents=True)
+        (target / "junk").write_text("x")
+    kernel = pathlib.Path.cwd() / "node_modules/@textlint/kernel"
+    kernel.mkdir(parents=True)
+    (kernel / "package.json").write_text("{}")
     sys.exit(0)
 sys.stdin.read()
-sys.stdout.write(os.environ.get("FAKE_NODE_STDOUT", ""))
+sys.stdout.write(os.environ.get("FAKE_RUNNER_STDOUT", ""))
 sys.stderr.write("runner failed")
-sys.exit(int(os.environ.get("FAKE_NODE_CODE", "0")))
+sys.exit(int(os.environ.get("FAKE_RUNNER_CODE", "0")))
 """
 
 
 def fake_env(tmp_path: Path, **extra: str) -> dict[str, str]:
-    """偽の npm と node だけが見える環境変数を作る.
+    """偽の bun だけが見える環境変数を作る.
 
     Returns:
         環境変数。
     """
     bin_dir = tmp_path / "bin"
-    _ = write_executable(bin_dir, "npm", FAKE_NPM)
-    _ = write_executable(bin_dir, "node", FAKE_NODE)
+    _ = write_executable(bin_dir, "bun", FAKE_BUN)
     return {"PATH": str(bin_dir), "TEXTLINT_SKILL_DEPS_DIR": str(tmp_path / "deps"), **extra}
 
 
@@ -92,29 +92,29 @@ class TestEnsureInstalled:
         env = {"PATH": "", "TEXTLINT_SKILL_DEPS_DIR": str(SKILL_ROOT)}
         assert ensure_installed(env) == SKILL_ROOT
 
-    def test_npm_missing(self, tmp_path: Path) -> None:
-        with pytest.raises(TextlintError, match="npm が見つかりません"):
+    def test_bun_missing(self, tmp_path: Path) -> None:
+        with pytest.raises(TextlintError, match="bun が見つかりません"):
             _ = ensure_installed({"PATH": str(tmp_path), "TEXTLINT_SKILL_DEPS_DIR": str(tmp_path / "deps")})
 
     def test_installs(self, tmp_path: Path) -> None:
         directory = ensure_installed(fake_env(tmp_path))
         assert installed(directory)
-        assert (directory / "package-lock.json").is_file()
+        assert (directory / "bun.lock").is_file()
         # 一時ディレクトリは残らない。
         assert {path.name for path in tmp_path.iterdir()} == {"bin", "deps"}
 
-    def test_npm_fails_and_leaves_nothing(self, tmp_path: Path) -> None:
+    def test_install_fails_and_leaves_nothing(self, tmp_path: Path) -> None:
         with pytest.raises(TextlintError, match="boom"):
-            _ = ensure_installed(fake_env(tmp_path, FAKE_NPM_MODE="fail"))
+            _ = ensure_installed(fake_env(tmp_path, FAKE_INSTALL_MODE="fail"))
         assert {path.name for path in tmp_path.iterdir()} == {"bin"}
 
     def test_other_process_finished_first(self, tmp_path: Path) -> None:
-        env = fake_env(tmp_path, FAKE_NPM_MODE="race", FAKE_NPM_TARGET=str(tmp_path / "deps"))
+        env = fake_env(tmp_path, FAKE_INSTALL_MODE="race", FAKE_INSTALL_TARGET=str(tmp_path / "deps"))
         assert installed(ensure_installed(env))
         assert {path.name for path in tmp_path.iterdir()} == {"bin", "deps"}
 
     def test_target_occupied_without_deps(self, tmp_path: Path) -> None:
-        env = fake_env(tmp_path, FAKE_NPM_MODE="occupied", FAKE_NPM_TARGET=str(tmp_path / "deps"))
+        env = fake_env(tmp_path, FAKE_INSTALL_MODE="occupied", FAKE_INSTALL_TARGET=str(tmp_path / "deps"))
         with pytest.raises(OSError, match="deps"):
             _ = ensure_installed(env)
         assert {path.name for path in tmp_path.iterdir()} == {"bin", "deps"}
@@ -188,26 +188,26 @@ class TestLintDocumentsWithKernel:
 
 
 class TestLintDocumentsFailures:
-    def test_node_missing(self, tmp_path: Path) -> None:
-        with pytest.raises(TextlintError, match="node が見つかりません"):
+    def test_bun_missing_for_lint(self, tmp_path: Path) -> None:
+        with pytest.raises(TextlintError, match="bun が見つかりません"):
             _ = lint_documents([], config=Config({}, "t"), env={"PATH": str(tmp_path)})
 
-    @pytest.mark.parametrize("version", ["v22.17.9", "v20.18.0", "garbage"])
-    def test_node_too_old(self, tmp_path: Path, version: str) -> None:
-        with pytest.raises(TextlintError, match=r"22\.18 以上"):
-            _ = lint_documents([], config=Config({}, "t"), env=fake_env(tmp_path, FAKE_NODE_VERSION=version))
+    @pytest.mark.parametrize("version", ["1.2.9", "0.9.0", "garbage"])
+    def test_bun_too_old(self, tmp_path: Path, version: str) -> None:
+        with pytest.raises(TextlintError, match=r"1\.3 以上"):
+            _ = lint_documents([], config=Config({}, "t"), env=fake_env(tmp_path, FAKE_BUN_VERSION=version))
 
     def test_runner_fails(self, tmp_path: Path) -> None:
         with pytest.raises(TextlintError, match="runner failed"):
-            _ = lint_documents([], config=Config({}, "t"), env=fake_env(tmp_path, FAKE_NODE_CODE="1"))
+            _ = lint_documents([], config=Config({}, "t"), env=fake_env(tmp_path, FAKE_RUNNER_CODE="1"))
 
     def test_runner_prints_garbage(self, tmp_path: Path) -> None:
         with pytest.raises(TextlintError, match="kernel ランナーが失敗しました"):
-            _ = lint_documents([], config=Config({}, "t"), env=fake_env(tmp_path, FAKE_NODE_STDOUT="not json"))
+            _ = lint_documents([], config=Config({}, "t"), env=fake_env(tmp_path, FAKE_RUNNER_STDOUT="not json"))
 
     def test_runner_returns_non_object(self, tmp_path: Path) -> None:
         with pytest.raises(TextlintError, match="kernel ランナーが失敗しました"):
-            _ = lint_documents([], config=Config({}, "t"), env=fake_env(tmp_path, FAKE_NODE_STDOUT="[]"))
+            _ = lint_documents([], config=Config({}, "t"), env=fake_env(tmp_path, FAKE_RUNNER_STDOUT="[]"))
 
     def test_malformed_messages_are_dropped(self, tmp_path: Path) -> None:
         good = {"ruleId": "r", "message": "m", "line": 1, "column": 2, "severity": 2}
@@ -221,7 +221,7 @@ class TestLintDocumentsFailures:
         report = lint_documents(
             [Document("a.md", "x")],
             config=Config({}, "t"),
-            env=fake_env(tmp_path, FAKE_NODE_STDOUT=json.dumps(response)),
+            env=fake_env(tmp_path, FAKE_RUNNER_STDOUT=json.dumps(response)),
         )
         assert [len(result.messages) for result in report.results] == [1, 0]
         assert not report.results[1].file_path

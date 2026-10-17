@@ -6,7 +6,7 @@ argument-hint: "[ファイルかglob ...] [--fix]"
 
 # textlint
 
-このスキルのディレクトリにある `scripts/lint.py` を Python 3.9 以上で実行する。Node.js 22.18 以上と npm も必要。初回は textlint の依存を `~/.cache/ja-writing-textlint/` へ `npm ci` で入れるので、少し時間がかかる。
+このスキルのディレクトリにある `scripts/lint.py` を Python 3.9 以上で実行する。bun 1.3 以上も必要。初回は textlint の依存を `~/.cache/ja-writing-textlint/` へ `bun install` で入れるので、少し時間がかかる。
 
 ```bash
 python3 <このスキルのディレクトリ>/scripts/lint.py <ファイルかglob>...

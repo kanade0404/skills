@@ -72,6 +72,11 @@ class TestFormatMessages:
         report = Report((DocumentResult(str(tmp_path / "a.md"), messages, None),), (), "s")
         assert post_edit.format_messages(report, tmp_path) == ["a.md:1:2 [r] error", "a.md:3:4 [r] warn"]
 
+    def test_outside_project_is_absolute(self, tmp_path: Path) -> None:
+        outside = tmp_path / "other" / "a.md"
+        report = Report((DocumentResult(str(outside), (Message("r", "m", 1, 1, 2),), None),), (), "s")
+        assert post_edit.format_messages(report, tmp_path / "project") == [f"{outside}:1:1 [r] m"]
+
     def test_other_drive(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         def relpath(_path: str, _start: object) -> str:
             raise ValueError
@@ -103,7 +108,7 @@ class TestRun:
         _ = (tmp_path / "a.md").write_text(CLEAN, encoding="utf-8")
         stdout, stderr = post_edit.run(payload(tmp_path, {"file_path": "a.md"}), {"PATH": str(tmp_path)})
         assert not stdout
-        assert "node が見つかりません" in stderr
+        assert "bun が見つかりません" in stderr
 
     def test_clean(self, tmp_path: Path, real_env: dict[str, str]) -> None:
         _ = (tmp_path / "a.md").write_text(CLEAN, encoding="utf-8")

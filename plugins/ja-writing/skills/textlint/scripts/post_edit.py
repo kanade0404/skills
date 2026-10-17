@@ -115,6 +115,9 @@ def format_messages(report: Report, project_dir: Path) -> list[str]:
             shown = os.path.relpath(result.file_path, project_dir)
         except ValueError:  # Windows でドライブが違うとき
             shown = result.file_path
+        # プロジェクトの外のファイルは、../ をたどる相対パスより絶対パスのほうが読みやすい。
+        if shown.startswith(os.pardir):
+            shown = result.file_path
         lines.extend(
             f"{shown}:{message.line}:{message.column} [{message.rule_id}] {message.message}"
             for message in result.messages
