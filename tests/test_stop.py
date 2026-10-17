@@ -91,6 +91,13 @@ class TestRun:
         assert not stdout
         assert "bun が見つかりません" in stderr
 
+    def test_reports_install_error(self, tmp_path: Path, real_env: dict[str, str]) -> None:
+        _ = (tmp_path / "file").write_text("", encoding="utf-8")
+        env = {**real_env, "TEXTLINT_SKILL_DEPS_DIR": str(tmp_path / "file" / "deps")}
+        stdout, stderr = stop.run(json.dumps({"last_assistant_message": CLEAN}), env)
+        assert not stdout
+        assert stderr.startswith("ja-writing: ")
+
     def test_clean(self, real_env: dict[str, str]) -> None:
         assert stop.run(json.dumps({"last_assistant_message": CLEAN}), real_env) == ("", "")
 

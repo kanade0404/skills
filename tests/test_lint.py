@@ -58,6 +58,13 @@ class TestRun:
         assert lint.run(["a.md"], {"PATH": str(tmp_path)}, tmp_path) == 2
         assert "bun が見つかりません" in capsys.readouterr().err
 
+    def test_install_error(self, tmp_path: Path, real_env: dict[str, str], capsys: pytest.CaptureFixture[str]) -> None:
+        _ = write(tmp_path, "a.md", CLEAN)
+        _ = write(tmp_path, "file", "")
+        env = {**real_env, "TEXTLINT_SKILL_DEPS_DIR": str(tmp_path / "file" / "deps")}
+        assert lint.run(["a.md"], env, tmp_path) == 2
+        assert capsys.readouterr().err.startswith("ja-writing: ")
+
     def test_unreadable_file(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         _ = (tmp_path / "a.md").write_bytes("テスト".encode("cp932"))
         assert lint.run(["a.md"], {}, tmp_path) == 2

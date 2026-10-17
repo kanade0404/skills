@@ -102,7 +102,7 @@ def run(args: Sequence[str], env: Mapping[str, str], cwd: Path) -> int:
     readable = [document for document in documents if document is not None]
     try:
         report = lint_documents(readable, config=choose_file_config(cwd, env), env=env, fix=fix)
-    except TextlintError as error:
+    except (TextlintError, OSError) as error:
         _ = sys.stderr.write(f"ja-writing: {error}\n")
         return 2
     for document, result in zip(readable, report.results):

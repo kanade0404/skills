@@ -165,7 +165,7 @@ def run(stdin_text: str, env: Mapping[str, str]) -> tuple[str, str]:
         return _NOTHING
     try:
         report = lint_documents(documents, config=choose_file_config(project_dir, env), env=env)
-    except TextlintError as error:
+    except (TextlintError, OSError) as error:
         return "", f"ja-writing: {error}\n"
     lines = format_messages(report, project_dir)
     if not lines:

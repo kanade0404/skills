@@ -116,7 +116,7 @@ def run(stdin_text: str, env: Mapping[str, str]) -> tuple[str, str]:
         return _NOTHING
     try:
         report = lint_documents([Document("answer.md", text)], config=load_config(CHAT_CONFIG), env=env)
-    except TextlintError as error:
+    except (TextlintError, OSError) as error:
         return "", f"ja-writing: {error}\n"
     lines = [
         f"{message.line}:{message.column} [{message.rule_id}] {message.message}"
