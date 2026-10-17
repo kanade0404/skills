@@ -3,7 +3,7 @@
 // エージェント固有の環境変数には依存しない（あれば使う）。
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,11 +36,11 @@ function sanitizedProjectConfig(file) {
     }
     out[section] = value;
   }
-  const dir = join(tmpdir(), "ja-writing-textlint");
-  mkdirSync(dir, { recursive: true });
-  const tmp = join(dir, `${createHash("sha256").update(JSON.stringify(out)).digest("hex").slice(0, 16)}.json`);
-  writeFileSync(tmp, JSON.stringify(out));
-  return tmp;
+  // 共有の /tmp で他の利用者に先回りされないよう、推測できない名前の専用ディレクトリ（0700）に新規作成する。
+  const dir = mkdtempSync(join(tmpdir(), "ja-writing-textlint-"));
+  const tmp = join(dir, "config.json");
+  writeFileSync(tmp, JSON.stringify(out), { mode: 0o600, flag: "wx" });
+  return { file: tmp, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
 const truthy = (v) => ["1", "true", "yes"].includes(String(v ?? "").toLowerCase());
@@ -103,27 +103,35 @@ export function resolveRunner(projectDir) {
   const dir = ensureInstalled();
   let config = process.env.TEXTLINT_CONFIG;
   let source = config;
+  let cleanup = () => {};
   if (!config && trustProject()) source = config = find(ALL_CONFIGS);
   if (!config && !trustProject()) {
     const projectConfig = find(JSON_CONFIGS);
     const sanitized = projectConfig && sanitizedProjectConfig(projectConfig);
-    if (sanitized) [config, source] = [sanitized, `${projectConfig}（検査済みの写し）`];
+    if (sanitized) {
+      [config, source, cleanup] = [sanitized.file, `${projectConfig}（検査済みの写し）`, sanitized.cleanup];
+    }
   }
   if (!config) source = config = join(skillRoot, "config", "textlintrc.json");
   return {
     bin: textlintBin(dir),
     baseArgs: ["--config", config, "--rules-base-directory", join(dir, "node_modules")],
     source,
+    cleanup,
   };
 }
 
 export function runTextlint(args, { projectDir = process.cwd(), ...options } = {}) {
   const runner = resolveRunner(projectDir);
-  const res = spawnSync(process.execPath, [runner.bin, ...runner.baseArgs, ...args], {
-    cwd: projectDir,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-    ...options,
-  });
-  return { ...res, runner };
+  try {
+    const res = spawnSync(process.execPath, [runner.bin, ...runner.baseArgs, ...args], {
+      cwd: projectDir,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      ...options,
+    });
+    return { ...res, runner };
+  } finally {
+    runner.cleanup?.();
+  }
 }
