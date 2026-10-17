@@ -1,4 +1,4 @@
-<!-- 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/references/rephrase-test.md (MIT License。著作権表示は skills/yomiyasu/LICENSE を参照) -->
+<!-- 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/references/rephrase-test.md (ライセンスと著作権表示は、このスキルの LICENSE を参照) -->
 # 言い直しテスト
 
 SKILL.md 2章 Step 2 の言い直しテストの細部。1章の型に当たった箇所を直すか残すかに迷ったとき、否定対比を直すとき、残した箇所の書き方に迷ったときに読む。

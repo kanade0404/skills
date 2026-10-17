@@ -1,4 +1,4 @@
-<!-- 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/references/audience.md (MIT License。著作権表示は skills/yomiyasu/LICENSE を参照) -->
+<!-- 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/references/audience.md (ライセンスと著作権表示は、このスキルの LICENSE を参照) -->
 # 文書の種類と読者
 
 SKILL.md 2章 Step 1 の種類と読者の決め方の細部。種類か読者の推定に迷うとき、informed か general を指定されたとき、「ここに説明が必要です」を書くときに読む。書き手と読み手との関係は `persona.md`。どの種類と読者でも、意味を保つこと（SKILL.md「最優先ルール: 意味の保持」）、足さないこと（「情報の不増補」）、見出しと節の数と順を変えないことは同じ。

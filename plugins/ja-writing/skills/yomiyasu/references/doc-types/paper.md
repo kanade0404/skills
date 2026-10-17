@@ -1,4 +1,4 @@
-<!-- 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/references/doc-types/paper.md (MIT License。著作権表示は skills/yomiyasu/LICENSE を参照) -->
+<!-- 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/references/doc-types/paper.md (ライセンスと著作権表示は、このスキルの LICENSE を参照) -->
 # 論文・研究レポート（paper）
 
 あわせて読む: domains/tech.md

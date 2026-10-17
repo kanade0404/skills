@@ -1,4 +1,4 @@
-<!-- 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/references/doc-types/formal.md (MIT License。著作権表示は skills/yomiyasu/LICENSE を参照) -->
+<!-- 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/references/doc-types/formal.md (ライセンスと著作権表示は、このスキルの LICENSE を参照) -->
 # 公用文、規程、契約書、仕様書（formal）
 
 あわせて読む: domains/business.md か domains/tech.md（中身で選ぶ）

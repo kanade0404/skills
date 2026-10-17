@@ -1,4 +1,4 @@
-<!-- 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/references/domains/essay.md (MIT License。著作権表示は skills/yomiyasu/LICENSE を参照) -->
+<!-- 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/references/domains/essay.md (ライセンスと著作権表示は、このスキルの LICENSE を参照) -->
 # エッセイ・オピニオン・個人発信向け仕様（note / 個人ブログ）
 
 エッセイでは、大げさな教訓や難しい熟語を減らし、書き手の素直な実感や感情を残します。

@@ -23,8 +23,9 @@ package = false
 target-version = "py39"
 line-length = 120
 extend-exclude = [
-  # 上流（nanaism/yomiyasu）の写し。手を加えないので検査しない。
+  # 上流から写したスキル(tools/vendored.json)。手を加えないので検査しない。
   "plugins/ja-writing/skills/yomiyasu",
+  "plugins/productivity/skills/handoff",
 ]
 
 [tool.ruff.lint]
@@ -54,7 +55,7 @@ ignore = [
 
 [tool.ruff.lint.isort]
 # スクリプトとテストの共通部品は pythonpath に入れて import する。
-known-first-party = ["textlint_runner", "post_edit", "stop", "session_start", "lint", "vendor_yomiyasu", "support"]
+known-first-party = ["textlint_runner", "post_edit", "stop", "session_start", "lint", "vendor_skill", "support"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

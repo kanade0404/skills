@@ -63,15 +63,27 @@ Claude Code と Codex では、次のフックが動く。括弧の中は Claude
 - bun 1.3 以上（textlint。kernel ランナーは TypeScript で、bun でそのまま動く）
 - textlint の依存は、初回に `~/.cache/ja-writing-textlint/<ロックファイルのハッシュ>/` へ入れる。コマンドは `bun install --frozen-lockfile --production --ignore-scripts` で、バージョンは `skills/textlint/bun.lock` で固定している
 
-### yomiyasu の更新
+## productivity
 
-yomiyasu は依存として取り込まず、見直したコミットを写している。上流の変更は自動では入らない。各ファイルの先頭に参照元のコミットを書いている。更新するときは、新しいコミットを見直してから写し直す。
+作業を進めるためのスキルをまとめたプラグイン。
+
+- `handoff`: 今の会話を、次のエージェントが引き継ぐための文書にまとめる（[mattpocock/skills](https://github.com/mattpocock/skills/tree/main/skills/productivity/handoff)の写し）。Claude Code では `/productivity:handoff [次のセッションでやること]` で呼ぶ
+
+入れ方は ja-writing と同じで、プラグイン名を `productivity` にする。
+
+## 上流から写したスキル
+
+yomiyasu と handoff は依存として取り込まず、見直したコミットを写している。上流の変更は自動では入らない。写す元は `tools/vendored.json` にまとめている。
+
+写したファイルの先頭には、参照元のコミットを書いている。ライセンスの本文も `LICENSE` として一緒に写す。更新するときは、新しいコミットを見直してから写し直す。
 
 ```
-git clone https://github.com/nanaism/yomiyasu /tmp/yomiyasu
-git -C /tmp/yomiyasu checkout <見直したコミット>
-uv run python tools/vendor_yomiyasu.py /tmp/yomiyasu
+git clone <tools/vendored.json の repository> /tmp/upstream
+git -C /tmp/upstream checkout <見直したコミット>
+uv run python tools/vendor_skill.py <tools/vendored.json の destination> /tmp/upstream
 ```
+
+git に記録されたファイルだけを写し、シンボリックリンクは拒否する。新しい写しが完成してから既存の写しと置き換えるので、途中で失敗しても既存の写しは残る。
 
 ## 開発
 
@@ -94,4 +106,4 @@ CI と同じ検査は次のとおり。
 | TypeScript | `bun --bun run --cwd plugins/ja-writing/skills/textlint check` | tsc（strict と追加フラグ）、oxfmt、oxlint（nursery を含む全カテゴリ、型を使うルールを含む） |
 | 全体 | `semgrep scan ...`（引数は `.github/workflows/ci.yml`） | semgrep の python・security-audit・secrets・github-actions・typescript |
 
-ruff と oxlint で外したルールは、それぞれ `pyproject.toml` と `.oxlintrc.json` に理由を書いている。yomiyasu の写しは上流のコードなので検査しない。
+ruff と oxlint で外したルールは、それぞれ `pyproject.toml` と `.oxlintrc.json` に理由を書いている。上流から写したスキルは手を加えないので検査しない。

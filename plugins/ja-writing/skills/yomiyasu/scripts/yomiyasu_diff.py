@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/scripts/yomiyasu_diff.py (MIT License。著作権表示は skills/yomiyasu/LICENSE を参照)
+# 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/scripts/yomiyasu_diff.py (ライセンスと著作権表示は、このスキルの LICENSE を参照)
 """
 yomiyasu_diff.py - 元の文と書き直した文を比べ、変わった箇所をすべて出し、意味が変わる恐れと規則の見直し候補を挙げる。
 

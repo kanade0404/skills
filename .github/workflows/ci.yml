@@ -64,4 +64,5 @@ jobs:
           --config p/python --config p/security-audit --config p/secrets
           --config p/github-actions --config p/typescript
           --exclude plugins/ja-writing/skills/yomiyasu
+          --exclude plugins/productivity/skills/handoff
           .

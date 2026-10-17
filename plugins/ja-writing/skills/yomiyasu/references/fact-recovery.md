@@ -1,4 +1,4 @@
-<!-- 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/references/fact-recovery.md (MIT License。著作権表示は skills/yomiyasu/LICENSE を参照) -->
+<!-- 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/references/fact-recovery.md (ライセンスと著作権表示は、このスキルの LICENSE を参照) -->
 # 事実の確かめ（文脈からの補いと裏取り）
 
 SKILL.md の Step 2 の、言い直しテストのあとの文から読む。当てはまるときだけ読む細部は `references/fact-recovery-details.md` にある（問いの形と例、種類と宛先、穴の種類、check への渡し方、ほかの場面）。

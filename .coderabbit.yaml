@@ -1,5 +1,6 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 reviews:
   path_filters:
-    # 上流（nanaism/yomiyasu）の写し。手を加えないので、レビューの対象にしない。
+    # 上流から写したスキル(tools/vendored.json)。手を加えないので、レビューの対象にしない。
     - "!plugins/ja-writing/skills/yomiyasu/**"
+    - "!plugins/productivity/skills/handoff/**"

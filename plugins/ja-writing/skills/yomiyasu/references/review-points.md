@@ -1,4 +1,4 @@
-<!-- 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/references/review-points.md (MIT License。著作権表示は skills/yomiyasu/LICENSE を参照) -->
+<!-- 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/references/review-points.md (ライセンスと著作権表示は、このスキルの LICENSE を参照) -->
 # 検査の出力の見方と目視の点検
 
 SKILL.md の Step 3 と Step 4 で `yomiyasu_check.py run` の出力の候補を確かめるときに読む。Python を実行できないときは4章の目視の点検に従う。
