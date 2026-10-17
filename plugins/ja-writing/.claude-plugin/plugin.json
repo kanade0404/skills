@@ -10,16 +10,23 @@
   "userConfig": {
     "hook_mode": {
       "type": "string",
-      "title": "フックのモード",
-      "description": "textlint の指摘があったときの挙動。block は直させる、warn は文脈として渡すだけ、off は自動検査しない",
+      "title": "ファイル検査のモード",
+      "description": "書き換えた .md・.txt に textlint の指摘があったときの挙動。block は直させる、warn は文脈として渡すだけ、off は検査しない",
       "options": ["block", "warn", "off"],
       "default": "block"
     },
-    "trust_project_toolchain": {
+    "stop_mode": {
+      "type": "string",
+      "title": "答えの検査のモード",
+      "description": "ターンの最後の答えに指摘があったときの挙動。notify は利用者にだけ表示する、block は書き直させる（1回まで）、off は検査しない",
+      "options": ["notify", "block", "off"],
+      "default": "notify"
+    },
+    "session_context": {
       "type": "boolean",
-      "title": "プロジェクトの textlint を信頼する",
-      "description": "オンにすると、プロジェクトの node_modules/textlint と .textlintrc.js を使う。これらはプロジェクトのコードを実行するので、信頼できるリポジトリだけで使う",
-      "default": false
+      "title": "文章の規約を渡す",
+      "description": "セッションの開始時に、textlint のルールに沿った文章の規約を文脈に入れる（数百トークン）",
+      "default": true
     }
   }
 }

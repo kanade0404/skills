@@ -4,7 +4,7 @@
 
 ## ja-writing
 
-日本語の文章を検査、推敲するプラグイン。次の 2 つのスキルと、書き込み後のフックを含む。
+日本語の文章を検査、推敲するプラグイン。次の 2 つのスキルとフックを含む。
 
 - `textlint`: textlint で `.md`・`.txt` を検査し、指摘を直す
 - `yomiyasu`: AI が書いた日本語を、意味を保ったまま読みやすく直す（[nanaism/yomiyasu](https://github.com/nanaism/yomiyasu)の写し）
@@ -39,22 +39,29 @@ Cursor や Gemini CLI などのその他のエージェントには、スキル�
 npx skills add kanade0404/skills
 ```
 
-### 書き込み後のフック
+### フック
 
-Claude Code と Codex では、エージェントが `.md`・`.txt` を書き換えるたびに textlint を実行し、指摘をエージェントに返す。かなを含まないファイルは対象外にしている。
+Claude Code と Codex では、次のフックが動く。括弧の中は Claude Code のプラグイン設定の名前。
 
-| 環境変数 | Claude Code の設定 | 意味 |
+| フック | 内容 | 切り替え |
 | --- | --- | --- |
-| `TEXTLINT_HOOK_MODE` | `hook_mode` | `block`（既定）は直させる。`warn` は文脈として渡すだけ。`off` は検査しない |
-| `TEXTLINT_TRUST_PROJECT` | `trust_project_toolchain` | `1` にすると、プロジェクトの `node_modules/textlint` と `.textlintrc.js` を使う |
-| `TEXTLINT_CONFIG` | なし | 使う設定ファイルを指定する |
+| SessionStart | 依存を入れ、文章の規約（`config/guidelines.md`）を文脈に渡す | `TEXTLINT_SESSION_CONTEXT`（`session_context`） |
+| PostToolUse | エージェントが書き換えた `.md`・`.txt` を検査し、指摘を返す | `TEXTLINT_HOOK_MODE`（`hook_mode`）: `block`・`warn`・`off` |
+| Stop | ターンの最後の答えを検査する。既定では利用者にだけ表示する | `TEXTLINT_STOP_MODE`（`stop_mode`）: `notify`・`block`・`off` |
 
-設定ファイルは `TEXTLINT_CONFIG`、プロジェクトの `.textlintrc.json` か `.textlintrc`、同梱の `config/textlintrc.json` の順に探す。プロジェクトのコードを実行しないよう、`TEXTLINT_TRUST_PROJECT` を設定しない限り JSON の設定だけを読み、ルール名にパスが書かれていれば実行を止める。YAML・JS の設定とプロジェクトの textlint も、信頼したときだけ使う。
+かなを含まない本文は検査しない。規約は数百トークンで、セッションの開始、`/clear`、compact のたびに1回だけ入る。
+
+### 設定ファイル
+
+ファイルの検査には、`TEXTLINT_CONFIG`、プロジェクトの `.textlintrc.json` か `.textlintrc`、同梱の `config/textlintrc.json` の順に探した設定を使う。答えの検査には、誤検知の少ない `config/chat.json` を使う。
+
+検査は @textlint/kernel で行い、同梱のプリセットとフィルタだけを読み込む。プロジェクトの設定は、同梱ルールの有効・無効とオプションとしてだけ使うので、設定からプロジェクトのコードが実行されることはない。同梱にないルールの名前は無視して表示する。
 
 ### 依存
 
-- Node.js 20.18 以上と npm（textlint）、Python 3.9 以上（yomiyasu）が必要
-- textlint の依存は、初回に `~/.cache/ja-writing-textlint/<ロックファイルのハッシュ>/` へ `npm ci --ignore-scripts` で入れる。バージョンは `skills/textlint/package-lock.json` で固定している
+- Python 3.9 以上（フックとスキル、yomiyasu）
+- Node.js 22.18 以上と npm（textlint。kernel ランナーは TypeScript で、Node.js の型除去でそのまま動く）
+- textlint の依存は、初回に `~/.cache/ja-writing-textlint/<ロックファイルのハッシュ>/` へ `npm ci --omit=dev --ignore-scripts` で入れる。バージョンは `skills/textlint/package-lock.json` で固定している
 
 ### yomiyasu の更新
 
@@ -63,5 +70,27 @@ yomiyasu は依存として取り込まず、見直したコミットを写し�
 ```
 git clone https://github.com/nanaism/yomiyasu /tmp/yomiyasu
 git -C /tmp/yomiyasu checkout <見直したコミット>
-node tools/vendor-yomiyasu.mjs /tmp/yomiyasu
+uv run python tools/vendor_yomiyasu.py /tmp/yomiyasu
 ```
+
+## 開発
+
+Python は uv で、TypeScript は npm で管理する。
+
+```
+uv sync
+npm ci --ignore-scripts --prefix plugins/ja-writing/skills/textlint
+```
+
+CI と同じ検査は次のとおり。
+
+| 対象 | コマンド | 内容 |
+| --- | --- | --- |
+| Python | `uv run ruff format --check .` と `uv run ruff check .` | ruff の全ルール（preview を含む） |
+| Python | `uv run mypy` | strict と追加のエラーコード |
+| Python | `uv run basedpyright` | 全ルール（`all`） |
+| Python | `uv run pytest` と `uv run --python 3.9 pytest` | 警告をエラーにし、分岐カバレッジ 100% を求める |
+| TypeScript | `npm run check --prefix plugins/ja-writing/skills/textlint` | tsc（strict と追加フラグ）、oxfmt、oxlint（nursery を含む全カテゴリ、型を使うルールを含む） |
+| 全体 | `uv run --python 3.13 --only-group semgrep semgrep scan ...` | semgrep の python・security-audit・secrets・github-actions・typescript |
+
+ruff と oxlint で外したルールは、それぞれ `pyproject.toml` と `.oxlintrc.json` に理由を書いている。yomiyasu の写しは上流のコードなので検査しない。

@@ -9,3 +9,7 @@ __pycache__/
 
 # direnv's local evaluation cache for .envrc (machine-local, not distributed)
 .direnv/
+
+# python tooling (uv, pytest-cov)
+.venv/
+.coverage

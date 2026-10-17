@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SKILL_DIR: plugins/ja-writing/skills/textlint
+
+jobs:
+  python:
+    name: Python (lint, types, tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      # テストは本物の kernel ランナーを動かすので、スキルの依存を入れておく。
+      - run: npm ci --ignore-scripts --no-audit --no-fund --prefix "$SKILL_DIR"
+      - run: uv sync --locked
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run mypy
+      - run: uv run basedpyright
+      - run: uv run pytest
+
+  python-39:
+    # フックは利用者の python3 で直接動くので、macOS 標準の 3.9 でもテストする。
+    name: Python 3.9 (tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.18.0
+      - run: npm ci --ignore-scripts --no-audit --no-fund --prefix "$SKILL_DIR"
+      - run: uv run --locked --python 3.9 pytest
+
+  typescript:
+    name: TypeScript (tsc, oxfmt, oxlint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      # oxlint-tsgolint はプラットフォーム別のバイナリを optionalDependencies で入れるので、インストールスクリプトは不要。
+      - run: npm ci --ignore-scripts --no-audit --no-fund --prefix "$SKILL_DIR"
+      - run: npm run check --prefix "$SKILL_DIR"
+
+  semgrep:
+    name: Semgrep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: >-
+          uv run --locked --python 3.13 --isolated --only-group semgrep
+          semgrep scan --metrics=off --error
+          --config p/python --config p/security-audit --config p/secrets
+          --config p/github-actions --config p/typescript
+          --exclude plugins/ja-writing/skills/yomiyasu
+          .
