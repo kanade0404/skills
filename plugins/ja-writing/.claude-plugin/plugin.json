@@ -1,0 +1,25 @@
+{
+  "name": "ja-writing",
+  "displayName": "ja-writing",
+  "version": "0.1.0",
+  "description": "日本語の文章を textlint（ja-technical-writing、ja-spacing、ai-writing）で検査するフックとスキル、推敲スキル yomiyasu",
+  "author": { "name": "kanade0404" },
+  "repository": "https://github.com/kanade0404/skills",
+  "license": "MIT",
+  "keywords": ["textlint", "japanese", "writing", "lint", "markdown", "yomiyasu"],
+  "userConfig": {
+    "hook_mode": {
+      "type": "string",
+      "title": "フックのモード",
+      "description": "textlint の指摘があったときの挙動。block は直させる、warn は文脈として渡すだけ、off は自動検査しない",
+      "options": ["block", "warn", "off"],
+      "default": "block"
+    },
+    "trust_project_toolchain": {
+      "type": "boolean",
+      "title": "プロジェクトの textlint を信頼する",
+      "description": "オンにすると、プロジェクトの node_modules/textlint と .textlintrc.js を使う。これらはプロジェクトのコードを実行するので、信頼できるリポジトリだけで使う",
+      "default": false
+    }
+  }
+}

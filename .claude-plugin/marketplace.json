@@ -1,0 +1,12 @@
+{
+  "name": "kanade0404-skills",
+  "owner": { "name": "kanade0404" },
+  "description": "kanade0404 のエージェント向けプラグイン",
+  "plugins": [
+    {
+      "name": "ja-writing",
+      "source": "./plugins/ja-writing",
+      "description": "日本語の文章を textlint で検査するフックとスキル、推敲スキル yomiyasu"
+    }
+  ]
+}
