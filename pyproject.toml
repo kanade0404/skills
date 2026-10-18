@@ -10,6 +10,7 @@ dependencies = []
 dev = [
   "basedpyright",
   "mypy",
+  "pydantic",
   "pytest",
   "pytest-cov",
   "ruff",
@@ -75,6 +76,7 @@ preview = true
 [tool.mypy]
 # mypy は 3.9 を検査対象にできないので 3.10 で検査する。3.9 の文法は ruff(target-version)と basedpyright で確かめる。
 python_version = "3.10"
+plugins = ["pydantic.mypy"]
 strict = true
 warn_unreachable = true
 disallow_any_explicit = true
