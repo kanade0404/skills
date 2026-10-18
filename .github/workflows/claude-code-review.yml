@@ -21,6 +21,10 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: List vendored skills
+        id: vendored
+        run: echo "paths=$(python3 tools/vendored_paths.py review)" >> "$GITHUB_OUTPUT"
+
       - name: Run Claude Code Review
         id: claude-review
         uses: anthropics/claude-code-action@f27be6b65a4652f08a2ba3cff79114829b588967 # v1
@@ -28,4 +32,4 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
-          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
+          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }} 次のディレクトリは上流から写したもので手を加えないので、その変更はレビューしない: ${{ steps.vendored.outputs.paths }}'

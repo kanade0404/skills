@@ -22,9 +22,10 @@ package = false
 target-version = "py39"
 line-length = 120
 extend-exclude = [
-  # 上流から写したスキル(tools/vendored.json)。手を加えないので検査しない。
+  # BEGIN tools/vendored.json (tools/vendored_paths.py sync が書く)
   "plugins/ja-writing/skills/yomiyasu",
   "plugins/productivity/skills/handoff",
+  # END tools/vendored.json
 ]
 
 [tool.ruff.lint]
@@ -59,7 +60,7 @@ ignore = [
 
 [tool.ruff.lint.isort]
 # スクリプトとテストの共通部品は pythonpath に入れて import する。
-known-first-party = ["textlint_runner", "post_edit", "stop", "session_start", "lint", "vendor_skill", "support"]
+known-first-party = ["textlint_runner", "post_edit", "stop", "session_start", "lint", "vendor_skill", "vendored_paths", "support"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

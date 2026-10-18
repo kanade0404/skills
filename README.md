@@ -85,6 +85,8 @@ uv run python tools/vendor_skill.py <tools/vendored.json の destination> /tmp/u
 
 git に記録されたファイルだけを写し、シンボリックリンクは拒否する。新しい写しが完成してから既存の写しと置き換えるので、途中で失敗しても既存の写しは残る。
 
+写したスキルは、検査とレビューの対象から外す。`tools/vendored.json` に項目を足したり消したりしたら、`python3 tools/vendored_paths.py sync` で `pyproject.toml` と `.coderabbit.yaml` の除外を書き直す。書き直し忘れはテストで落ちる。semgrep と Claude の PR レビューは、実行するたびに `tools/vendored.json` を読む。
+
 ## 開発
 
 開発に使うツール（uv、Python、bun、semgrep、git）は `flake.nix` の開発シェルで用意し、バージョンは `flake.lock` で固定する。CI も同じシェルで動く。Python の依存は `uv.lock`、TypeScript の依存は `bun.lock` で固定する。
