@@ -1,3 +1,4 @@
+<!-- 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/references/doc-types/promo.md (ライセンスと著作権表示は、このスキルの LICENSE を参照) -->
 # 紹介記事・宣伝文（promo）
 
 あわせて読む: domains/essay.md か domains/business.md（個人の記事は essay.md、店や会社の宣伝文は business.md）

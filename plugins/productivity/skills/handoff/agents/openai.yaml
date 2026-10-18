@@ -1,3 +1,4 @@
+# 参照元: https://github.com/mattpocock/skills/blob/49dd158d1076134a641b33efb035946536778336/skills/productivity/handoff/agents/openai.yaml (ライセンスと著作権表示は、このスキルの LICENSE を参照)
 interface:
   display_name: "Handoff"
   short_description: "Compact a conversation into a handoff"

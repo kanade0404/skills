@@ -1,3 +1,4 @@
+# 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/references/lists/nominalization.txt (ライセンスと著作権表示は、このスキルの LICENSE を参照)
 # 名詞化の言い回しの一覧（文体の硬化の検査。yomiyasu_diff.py が読む）
 # 推敲で、和語の短い言い回しが「〜が可能です」「〜を実施」のような名詞化した表現に置き換わり、文が硬くなったかを数えるのに使う。
 # 書き方: 1行に1つ、「名前<TAB>正規表現」。名前は出力に出す短い形、正規表現は Python の re の書き方。

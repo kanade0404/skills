@@ -1,3 +1,4 @@
+<!-- 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/references/gemini-syntax.md (ライセンスと著作権表示は、このスキルの LICENSE を参照) -->
 # 自然な日本語への構文変換原則
 
 この文書はAI生成文で見直したい構文と、意味を保ちながら自然な日本語に整える指針をまとめている。

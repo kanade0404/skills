@@ -75,7 +75,7 @@ Claude Code と Codex では、次のフックが動く。括弧の中は Claude
 
 yomiyasu と handoff は依存として取り込まず、見直したコミットを写している。上流の変更は自動では入らない。写す元は `tools/vendored.json` にまとめている。
 
-ファイルには手を加えずに写し、写したコミットは写した先の `SOURCE.md` に書く。ライセンスの本文も `LICENSE` として一緒に写す。更新するときは、新しいコミットを見直してから写し直す。
+写したファイルの先頭には、参照元のコミットを書いている。ライセンスの本文も `LICENSE` として一緒に写す。更新するときは、新しいコミットを見直してから写し直す。
 
 ```
 git clone <tools/vendored.json の repository> /tmp/upstream

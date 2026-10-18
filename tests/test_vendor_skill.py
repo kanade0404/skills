@@ -89,39 +89,38 @@ class TestLoadSpecs:
             _ = vendor_skill.load_specs(path)
 
 
-def test_source_note() -> None:
-    note = vendor_skill.source_note(SPEC, SHA)
-    assert f"- コミット: {SHA}\n" in note
-    assert f"- URL: https://github.com/o/r/tree/{SHA}/skills/s\n" in note
+class TestAnnotate:
+    def test_license_is_untouched(self) -> None:
+        assert vendor_skill.annotate(SPEC, "MIT\n", "LICENSE", SHA) == "MIT\n"
+        assert vendor_skill.annotate(SPEC, "x\n", "UNICODE-LICENSE.txt", SHA) == "x\n"
+
+    def test_unknown_type(self) -> None:
+        assert vendor_skill.annotate(SPEC, "x", "a.png", SHA) == "x"
+
+    def test_shebang_stays_first(self) -> None:
+        out = vendor_skill.annotate(SPEC, "#!/usr/bin/env python3\nx\n", "scripts/a.py", SHA)
+        assert out.startswith(
+            f"#!/usr/bin/env python3\n# 参照元: https://github.com/o/r/blob/{SHA}/skills/s/scripts/a.py "
+        )
+
+    def test_frontmatter_stays_first(self) -> None:
+        out = vendor_skill.annotate(SPEC, "---\nname: x\n---\n\n# x\n", "SKILL.md", SHA)
+        assert out.startswith("---\nname: x\n---\n\n<!-- 参照元: ")
+
+    @pytest.mark.parametrize(
+        ("relative", "prefix"), [("b.md", "<!-- 参照元: "), ("x.txt", "# 参照元: "), ("a.yaml", "# 参照元: ")]
+    )
+    def test_plain(self, relative: str, prefix: str) -> None:
+        assert vendor_skill.annotate(SPEC, "x\n", relative, SHA).startswith(prefix)
 
 
 class TestVendor:
     def test_copies_skill_with_its_license(self, upstream: Path, tmp_path: Path) -> None:
         sha = vendor_skill.vendor(upstream, SPEC, tmp_path)
-        assert copied(tmp_path) == [
-            "LICENSE",
-            "SKILL.md",
-            "SOURCE.md",
-            "agents/openai.yaml",
-            "references/x.txt",
-            "scripts/a.py",
-        ]
+        assert copied(tmp_path) == ["LICENSE", "SKILL.md", "agents/openai.yaml", "references/x.txt", "scripts/a.py"]
         destination = tmp_path / SPEC.destination
         assert (destination / "LICENSE").read_text(encoding="utf-8") == "MIT (skill)\n"
-        assert (destination / "SOURCE.md").read_text(encoding="utf-8") == vendor_skill.source_note(SPEC, sha)
-
-    def test_files_are_copied_unchanged(self, upstream: Path, tmp_path: Path) -> None:
-        _ = vendor_skill.vendor(upstream, SPEC, tmp_path)
-        destination = tmp_path / SPEC.destination
-        for relative, body in SKILL_FILES.items():
-            target = destination / relative.removeprefix("skills/s/")
-            if target.is_file():
-                assert target.read_text(encoding="utf-8") == body
-
-    def test_upstream_source_note_is_rejected(self, tmp_path: Path) -> None:
-        repo = make_repo(tmp_path / "upstream", {**SKILL_FILES, "skills/s/LICENSE": "MIT\n", "skills/s/SOURCE.md": "x"})
-        with pytest.raises(vendor_skill.VendorError, match=r"SOURCE\.md があり"):
-            _ = vendor_skill.vendor(repo, SPEC, tmp_path)
+        assert sha in (destination / "agents" / "openai.yaml").read_text(encoding="utf-8")
 
     @pytest.mark.parametrize("name", ["LICENSE", "LICENSE.md"])
     def test_copies_root_license(self, tmp_path: Path, name: str) -> None:
