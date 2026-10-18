@@ -38,6 +38,13 @@ def test_install_failure_still_injects(tmp_path: Path) -> None:
     assert "bun が見つかりません" in stderr
 
 
+def test_unreadable_guidelines(tmp_path: Path, real_env: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(session_start, "GUIDELINES", tmp_path / "missing.md")
+    stdout, stderr = session_start.run(real_env)
+    assert not stdout
+    assert stderr.startswith("ja-writing: ")
+
+
 def test_disabled(real_env: dict[str, str]) -> None:
     assert session_start.run({**real_env, "TEXTLINT_SESSION_CONTEXT": "off"}) == ("", "")
 

@@ -1,11 +1,3 @@
-"""SessionStart フック. 依存を先に入れ、文章の規約を文脈に渡す.
-
-規約は config/guidelines.md の本文で、セッションの開始・再開・/clear・compact のたびに1回だけ入る。
-TEXTLINT_SESSION_CONTEXT(Claude Code ではプラグインの session_context 設定)を偽にすると、依存だけを入れる。
-
-フックの失敗でセッションを止めないよう、どの経路でも終了コード 0 で終える。
-"""
-
 from __future__ import annotations
 
 import json
@@ -35,10 +27,14 @@ def run(env: Mapping[str, str]) -> tuple[str, str]:
         stderr = f"ja-writing: {error}\n"
     if not context_enabled(env):
         return "", stderr
+    try:
+        guidelines = GUIDELINES.read_text(encoding="utf-8")
+    except OSError as error:
+        return "", f"{stderr}ja-writing: {error}\n"
     output = {
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
-            "additionalContext": GUIDELINES.read_text(encoding="utf-8"),
+            "additionalContext": guidelines,
         }
     }
     return json.dumps(output, ensure_ascii=False), stderr
