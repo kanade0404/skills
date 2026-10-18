@@ -1,4 +1,3 @@
-<!-- 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/references/fact-recovery-details.md (ライセンスと著作権表示は、このスキルの LICENSE を参照) -->
 # 事実の確かめの細部
 
 `references/fact-recovery.md` から、当てはまるときだけ読む。章の番号は fact-recovery.md の続き。例はすべて合成で、harune-backup とミナモ商事は架空の名前。

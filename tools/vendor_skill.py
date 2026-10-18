@@ -1,7 +1,7 @@
 """上流のリポジトリにあるスキルを、このリポジトリへ写す.
 
-写す元は tools/vendored.json に書く。各ファイルの先頭に参照元(リポジトリ・コミット・パス)のコメントを入れ、
-ライセンスの本文も一緒に写す。依存として取り込まずに写すのは、上流の変更が自動で入らないようにするため。
+写す元は tools/vendored.json に書く。ファイルは手を加えずに写し、ライセンスの本文も一緒に写す。
+写したコミットは、写した先の SOURCE.md に書く。
 
 使い方(更新するときも同じ手順):
 
@@ -28,11 +28,10 @@ if TYPE_CHECKING:
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = ROOT / "tools" / "vendored.json"
 _ALWAYS_EXCLUDED = frozenset({".claude-plugin"})
-_HASH_COMMENT_SUFFIXES = frozenset({".py", ".txt", ".yaml", ".yml"})
 _ROOT_LICENSES = ("LICENSE", "LICENSE.md", "LICENSE.txt")
+_SOURCE_NOTE = "SOURCE.md"
 _SYMLINK_MODE = "120000"
 _SHA = re.compile(r"[0-9a-f]{40}")
-_FRONTMATTER_END = "\n---\n"
 
 
 class VendorError(Exception):
@@ -97,30 +96,15 @@ def _git(source: Path, *args: str) -> str:
     return result.stdout
 
 
-def header(spec: Spec, relative: str, sha: str) -> str | None:
-    text = (
-        f"参照元: {spec.repository}/blob/{sha}/{spec.path}/{relative} "
-        "(ライセンスと著作権表示は、このスキルの LICENSE を参照)"
+def source_note(spec: Spec, sha: str) -> str:
+    return (
+        "# 出どころ\n\n"
+        "このスキルは次の上流から、手を加えずに写した。ライセンスと著作権表示は LICENSE にある。\n\n"
+        f"- リポジトリ: {spec.repository}\n"
+        f"- パス: {spec.path}\n"
+        f"- コミット: {sha}\n"
+        f"- URL: {spec.repository}/tree/{sha}/{spec.path}\n"
     )
-    suffix = PurePosixPath(relative).suffix
-    if suffix in _HASH_COMMENT_SUFFIXES:
-        return f"# {text}\n"
-    if suffix == ".md":
-        return f"<!-- {text} -->\n"
-    return None
-
-
-def annotate(spec: Spec, body: str, relative: str, sha: str) -> str:
-    comment = header(spec, relative, sha)
-    if comment is None or "LICENSE" in relative:
-        return body
-    if body.startswith("#!"):
-        end = body.index("\n") + 1
-        return body[:end] + comment + body[end:]
-    if relative == "SKILL.md" and body.startswith("---\n"):
-        end = body.index(_FRONTMATTER_END, len("---")) + len(_FRONTMATTER_END)
-        return body[:end] + "\n" + comment + body[end:]
-    return comment + body
 
 
 def _tracked(source: Path, pathspec: str) -> dict[str, str]:
@@ -143,6 +127,9 @@ def _files_to_copy(source: Path, spec: Spec) -> dict[str, tuple[str, str]]:
     }
     if "SKILL.md" not in files:
         msg = f"{source / spec.path} に SKILL.md がありません"
+        raise VendorError(msg)
+    if _SOURCE_NOTE in files:
+        msg = f"{source / spec.path} に {_SOURCE_NOTE} があり、写したコミットを書けません"
         raise VendorError(msg)
     if not any(PurePosixPath(relative).name.startswith("LICENSE") for relative in files):
         root = _tracked(source, ".")
@@ -175,10 +162,8 @@ def vendor(source: Path, spec: Spec, root: Path = ROOT) -> str:
                 raise VendorError(msg)
             target = staging / relative
             target.parent.mkdir(parents=True, exist_ok=True)
-            body = (source / upstream).read_bytes()
-            if header(spec, relative, sha) is not None:
-                body = annotate(spec, body.decode("utf-8"), relative, sha).encode("utf-8")
-            _ = target.write_bytes(body)
+            _ = shutil.copyfile(source / upstream, target)
+        _ = (staging / _SOURCE_NOTE).write_text(source_note(spec, sha), encoding="utf-8")
         shutil.rmtree(retired, ignore_errors=True)
         if destination.exists():
             _ = destination.rename(retired)

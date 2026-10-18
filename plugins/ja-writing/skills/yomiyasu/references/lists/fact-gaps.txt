@@ -1,4 +1,3 @@
-# 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/references/lists/fact-gaps.txt (ライセンスと著作権表示は、このスキルの LICENSE を参照)
 # 事実の穴の候補の一覧（check run --fact-gaps の節。yomiyasu_diff.py の fact_gaps() が読む）
 # 最終稿の文のうち、比喩や程度の語だけで、中身や値が書かれていないかもしれない所を拾う。候補は一部だけで、候補にない穴もある。
 # 書き方: 1行に1つ、「種類<TAB>正規表現」。種類は次の4つだけ（ほかの名前があると、ファイル全体を読まずに内蔵の一覧で動く）。

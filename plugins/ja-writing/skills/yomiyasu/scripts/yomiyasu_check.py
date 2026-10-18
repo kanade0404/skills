@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# 参照元: https://github.com/nanaism/yomiyasu/blob/1bc21f9c8e6a55fc4ccd5a2c7dfe78a7b0d814c5/skills/yomiyasu/scripts/yomiyasu_check.py (ライセンスと著作権表示は、このスキルの LICENSE を参照)
 """
 yomiyasu_check.py - 最終稿に lint、原文と最終稿に diff（新規作成では資料との照合）をまとめて実行し、記録を残す。
 
