@@ -33,7 +33,15 @@ codex plugin add ja-writing@kanade0404-skills
 
 Codex は信頼していないフックを実行しない。入れたあとに `/hooks` でフックを確認して信頼する。
 
-Cursor や Gemini CLI などのその他のエージェントには、スキルだけを次のコマンドで入れる。
+Cursor には、プラグインとしてスキルを入れる。Customize の From GitHub Repository で `kanade0404/skills` を取り込み、プラグインを選んで入れる。Cursor 向けのマニフェストは `.cursor-plugin/` にあり、フックは含めていない。textlint のスキルを使うなら、作業するリポジトリの環境に Python 3.9 以上と bun 1.3 以上を用意する。
+
+プラグインで入れたスキルがクラウドエージェントに届くかは、まだ確かめていない。届かなければ、スキルを同期される `~/.cursor/skills/` にコピーで入れ、Settings → Agents → Context and Tools の Sync Skills for Cloud Agents を有効にする。
+
+```
+npx skills add kanade0404/skills -g -a cursor --copy
+```
+
+Gemini CLI などのその他のエージェントには、スキルだけを次のコマンドで入れる。
 
 ```
 npx skills add kanade0404/skills

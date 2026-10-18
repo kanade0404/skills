@@ -1,0 +1,21 @@
+{
+  "name": "kanade0404-skills",
+  "owner": {
+    "name": "kanade0404"
+  },
+  "metadata": {
+    "description": "kanade0404 のエージェント向けプラグイン"
+  },
+  "plugins": [
+    {
+      "name": "ja-writing",
+      "source": "plugins/ja-writing",
+      "description": "日本語の文章を textlint で検査するフックとスキル、推敲スキル yomiyasu"
+    },
+    {
+      "name": "productivity",
+      "source": "plugins/productivity",
+      "description": "会話を次のエージェントへ引き継ぐ handoff などのスキル"
+    }
+  ]
+}
