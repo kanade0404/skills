@@ -2,7 +2,7 @@
   "name": "ja-writing",
   "displayName": "ja-writing",
   "version": "0.1.0",
-  "description": "日本語の文章を textlint（ja-technical-writing、ja-spacing、ai-writing）で検査するフックとスキル、推敲スキル yomiyasu",
+  "description": "日本語の文章を検査し、読みやすく直す",
   "author": { "name": "kanade0404" },
   "repository": "https://github.com/kanade0404/skills",
   "license": "MIT",

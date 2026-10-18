@@ -8,12 +8,12 @@
     {
       "name": "ja-writing",
       "source": "./plugins/ja-writing",
-      "description": "日本語の文章を textlint で検査するフックとスキル、推敲スキル yomiyasu"
+      "description": "日本語の文章を検査し、読みやすく直す"
     },
     {
       "name": "productivity",
       "source": "./plugins/productivity",
-      "description": "会話を次のエージェントへ引き継ぐ handoff などのスキル"
+      "description": "会話を次のエージェントへ引き継ぐなど、作業を進めるためのスキル"
     }
   ]
 }
