@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from typing import Literal
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = ROOT / "tools" / "vendored.json"
@@ -198,7 +199,7 @@ def _spec_for(destination: str, config: Path) -> Spec:
     return spec
 
 
-def run(args: Sequence[str], config: Path = CONFIG, root: Path = ROOT) -> int:
+def run(args: Sequence[str], config: Path = CONFIG, root: Path = ROOT) -> Literal[0, 1, 2]:
     if len(args) != 2:  # ruff: ignore[magic-value-comparison] - 引数は写す先と clone したディレクトリの2つ
         _ = sys.stderr.write("使い方: python tools/vendor_skill.py <写す先> <clone したディレクトリ>\n")
         return 2
@@ -212,7 +213,7 @@ def run(args: Sequence[str], config: Path = CONFIG, root: Path = ROOT) -> int:
     return 0
 
 
-def main() -> int:
+def main() -> Literal[0, 1, 2]:
     return run(sys.argv[1:])
 
 

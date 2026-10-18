@@ -11,6 +11,7 @@ from textlint_runner import CHAT_CONFIG, Document, TextlintError, lint_documents
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
+    from typing import Literal
 
 _NOTHING = ("", "")
 _SHOWN_MESSAGES = 5
@@ -95,7 +96,7 @@ def run(stdin_text: str, env: Mapping[str, str]) -> tuple[str, str]:
     return json.dumps(build_output(lines, mode), ensure_ascii=False), ""
 
 
-def main() -> int:
+def main() -> Literal[0]:
     stdout, stderr = run(sys.stdin.read(), os.environ)
     _ = sys.stdout.write(stdout)
     _ = sys.stderr.write(stderr)

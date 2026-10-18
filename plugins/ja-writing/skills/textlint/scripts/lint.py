@@ -31,6 +31,7 @@ from textlint_runner import (
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+    from typing import Literal
 
 _USAGE = "使い方: lint.py [--fix [--dry-run]] <ファイルかglob>...\n"
 _SEVERITY_NAMES = {1: "warning", 2: "error", 3: "info"}
@@ -74,7 +75,7 @@ def _read(path: Path) -> Document | None:
         return None
 
 
-def run(args: Sequence[str], env: Mapping[str, str], cwd: Path) -> int:
+def run(args: Sequence[str], env: Mapping[str, str], cwd: Path) -> Literal[0, 1, 2]:
     fix = "--fix" in args
     dry_run = "--dry-run" in args
     patterns = [arg for arg in args if arg not in {"--fix", "--dry-run"}]
@@ -103,7 +104,7 @@ def run(args: Sequence[str], env: Mapping[str, str], cwd: Path) -> int:
     return 1 if errors else 0
 
 
-def main() -> int:
+def main() -> Literal[0, 1, 2]:
     return run(sys.argv[1:], os.environ, Path.cwd())
 
 

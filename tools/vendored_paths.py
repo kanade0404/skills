@@ -17,6 +17,7 @@ from vendor_skill import CONFIG, ROOT, load_specs
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from pathlib import Path
+    from typing import Literal
 
 BEGIN = "# BEGIN tools/vendored.json (tools/vendored_paths.py sync が書く)"
 END = "# END tools/vendored.json"
@@ -47,16 +48,12 @@ def render(text: str, lines: Sequence[str], name: str) -> str:
 
 def sync(root: Path = ROOT, config: Path = CONFIG, *, write: bool = True) -> list[str]:
     names = destinations(config)
-    stale: list[str] = []
-    for name, line in TARGETS.items():
-        path = root / name
-        text = path.read_text(encoding="utf-8")
-        expected = render(text, [line(destination) for destination in names], name)
-        if expected != text:
-            stale.append(name)
-            if write:
-                _ = path.write_text(expected, encoding="utf-8")
-    return stale
+    current = {name: (root / name).read_text(encoding="utf-8") for name in TARGETS}
+    rendered = {name: render(current[name], [*map(line, names)], name) for name, line in TARGETS.items()}
+    stale = {name: text for name, text in rendered.items() if text != current[name]}
+    if write:
+        _ = [(root / name).write_text(text, encoding="utf-8") for name, text in stale.items()]
+    return list(stale)
 
 
 def _output(command: str, root: Path, config: Path) -> str | None:
@@ -69,7 +66,7 @@ def _output(command: str, root: Path, config: Path) -> str | None:
     return None
 
 
-def run(args: Sequence[str], root: Path = ROOT, config: Path = CONFIG) -> int:
+def run(args: Sequence[str], root: Path = ROOT, config: Path = CONFIG) -> Literal[0, 1, 2]:
     try:
         output = _output(args[0], root, config) if len(args) == 1 else None
     except SyncError as error:
@@ -82,7 +79,7 @@ def run(args: Sequence[str], root: Path = ROOT, config: Path = CONFIG) -> int:
     return 0
 
 
-def main() -> int:
+def main() -> Literal[0, 1, 2]:
     return run(sys.argv[1:])
 
 

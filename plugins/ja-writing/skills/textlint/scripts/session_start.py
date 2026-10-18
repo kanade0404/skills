@@ -9,6 +9,7 @@ from textlint_runner import SKILL_ROOT, TextlintError, ensure_installed
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from typing import Literal
 
 GUIDELINES = SKILL_ROOT / "config" / "guidelines.md"
 _FALSY = frozenset({"0", "false", "no", "off"})
@@ -40,7 +41,7 @@ def run(env: Mapping[str, str]) -> tuple[str, str]:
     return json.dumps(output, ensure_ascii=False), stderr
 
 
-def main() -> int:
+def main() -> Literal[0]:
     stdout, stderr = run(os.environ)
     _ = sys.stdout.write(stdout)
     _ = sys.stderr.write(stderr)
