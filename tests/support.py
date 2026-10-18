@@ -1,5 +1,3 @@
-"""テストの共通部品(fixture 以外)."""
-
 from __future__ import annotations
 
 import io
@@ -17,11 +15,6 @@ CLEAN = "# 紹介\n\nこの文書は問題のない文章です。\n"
 
 
 def write_executable(directory: Path, name: str, body: str) -> Path:
-    """Python で書いた偽のコマンドを置く.
-
-    Returns:
-        置いたコマンドのパス。
-    """
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / name
     _ = path.write_text(f"#!{sys.executable}\n{body}", encoding="utf-8")

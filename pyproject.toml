@@ -18,7 +18,6 @@ dev = [
 [tool.uv]
 package = false
 
-# --- ruff: すべてのルールを有効にし、衝突するものと理由のあるものだけを外す ---
 [tool.ruff]
 target-version = "py39"
 line-length = 120
@@ -36,6 +35,15 @@ ignore = [
   "missing-copyright-notice", # ファイルごとの著作権表示は置かない
   "incorrect-blank-line-before-class",   # D211 と衝突する
   "multi-line-summary-second-line",   # D212 と衝突する
+  # docstring は必須にしない。必須にすると、名前を言い換えただけの docstring が増える。
+  "undocumented-public-module",
+  "undocumented-public-class",
+  "undocumented-public-method",
+  "undocumented-public-function",
+  "undocumented-public-package",
+  "undocumented-magic-method",
+  "undocumented-public-nested-class",
+  "undocumented-public-init",
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -46,10 +54,6 @@ ignore = [
   "implicit-namespace-package",
   "magic-value-comparison", # テストの期待値はそのまま書く
   "assert", # pytest の assert
-  # テストは名前で意図を書く。テストのクラスと関数には docstring を付けない。
-  "undocumented-public-class",
-  "undocumented-public-method",
-  "undocumented-public-function",
   "no-self-use", # pytest のテストクラスはテストをまとめるだけで self を使わない
 ]
 
@@ -60,10 +64,13 @@ known-first-party = ["textlint_runner", "post_edit", "stop", "session_start", "l
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
+[tool.ruff.lint.pydoclint]
+# 1行の docstring に Returns・Raises の節を求めない。節を足すためだけの文を書かせない。
+ignore-one-line-docstrings = true
+
 [tool.ruff.format]
 preview = true
 
-# --- mypy: strict に加えて、任意のチェックもすべて有効にする ---
 [tool.mypy]
 # mypy は 3.9 を検査対象にできないので 3.10 で検査する。3.9 の文法は ruff(target-version)と basedpyright で確かめる。
 python_version = "3.10"
@@ -94,7 +101,6 @@ mypy_path = ["plugins/ja-writing/skills/textlint/scripts", "tools", "tests"]
 files = ["plugins/ja-writing/skills/textlint/scripts", "tools", "tests"]
 explicit_package_bases = true
 
-# --- basedpyright: すべてのルールを有効にする ---
 [tool.basedpyright]
 pythonVersion = "3.9"
 typeCheckingMode = "all"
@@ -102,7 +108,6 @@ include = ["plugins/ja-writing/skills/textlint/scripts", "tools", "tests"]
 extraPaths = ["plugins/ja-writing/skills/textlint/scripts", "tools", "tests"]
 reportImplicitStringConcatenation = false # ruff のフォーマッタと衝突する
 
-# --- pytest: 警告と設定の誤りはエラーにし、分岐カバレッジ 100% を求める ---
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]

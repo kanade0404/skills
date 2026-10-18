@@ -6,8 +6,6 @@ on:
 
 jobs:
   claude-review:
-    # bot PR はレビュー不要のため、PR 作成者のアカウント種別 (user.type) で
-    # GitHub が Bot として扱う全アカウントを除外する。
     if: github.event.pull_request.user.type != 'Bot'
 
     runs-on: ubuntu-latest

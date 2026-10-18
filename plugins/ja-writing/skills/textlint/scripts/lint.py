@@ -37,11 +37,6 @@ _SEVERITY_NAMES = {1: "warning", 2: "error", 3: "info"}
 
 
 def expand(patterns: Sequence[str], cwd: Path) -> list[Path]:
-    """ファイルと glob を、検査するファイルの一覧にする.
-
-    Returns:
-        対象の拡張子のファイルを重複なく並べたもの。
-    """
     found: set[Path] = set()
     for pattern in patterns:
         # glob.glob の root_dir は 3.10 からなので、相対の glob は Path.glob で展開する。
@@ -56,11 +51,6 @@ def expand(patterns: Sequence[str], cwd: Path) -> list[Path]:
 
 
 def format_report(report: Report, cwd: Path) -> str:
-    """指摘を人が読む形にする.
-
-    Returns:
-        1行に1件の指摘と、同梱にないため無視した設定の名前を並べた文字列。
-    """
     lines: list[str] = []
     for result in report.results:
         shown = display_path(result.file_path, cwd)
@@ -85,11 +75,6 @@ def _read(path: Path) -> Document | None:
 
 
 def run(args: Sequence[str], env: Mapping[str, str], cwd: Path) -> int:
-    """引数に従って検査か修正をする.
-
-    Returns:
-        error の指摘が残れば 1、なければ 0。引数の誤りや準備の失敗は 2。
-    """
     fix = "--fix" in args
     dry_run = "--dry-run" in args
     patterns = [arg for arg in args if arg not in {"--fix", "--dry-run"}]
@@ -119,11 +104,6 @@ def run(args: Sequence[str], env: Mapping[str, str], cwd: Path) -> int:
 
 
 def main() -> int:
-    """sys.argv・os.environ・カレントディレクトリで run を呼ぶ. テストしやすいよう、処理は run に置いている.
-
-    Returns:
-        run の終了コード。
-    """
     return run(sys.argv[1:], os.environ, Path.cwd())
 
 

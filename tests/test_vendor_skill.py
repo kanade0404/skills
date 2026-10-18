@@ -1,5 +1,3 @@
-"""vendor_skill.py のテスト. 一時ディレクトリに作った git リポジトリを上流として写す."""
-
 from __future__ import annotations
 
 import json
@@ -36,11 +34,6 @@ def git(repo: Path, *args: str) -> None:
 
 
 def make_repo(repo: Path, files: dict[str, str]) -> Path:
-    """ファイルを置いてコミットしたリポジトリを作る.
-
-    Returns:
-        渡した repo。
-    """
     for relative, body in files.items():
         path = repo / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -64,23 +57,12 @@ SKILL_FILES = {
 
 @pytest.fixture
 def upstream(tmp_path: Path) -> Path:
-    """スキルのディレクトリにライセンスがあり、git が無視するファイルも置いた上流を作る.
-
-    Returns:
-        上流のリポジトリ。
-    """
     repo = make_repo(tmp_path / "upstream", {**SKILL_FILES, "skills/s/LICENSE": "MIT (skill)\n"})
-    # git が無視するファイルは写さない。
     _ = (repo / "skills" / "s" / "secret.txt").write_text("token", encoding="utf-8")
     return repo
 
 
 def copied(root: Path) -> list[str]:
-    """写したファイルの一覧を返す.
-
-    Returns:
-        写す先からの相対パス。
-    """
     destination = root / SPEC.destination
     return sorted(path.relative_to(destination).as_posix() for path in destination.rglob("*") if path.is_file())
 

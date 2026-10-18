@@ -1,15 +1,3 @@
-"""Stop フック. ターンの最後の答えを textlint にかける.
-
-モードは TEXTLINT_STOP_MODE(Claude Code ではプラグインの stop_mode 設定)で選ぶ。
-
-- notify(既定): 指摘の件数と内容を利用者にだけ表示する。Claude には書き直させない
-- block: 指摘を返して書き直させる。書き直しのあとは stop_hook_active が真になるので、1回だけ
-- off: 何もしない
-
-答えはファイルではないので、誤検知の少ないチャット用の設定(config/chat.json)を使う。
-フックの失敗でエージェントの作業を止めないよう、どの経路でも終了コード 0 で終える。
-"""
-
 from __future__ import annotations
 
 import json
@@ -43,11 +31,6 @@ def _is_prompt(entry: dict[str, object]) -> bool:
 
 
 def last_turn_text(lines: Iterable[str]) -> str:
-    """Claude Code の会話記録(JSONL)から、最後の発言より後に Claude が書いた本文を取り出す.
-
-    Returns:
-        最後のターンの本文。ツールの呼び出しは含めない。
-    """
     entries = [as_dict(parse_json(line)) for line in lines if line.strip()]
     start = max((index for index, entry in enumerate(entries) if _is_prompt(entry)), default=-1)
     texts = [
@@ -61,13 +44,6 @@ def last_turn_text(lines: Iterable[str]) -> str:
 
 
 def answer_text(payload: dict[str, object]) -> str:
-    """フックの入力から最後の答えを取り出す.
-
-    入力に last_assistant_message があればそれを使い、なければ transcript_path の会話記録から取り出す。
-
-    Returns:
-        最後の答えの本文。取り出せなければ空。
-    """
     message = payload.get("last_assistant_message")
     if isinstance(message, str):
         return message
@@ -82,11 +58,6 @@ def answer_text(payload: dict[str, object]) -> str:
 
 
 def build_output(lines: list[str], mode: str) -> dict[str, object]:
-    """フックの出力を組み立てる.
-
-    Returns:
-        block なら decision: block、それ以外なら利用者向けの systemMessage の JSON オブジェクト。
-    """
     if mode == "block":
         reason = (
             f"直前の答えに textlint の指摘が {len(lines)} 件あります。\n"
@@ -101,11 +72,6 @@ def build_output(lines: list[str], mode: str) -> dict[str, object]:
 
 
 def run(stdin_text: str, env: Mapping[str, str]) -> tuple[str, str]:
-    """フックの入力と環境変数から、出力する内容を決める. テストから直接呼べるよう、入出力を引数と戻り値にしている.
-
-    Returns:
-        (標準出力, 標準エラー) に書く内容。
-    """
     mode = env.get("TEXTLINT_STOP_MODE") or env.get("CLAUDE_PLUGIN_OPTION_STOP_MODE") or "notify"
     payload = as_dict(parse_json(stdin_text))
     # stop_hook_active が真なのは、block で書き直させたあとの Stop。
@@ -130,11 +96,6 @@ def run(stdin_text: str, env: Mapping[str, str]) -> tuple[str, str]:
 
 
 def main() -> int:
-    """標準入力と os.environ で run を呼び、結果を書き出す. フックの失敗で作業を止めないよう、常に 0 を返す.
-
-    Returns:
-        常に 0。
-    """
     stdout, stderr = run(sys.stdin.read(), os.environ)
     _ = sys.stdout.write(stdout)
     _ = sys.stderr.write(stderr)

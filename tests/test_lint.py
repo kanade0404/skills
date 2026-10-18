@@ -1,5 +1,3 @@
-"""lint.py のテスト. 検査と修正の結果は、本物の bun と kernel ランナー(real_env)で確かめる."""
-
 from __future__ import annotations
 
 import sys

@@ -1,5 +1,3 @@
-"""post_edit.py のテスト. Claude Code と Codex のどちらのツール入力からも検査するファイルを拾えるかを確かめる."""
-
 from __future__ import annotations
 
 import json

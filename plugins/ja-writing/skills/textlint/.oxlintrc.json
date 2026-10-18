@@ -11,11 +11,8 @@
     "nursery": "error"
   },
   "rules": {
-    // 宣言は1文ずつに分ける(既定の always の逆)。
     "eslint/one-var": ["error", "never"],
-    // 使う Node 標準モジュールだけを許可する。
     "import/no-nodejs-modules": ["error", { "allow": ["node:module", "node:path", "node:process"] }],
-    // 行数の上限(既定の 300)は変えず、空行とコメントは数えない。
     "eslint/max-lines": ["error", { "max": 300, "skipBlankLines": true, "skipComments": true }],
     // ファイル名は Python のスクリプトとそろえる。
     "unicorn/filename-case": ["error", { "case": "snakeCase" }],

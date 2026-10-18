@@ -1,5 +1,3 @@
-"""textlint_runner.py のテスト. 依存の準備やランナーの失敗は偽の bun で、検査結果は本物の bun で確かめる."""
-
 from __future__ import annotations
 
 import json
@@ -26,10 +24,6 @@ from textlint_runner import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-# 偽の bun:
-# - --version: FAKE_BUN_VERSION を返す
-# - install: FAKE_INSTALL_MODE で挙動を変える。成功時は cwd に @textlint/kernel を置く
-# - それ以外(ランナーの実行): FAKE_RUNNER_STDOUT を出して FAKE_RUNNER_CODE で終わる
 FAKE_BUN = """
 import os, pathlib, sys
 args = sys.argv[1:]
@@ -63,11 +57,6 @@ sys.exit(int(os.environ.get("FAKE_RUNNER_CODE", "0")))
 
 
 def fake_env(tmp_path: Path, **extra: str) -> dict[str, str]:
-    """偽の bun だけが見える環境変数を作る.
-
-    Returns:
-        PATH に偽の bun だけを置き、依存の置き場所を tmp_path の下にした環境変数。extra で上書きできる。
-    """
     bin_dir = tmp_path / "bin"
     _ = write_executable(bin_dir, "bun", FAKE_BUN)
     return {"PATH": str(bin_dir), "TEXTLINT_SKILL_DEPS_DIR": str(tmp_path / "deps"), **extra}
@@ -100,7 +89,6 @@ class TestEnsureInstalled:
         directory = ensure_installed(fake_env(tmp_path))
         assert installed(directory)
         assert (directory / "bun.lock").is_file()
-        # 一時ディレクトリは残らない。
         assert {path.name for path in tmp_path.iterdir()} == {"bin", "deps"}
 
     def test_install_fails_and_leaves_nothing(self, tmp_path: Path) -> None:
@@ -177,7 +165,6 @@ class TestLintDocumentsWithKernel:
     def test_project_bunfig_is_not_loaded(
         self, tmp_path: Path, real_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # プロジェクトの bunfig.toml の preload は、プロジェクトのコードを実行できてしまう。
         marker = tmp_path / "marker"
         _ = (tmp_path / "bunfig.toml").write_text('preload = ["./evil.ts"]\n', encoding="utf-8")
         _ = (tmp_path / "evil.ts").write_text(f'await Bun.write("{marker}", "ran");\n', encoding="utf-8")

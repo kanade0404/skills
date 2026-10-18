@@ -27,24 +27,20 @@ if TYPE_CHECKING:
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = ROOT / "tools" / "vendored.json"
-# 上流のプラグイン設定は写さない(入れ子のプラグインとして読まれるのを避ける)。
 _ALWAYS_EXCLUDED = frozenset({".claude-plugin"})
 _HASH_COMMENT_SUFFIXES = frozenset({".py", ".txt", ".yaml", ".yml"})
 _ROOT_LICENSES = ("LICENSE", "LICENSE.md", "LICENSE.txt")
-# git の記録でシンボリックリンクを表すモード。
 _SYMLINK_MODE = "120000"
 _SHA = re.compile(r"[0-9a-f]{40}")
 _FRONTMATTER_END = "\n---\n"
 
 
 class VendorError(Exception):
-    """設定・git・写す元の問題で写せないときの誤り. run は終了コード 1 にする."""
+    pass
 
 
 @dataclass(frozen=True)
 class Spec:
-    """tools/vendored.json の1項目. exclude はスキルのディレクトリ直下で写さない名前."""
-
     destination: str
     repository: str
     path: str
@@ -60,14 +56,6 @@ def _field(entry: dict[str, object], name: str) -> str:
 
 
 def load_specs(path: Path = CONFIG) -> dict[str, Spec]:
-    """写す元の一覧を読む.
-
-    Returns:
-        destination をキーにした設定。
-
-    Raises:
-        VendorError: 一覧の形が正しくないとき。
-    """
     entries = cast("object", json.loads(path.read_text(encoding="utf-8")))
     if not isinstance(entries, list):
         msg = f"{path} は配列ではありません"
@@ -110,11 +98,6 @@ def _git(source: Path, *args: str) -> str:
 
 
 def header(spec: Spec, relative: str, sha: str) -> str | None:
-    """ファイルの種類に合わせた参照元のコメントを作る.
-
-    Returns:
-        コメントの行。コメントを書けない種類なら None。
-    """
     text = (
         f"参照元: {spec.repository}/blob/{sha}/{spec.path}/{relative} "
         "(ライセンスと著作権表示は、このスキルの LICENSE を参照)"
@@ -128,11 +111,6 @@ def header(spec: Spec, relative: str, sha: str) -> str | None:
 
 
 def annotate(spec: Spec, body: str, relative: str, sha: str) -> str:
-    """本文の先頭に参照元のコメントを入れる. shebang と SKILL.md の frontmatter は先頭に残す.
-
-    Returns:
-        コメントを入れた本文。ライセンスとコメントを書けない種類はそのまま。
-    """
     comment = header(spec, relative, sha)
     if comment is None or "LICENSE" in relative:
         return body
@@ -146,7 +124,6 @@ def annotate(spec: Spec, body: str, relative: str, sha: str) -> str:
 
 
 def _tracked(source: Path, pathspec: str) -> dict[str, str]:
-    # git に記録されたファイルだけを返す。.gitignore で無視されたファイルや、作業ツリーにだけあるファイルは含めない。
     # 出力は「<mode> <object> <stage>\t<path>」を NUL で区切ったもの。
     listing = _git(source, "ls-files", "-s", "-z", "--", pathspec)
     files: dict[str, str] = {}
@@ -157,7 +134,6 @@ def _tracked(source: Path, pathspec: str) -> dict[str, str]:
 
 
 def _files_to_copy(source: Path, spec: Spec) -> dict[str, tuple[str, str]]:
-    # 写す先の相対パス -> (上流のパス, モード)
     prefix = f"{spec.path}/"
     excluded = _ALWAYS_EXCLUDED | set(spec.exclude)
     files = {
@@ -168,7 +144,6 @@ def _files_to_copy(source: Path, spec: Spec) -> dict[str, tuple[str, str]]:
     if "SKILL.md" not in files:
         msg = f"{source / spec.path} に SKILL.md がありません"
         raise VendorError(msg)
-    # スキルのディレクトリにライセンスがなければ、リポジトリのルートのライセンスを写す。
     if not any(PurePosixPath(relative).name.startswith("LICENSE") for relative in files):
         root = _tracked(source, ".")
         license_path = next((name for name in _ROOT_LICENSES if name in root), None)
@@ -180,15 +155,6 @@ def _files_to_copy(source: Path, spec: Spec) -> dict[str, tuple[str, str]]:
 
 
 def vendor(source: Path, spec: Spec, root: Path = ROOT) -> str:
-    """上流を clone した source から spec.path のスキルを、root からの spec.destination へ写す.
-
-    Returns:
-        写したコミットの SHA。
-
-    Raises:
-        VendorError: git が失敗したとき、作業ツリーに変更があるとき、写す元やライセンスがないとき、
-            シンボリックリンクがあるとき。
-    """
     sha = _git(source, "rev-parse", "HEAD").strip()
     if _SHA.fullmatch(sha) is None:
         msg = f"コミットを取得できません: {source}"
@@ -198,7 +164,6 @@ def vendor(source: Path, spec: Spec, root: Path = ROOT) -> str:
         raise VendorError(msg)
     files = _files_to_copy(source, spec)
 
-    # 新しい写しを隣の一時ディレクトリで完成させてから、既存の写しと置き換える。途中で失敗しても既存の写しは残る。
     destination = root / spec.destination
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{destination.name}.new-", dir=destination.parent))
@@ -234,11 +199,6 @@ def _spec_for(destination: str, config: Path) -> Spec:
 
 
 def run(args: Sequence[str], config: Path = CONFIG, root: Path = ROOT) -> int:
-    """引数(写す先と clone したディレクトリ)を検証して写す.
-
-    Returns:
-        成功なら 0、写せなければ 1、引数の誤りなら 2。
-    """
     if len(args) != 2:  # ruff: ignore[magic-value-comparison] - 引数は写す先と clone したディレクトリの2つ
         _ = sys.stderr.write("使い方: python tools/vendor_skill.py <写す先> <clone したディレクトリ>\n")
         return 2
@@ -253,11 +213,6 @@ def run(args: Sequence[str], config: Path = CONFIG, root: Path = ROOT) -> int:
 
 
 def main() -> int:
-    """sys.argv で run を呼ぶ. テストしやすいよう、処理は run に置いている.
-
-    Returns:
-        run の終了コード。
-    """
     return run(sys.argv[1:])
 
 

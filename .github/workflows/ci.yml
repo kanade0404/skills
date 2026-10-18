@@ -12,7 +12,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# ツール(uv・Python・bun・semgrep・git)は flake.nix の開発シェルから使い、バージョンは flake.lock で固定する。
 defaults:
   run:
     shell: nix develop --command bash -euo pipefail {0}
@@ -29,7 +28,6 @@ jobs:
         with:
           persist-credentials: false
       - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
-      # テストは本物の kernel ランナーを動かすので、スキルの依存を入れておく。
       - run: bun install --frozen-lockfile --ignore-scripts --cwd "$SKILL_DIR"
       - run: uv sync --locked
       - run: uv run ruff format --check .

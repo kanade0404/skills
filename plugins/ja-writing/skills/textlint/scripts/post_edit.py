@@ -1,15 +1,3 @@
-"""書き込み後フック. Claude Code と Codex の PostToolUse のどちらでも動く.
-
-書き換えたファイルを textlint にかけ、指摘をエージェントに返す。モードは TEXTLINT_HOOK_MODE
-(Claude Code ではプラグインの hook_mode 設定)で選ぶ。
-
-- block(既定): 指摘を返して直させる
-- warn: 文脈として渡すだけ
-- off: 何もしない
-
-フックの失敗でエージェントの作業を止めないよう、どの経路でも終了コード 0 で終える。
-"""
-
 from __future__ import annotations
 
 import json
@@ -36,7 +24,6 @@ _PATCH_PATH = re.compile(r"^\*\*\* (?:Add File|Update File|Move to): (.+)$", re.
 KANA = re.compile(
     r"[\N{HIRAGANA LETTER SMALL A}-\N{HIRAGANA DIGRAPH YORI}\N{KATAKANA LETTER SMALL A}-\N{KATAKANA DIGRAPH KOTO}]"
 )
-# info(3)は提案なので、フックでは知らせない。
 REPORTED_SEVERITIES = frozenset({1, 2})
 _INSTRUCTION = (
     "指摘された箇所を自然な日本語に書き直してください。指摘を消すために内容を削らないでください。"
@@ -46,22 +33,12 @@ _NOTHING = ("", "")
 
 
 def as_dict(value: object) -> dict[str, object]:
-    """JSON の値をオブジェクトとして扱う.
-
-    Returns:
-        オブジェクトならキーを文字列にしたもの。それ以外は空。
-    """
     if not isinstance(value, dict):
         return {}
     return {str(key): item for key, item in cast("dict[object, object]", value).items()}
 
 
 def parse_json(text: str) -> object | None:
-    """JSON の文字列を読む. 壊れた入力(フックの入力や会話記録の行)でも例外にしない.
-
-    Returns:
-        読んだ値。JSON でなければ None。
-    """
     try:
         return cast("object", json.loads(text))
     except ValueError:
@@ -90,11 +67,6 @@ def touched_files(tool_input: object) -> list[str]:
 
 
 def read_lintable(path: Path) -> str | None:
-    """フックで検査する対象なら本文を読む. 同梱ルールは日本語向けなので、かなのない本文は対象外.
-
-    Returns:
-        対象の拡張子で、読めて、かなを含むファイルの本文。対象外なら None。
-    """
     if path.suffix.lower() not in LINTABLE_EXTENSIONS:
         return None
     try:
@@ -105,11 +77,6 @@ def read_lintable(path: Path) -> str | None:
 
 
 def format_messages(report: Report, project_dir: Path) -> list[str]:
-    """知らせる指摘を取り出す.
-
-    Returns:
-        warning と error の指摘を「パス:行:列 [ルール] メッセージ」の形にしたもの。
-    """
     lines: list[str] = []
     for result in report.results:
         shown = display_path(result.file_path, project_dir)
@@ -122,11 +89,6 @@ def format_messages(report: Report, project_dir: Path) -> list[str]:
 
 
 def build_output(lines: list[str], mode: str) -> dict[str, object]:
-    """フックの出力を組み立てる.
-
-    Returns:
-        warn なら additionalContext、それ以外なら decision: block の JSON オブジェクト。
-    """
     report = f"textlint の指摘が {len(lines)} 件あります。\n" + "\n".join(lines) + "\n\n" + _INSTRUCTION
     if mode == "warn":
         return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": report}}
@@ -150,11 +112,6 @@ def _documents(payload: dict[str, object], project_dir: Path) -> list[Document]:
 
 
 def run(stdin_text: str, env: Mapping[str, str]) -> tuple[str, str]:
-    """フックの入力と環境変数から、出力する内容を決める. テストから直接呼べるよう、入出力を引数と戻り値にしている.
-
-    Returns:
-        (標準出力, 標準エラー) に書く内容。
-    """
     mode = env.get("TEXTLINT_HOOK_MODE") or env.get("CLAUDE_PLUGIN_OPTION_HOOK_MODE") or "block"
     payload = as_dict(parse_json(stdin_text))
     if mode == "off" or not payload:
@@ -174,11 +131,6 @@ def run(stdin_text: str, env: Mapping[str, str]) -> tuple[str, str]:
 
 
 def main() -> int:
-    """標準入力と os.environ で run を呼び、結果を書き出す. フックの失敗で作業を止めないよう、常に 0 を返す.
-
-    Returns:
-        常に 0。
-    """
     stdout, stderr = run(sys.stdin.read(), os.environ)
     _ = sys.stdout.write(stdout)
     _ = sys.stderr.write(stderr)

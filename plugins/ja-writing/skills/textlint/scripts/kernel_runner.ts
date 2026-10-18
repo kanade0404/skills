@@ -1,10 +1,3 @@
-// @textlint/kernel で文章を検査・修正する。
-//
-// 標準入力で JSON の依頼を受け取り、標準出力に JSON の結果を返す。ファイルの読み書きはしない
-// (呼び出し側の Python が本文を渡し、修正結果を書き戻す)。
-//
-// 読み込むモジュールは下の KNOWN_* と PLUGINS に書いたものだけで、設定に書かれた名前からモジュールを探すことはしない。
-// プロジェクトの設定は、同梱ルールの有効・無効とオプションの上書きとしてだけ使う。
 import type {
   TextlintKernel,
   TextlintKernelFilterRule,
@@ -51,7 +44,6 @@ const AI_WRITING: Preset = {
   prefix: "@textlint-ja/ai-writing",
 };
 
-// 設定ファイルに書ける名前(短い名前とパッケージ名)と、読み込むプリセットの対応。
 const KNOWN_PRESETS: ReadonlyMap<string, Preset> = new Map([
   ["preset-ja-technical-writing", TECHNICAL_WRITING],
   [TECHNICAL_WRITING.packageName, TECHNICAL_WRITING],
@@ -83,7 +75,6 @@ const recordOrEmpty = (value: unknown): UnknownRecord => {
   return {};
 };
 
-// ルールのオプションは、オブジェクトならそのまま、それ以外(true など)なら既定値で有効にする。
 const ruleOptions = (value: unknown): RuleOptions => {
   if (isRecord(value)) {
     return value;
@@ -103,7 +94,6 @@ const isKernelModule = (value: unknown): value is KernelModule =>
   isRecord(value) && typeof value["TextlintKernel"] === "function";
 
 const createLoader = (depsDir: string): Load => {
-  // 依存は利用者のキャッシュにあるので、そこを起点に解決する。
   const requireFromDeps = createRequire(path.join(depsDir, "package.json"));
   return (packageName) => {
     const loaded: unknown = requireFromDeps(packageName);
@@ -262,7 +252,6 @@ const lintItem = async ({ descriptors, fix, item, kernel }: LintJob): Promise<It
     return { filePath: item.filePath, messages: report(result.messages) };
   }
   const fixed = await kernel.fixText(item.text, options);
-  // 直せなかった指摘を知らせるため、直したあとの本文をもう一度検査する。
   const remaining = await kernel.lintText(fixed.output, options);
   return { filePath: item.filePath, messages: report(remaining.messages), output: fixed.output };
 };

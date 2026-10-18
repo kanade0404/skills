@@ -1,5 +1,3 @@
-"""session_start.py のテスト. 依存を入れられなくても規約を渡すことを確かめる."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
