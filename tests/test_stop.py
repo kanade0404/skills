@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 import stop
+from protocol import StopInput
 from support import AI_LIKE, CLEAN, set_stdin
 
 if TYPE_CHECKING:
@@ -39,18 +40,18 @@ class TestLastTurnText:
 
 class TestAnswerText:
     def test_last_assistant_message(self) -> None:
-        assert stop.answer_text({"last_assistant_message": "答え"}) == "答え"
+        assert stop.answer_text(StopInput("答え", None, stop_hook_active=False)) == "答え"
 
     def test_transcript(self, tmp_path: Path) -> None:
         path = tmp_path / "t.jsonl"
         _ = path.write_text("\n".join(TRANSCRIPT), encoding="utf-8")
-        assert stop.answer_text({"transcript_path": str(path)}) == "前半\n\n後半"
+        assert stop.answer_text(StopInput(None, str(path), stop_hook_active=False)) == "前半\n\n後半"
 
     def test_missing_transcript(self, tmp_path: Path) -> None:
-        assert not stop.answer_text({"transcript_path": str(tmp_path / "none.jsonl")})
+        assert not stop.answer_text(StopInput(None, str(tmp_path / "none.jsonl"), stop_hook_active=False))
 
     def test_nothing(self) -> None:
-        assert not stop.answer_text({})
+        assert not stop.answer_text(StopInput(None, None, stop_hook_active=False))
 
 
 class TestBuildOutput:
@@ -59,11 +60,14 @@ class TestBuildOutput:
         assert output == {"systemMessage": "textlint: 答えに 2 件の指摘\na\nb"}
 
     def test_notify_long(self) -> None:
-        message = str(stop.build_output([str(index) for index in range(7)], "notify")["systemMessage"])
-        assert message.endswith("4\nほか 2 件")
+        output = stop.build_output([str(index) for index in range(7)], "notify")
+        assert output == {"systemMessage": "textlint: 答えに 7 件の指摘\n0\n1\n2\n3\n4\nほか 2 件"}
 
     def test_block(self) -> None:
-        assert stop.build_output(["a"], "block")["decision"] == "block"
+        reason = (
+            "直前の答えに textlint の指摘が 1 件あります。\na\n\n指摘された箇所を直した答えを、短く書き直してください。"
+        )
+        assert stop.build_output(["a"], "block") == {"decision": "block", "reason": reason}
 
 
 class TestRun:

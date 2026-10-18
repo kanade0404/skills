@@ -9,10 +9,14 @@ import subprocess  # ruff: ignore[suspicious-subprocess-import] - bun を固定�
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
+
+from protocol import as_object, integer, items, loads, objects, parse_object, string
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
+
+    from protocol import JsonObject
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 RUNNER = SKILL_ROOT / "scripts" / "kernel_runner.ts"
@@ -72,7 +76,7 @@ class Report:
 
 @dataclass(frozen=True)
 class Config:
-    data: dict[str, object]
+    data: JsonObject
     source: str
 
 
@@ -143,19 +147,9 @@ def _bun(env: Mapping[str, str]) -> str:
     return bun
 
 
-def _as_dict(value: object) -> dict[str, object] | None:
-    if not isinstance(value, dict):
-        return None
-    return {str(key): item for key, item in cast("dict[object, object]", value).items()}
-
-
-def _as_list(value: object) -> list[object]:
-    return list(cast("list[object]", value)) if isinstance(value, list) else []
-
-
 def load_config(path: Path) -> Config:
     try:
-        data = _as_dict(cast("object", json.loads(path.read_text(encoding="utf-8"))))
+        data = as_object(loads(path.read_text(encoding="utf-8")))
     except (OSError, ValueError) as error:
         msg = f"設定 {path} を読めません: {error}"
         raise TextlintError(msg) from error
@@ -193,25 +187,20 @@ def _ext(file_path: str) -> str:
     return suffix if suffix in LINTABLE_EXTENSIONS else ".md"
 
 
-def _parse_message(value: object) -> Message | None:
-    fields = _as_dict(value) or {}
-    rule_id, message = fields.get("ruleId"), fields.get("message")
-    line, column, severity = fields.get("line"), fields.get("column"), fields.get("severity")
-    if not (isinstance(rule_id, str) and isinstance(message, str)):
-        return None
-    if not (isinstance(line, int) and isinstance(column, int) and isinstance(severity, int)):
+def _parse_message(fields: JsonObject) -> Message | None:
+    rule_id, message = string(fields, "ruleId"), string(fields, "message")
+    line, column, severity = integer(fields, "line"), integer(fields, "column"), integer(fields, "severity")
+    if rule_id is None or message is None or line is None or column is None or severity is None:
         return None
     return Message(rule_id, message, line, column, severity)
 
 
-def _parse_result(value: object) -> DocumentResult:
-    fields = _as_dict(value) or {}
-    output = fields.get("output")
-    messages = (_parse_message(item) for item in _as_list(fields.get("messages")))
+def _parse_result(fields: JsonObject) -> DocumentResult:
+    messages = (_parse_message(item) for item in objects(fields.get("messages")))
     return DocumentResult(
-        file_path=str(fields.get("filePath", "")),
+        file_path=string(fields, "filePath") or "",
         messages=tuple(message for message in messages if message is not None),
-        output=output if isinstance(output, str) else None,
+        output=string(fields, "output"),
     )
 
 
@@ -240,15 +229,12 @@ def lint_documents(
         check=False,
         env=dict(env),
     )
-    try:
-        response = _as_dict(cast("object", json.loads(result.stdout))) if result.returncode == 0 else None
-    except ValueError:
-        response = None
+    response = parse_object(result.stdout) if result.returncode == 0 else None
     if response is None:
         msg = f"kernel ランナーが失敗しました\n{result.stderr or result.stdout}"
         raise TextlintError(msg)
     return Report(
-        results=tuple(_parse_result(item) for item in _as_list(response.get("results"))),
-        ignored=tuple(str(name) for name in _as_list(response.get("ignored"))),
+        results=tuple(_parse_result(as_object(item) or {}) for item in items(response.get("results"))),
+        ignored=tuple(name for name in items(response.get("ignored")) if isinstance(name, str)),
         source=config.source,
     )

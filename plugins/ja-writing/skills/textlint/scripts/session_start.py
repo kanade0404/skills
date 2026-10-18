@@ -11,6 +11,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from typing import Literal
 
+    from protocol import SessionStartOutput
+
 GUIDELINES = SKILL_ROOT / "config" / "guidelines.md"
 _FALSY = frozenset({"0", "false", "no", "off"})
 
@@ -32,7 +34,7 @@ def run(env: Mapping[str, str]) -> tuple[str, str]:
         guidelines = GUIDELINES.read_text(encoding="utf-8")
     except OSError as error:
         return "", f"{stderr}ja-writing: {error}\n"
-    output = {
+    output: SessionStartOutput = {
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
             "additionalContext": guidelines,

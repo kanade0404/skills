@@ -5,8 +5,9 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
+from protocol import BlockOutput, PostToolUseContextOutput, ToolUseInput, parse_tool_use
 from textlint_runner import (
     LINTABLE_EXTENSIONS,
     Document,
@@ -33,20 +34,7 @@ _INSTRUCTION = (
 _NOTHING = ("", "")
 
 
-def as_dict(value: object) -> dict[str, object]:
-    if not isinstance(value, dict):
-        return {}
-    return {str(key): item for key, item in cast("dict[object, object]", value).items()}
-
-
-def parse_json(text: str) -> object | None:
-    try:
-        return cast("object", json.loads(text))
-    except ValueError:
-        return None
-
-
-def touched_files(tool_input: object) -> list[str]:
+def touched_files(tool_input: ToolUseInput) -> list[str]:
     """ツールの入力から、書き換えたファイルのパスを取り出す.
 
     Claude Code の Write・Edit・MultiEdit は tool_input.file_path を持つ。
@@ -55,16 +43,11 @@ def touched_files(tool_input: object) -> list[str]:
     Returns:
         書き換えたファイルのパス(入力に書かれたまま)。
     """
-    fields = as_dict(tool_input)
-    file_path = fields.get("file_path")
-    if isinstance(file_path, str):
-        return [file_path]
-    command = fields.get("command")
-    if isinstance(command, list):
-        command = "\n".join(str(part) for part in cast("list[object]", command))
-    if not isinstance(command, str):
+    if tool_input.file_path is not None:
+        return [tool_input.file_path]
+    if tool_input.command is None:
         return []
-    return [match.group(1).strip() for match in _PATCH_PATH.finditer(command)]
+    return [match.group(1).strip() for match in _PATCH_PATH.finditer(tool_input.command)]
 
 
 def read_lintable(path: Path) -> str | None:
@@ -89,20 +72,19 @@ def format_messages(report: Report, project_dir: Path) -> list[str]:
     return lines
 
 
-def build_output(lines: list[str], mode: str) -> dict[str, object]:
+def build_output(lines: list[str], mode: str) -> BlockOutput | PostToolUseContextOutput:
     report = f"textlint の指摘が {len(lines)} 件あります。\n" + "\n".join(lines) + "\n\n" + _INSTRUCTION
     if mode == "warn":
         return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": report}}
     return {"decision": "block", "reason": report}
 
 
-def _project_dir(payload: dict[str, object], env: Mapping[str, str]) -> Path:
-    cwd = payload.get("cwd")
-    return Path(env.get("CLAUDE_PROJECT_DIR") or (cwd if isinstance(cwd, str) else "") or Path.cwd())
+def _project_dir(tool_use: ToolUseInput, env: Mapping[str, str]) -> Path:
+    return Path(env.get("CLAUDE_PROJECT_DIR") or tool_use.cwd or Path.cwd())
 
 
-def _documents(payload: dict[str, object], project_dir: Path) -> list[Document]:
-    paths = (Path(name) for name in touched_files(payload.get("tool_input")))
+def _documents(tool_use: ToolUseInput, project_dir: Path) -> list[Document]:
+    paths = (Path(name) for name in touched_files(tool_use))
     absolute = sorted({path if path.is_absolute() else project_dir / path for path in paths})
     documents: list[Document] = []
     for path in absolute:
@@ -114,11 +96,11 @@ def _documents(payload: dict[str, object], project_dir: Path) -> list[Document]:
 
 def run(stdin_text: str, env: Mapping[str, str]) -> tuple[str, str]:
     mode = env.get("TEXTLINT_HOOK_MODE") or env.get("CLAUDE_PLUGIN_OPTION_HOOK_MODE") or "block"
-    payload = as_dict(parse_json(stdin_text))
-    if mode == "off" or not payload:
+    tool_use = parse_tool_use(stdin_text)
+    if mode == "off" or tool_use is None:
         return _NOTHING
-    project_dir = _project_dir(payload, env)
-    documents = _documents(payload, project_dir)
+    project_dir = _project_dir(tool_use, env)
+    documents = _documents(tool_use, project_dir)
     if not documents:
         return _NOTHING
     try:

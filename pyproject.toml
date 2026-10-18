@@ -51,6 +51,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # scripts/ と tools/ はパッケージではなく、直接実行するスクリプト
 "plugins/**/scripts/*.py" = ["implicit-namespace-package"]
+# フックの入出力のキー名(hookSpecificOutput など)は Claude Code が決めている。
+"plugins/**/scripts/protocol.py" = ["implicit-namespace-package", "mixed-case-variable-in-class-scope"]
 "tools/*.py" = ["implicit-namespace-package"]
 "tests/**/*.py" = [
   "implicit-namespace-package",
@@ -61,7 +63,7 @@ ignore = [
 
 [tool.ruff.lint.isort]
 # スクリプトとテストの共通部品は pythonpath に入れて import する。
-known-first-party = ["textlint_runner", "post_edit", "stop", "session_start", "lint", "vendor_skill", "vendored_paths", "support"]
+known-first-party = ["textlint_runner", "post_edit", "stop", "session_start", "lint", "protocol", "vendor_skill", "vendored_paths", "support"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

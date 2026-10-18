@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 import post_edit
+from protocol import parse_object, parse_tool_use
 from support import AI_LIKE, CLEAN, set_stdin
 from textlint_runner import DocumentResult, Message, Report
 
@@ -18,20 +19,26 @@ def payload(cwd: Path, tool_input: object) -> str:
     return json.dumps({"cwd": str(cwd), "tool_input": tool_input})
 
 
+def touched(tool_input: object) -> list[str]:
+    tool_use = parse_tool_use(json.dumps({"tool_input": tool_input}))
+    assert tool_use is not None
+    return post_edit.touched_files(tool_use)
+
+
 class TestTouchedFiles:
     def test_claude_code(self) -> None:
-        assert post_edit.touched_files({"file_path": "/a/b.md"}) == ["/a/b.md"]
+        assert touched({"file_path": "/a/b.md"}) == ["/a/b.md"]
 
     def test_codex_patch(self) -> None:
         patch = "*** Begin Patch\n*** Update File: a.md\n*** Move to: b.md\n*** Add File: c.txt\n*** End Patch"
-        assert post_edit.touched_files({"command": patch}) == ["a.md", "b.md", "c.txt"]
+        assert touched({"command": patch}) == ["a.md", "b.md", "c.txt"]
 
     def test_codex_patch_as_list(self) -> None:
-        assert post_edit.touched_files({"command": ["apply_patch", "*** Add File: a.md"]}) == ["a.md"]
+        assert touched({"command": ["apply_patch", "*** Add File: a.md"]}) == ["a.md"]
 
     @pytest.mark.parametrize("tool_input", [None, "x", {}, {"command": 1}])
     def test_nothing(self, tool_input: object) -> None:
-        assert post_edit.touched_files(tool_input) == []
+        assert touched(tool_input) == []
 
 
 class TestReadLintable:
@@ -118,7 +125,8 @@ class TestRun:
     def test_block(self, tmp_path: Path, real_env: dict[str, str]) -> None:
         _ = (tmp_path / "a.md").write_text(AI_LIKE, encoding="utf-8")
         stdout, _stderr = post_edit.run(payload(tmp_path, {"file_path": str(tmp_path / "a.md")}), real_env)
-        output = post_edit.as_dict(post_edit.parse_json(stdout))
+        output = parse_object(stdout)
+        assert output is not None
         assert output["decision"] == "block"
         assert "a.md:3:1 [@textlint-ja/ai-writing/no-ai-list-formatting]" in str(output["reason"])
 

@@ -4,9 +4,10 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
-from post_edit import KANA, REPORTED_SEVERITIES, as_dict, parse_json
+from post_edit import KANA, REPORTED_SEVERITIES
+from protocol import BlockOutput, StopInput, SystemMessageOutput, TranscriptEntry, parse_stop, parse_transcript_line
 from textlint_runner import CHAT_CONFIG, Document, TextlintError, lint_documents, load_config
 
 if TYPE_CHECKING:
@@ -17,48 +18,31 @@ _NOTHING = ("", "")
 _SHOWN_MESSAGES = 5
 
 
-def _blocks(entry: dict[str, object]) -> list[dict[str, object]]:
-    content = as_dict(entry.get("message")).get("content")
-    if isinstance(content, str):
-        return [{"type": "text", "text": content}]
-    if isinstance(content, list):
-        return [as_dict(block) for block in cast("list[object]", content)]
-    return []
-
-
-def _is_prompt(entry: dict[str, object]) -> bool:
+def _is_prompt(entry: TranscriptEntry) -> bool:
     # 利用者の発言。ツールの結果も type: user で届くので、テキストを含むものだけを数える。
-    return entry.get("type") == "user" and any(block.get("type") == "text" for block in _blocks(entry))
+    return entry.role == "user" and bool(entry.texts)
 
 
 def last_turn_text(lines: Iterable[str]) -> str:
-    entries = [as_dict(parse_json(line)) for line in lines if line.strip()]
+    entries = [entry for entry in map(parse_transcript_line, lines) if entry is not None]
     start = max((index for index, entry in enumerate(entries) if _is_prompt(entry)), default=-1)
-    texts = [
-        str(block.get("text", ""))
-        for entry in entries[start + 1 :]
-        if entry.get("type") == "assistant"
-        for block in _blocks(entry)
-        if block.get("type") == "text"
-    ]
+    texts = (text for entry in entries[start + 1 :] if entry.role == "assistant" for text in entry.texts)
     return "\n\n".join(text for text in texts if text)
 
 
-def answer_text(payload: dict[str, object]) -> str:
-    message = payload.get("last_assistant_message")
-    if isinstance(message, str):
-        return message
-    transcript = payload.get("transcript_path")
-    if not isinstance(transcript, str):
+def answer_text(stop_input: StopInput) -> str:
+    if stop_input.last_assistant_message is not None:
+        return stop_input.last_assistant_message
+    if stop_input.transcript_path is None:
         return ""
     try:
-        with Path(transcript).open(encoding="utf-8") as stream:
+        with Path(stop_input.transcript_path).open(encoding="utf-8") as stream:
             return last_turn_text(stream)
     except (OSError, UnicodeDecodeError):
         return ""
 
 
-def build_output(lines: list[str], mode: str) -> dict[str, object]:
+def build_output(lines: list[str], mode: str) -> BlockOutput | SystemMessageOutput:
     if mode == "block":
         reason = (
             f"直前の答えに textlint の指摘が {len(lines)} 件あります。\n"
@@ -74,11 +58,11 @@ def build_output(lines: list[str], mode: str) -> dict[str, object]:
 
 def run(stdin_text: str, env: Mapping[str, str]) -> tuple[str, str]:
     mode = env.get("TEXTLINT_STOP_MODE") or env.get("CLAUDE_PLUGIN_OPTION_STOP_MODE") or "notify"
-    payload = as_dict(parse_json(stdin_text))
+    stop_input = parse_stop(stdin_text)
     # stop_hook_active が真なのは、block で書き直させたあとの Stop。
-    if mode == "off" or not payload or payload.get("stop_hook_active") is True:
+    if mode == "off" or stop_input is None or stop_input.stop_hook_active:
         return _NOTHING
-    text = answer_text(payload)
+    text = answer_text(stop_input)
     if not KANA.search(text):
         return _NOTHING
     try:

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 import session_start
-from post_edit import as_dict, parse_json
+from protocol import as_object, parse_object
 from textlint_runner import SKILL_ROOT
 
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ def test_context_enabled(env: dict[str, str], *, expected: bool) -> None:
 
 def test_injects_guidelines(real_env: dict[str, str]) -> None:
     stdout, stderr = session_start.run(real_env)
-    context = as_dict(as_dict(parse_json(stdout)).get("hookSpecificOutput")).get("additionalContext")
+    context = (as_object((parse_object(stdout) or {}).get("hookSpecificOutput")) or {}).get("additionalContext")
     assert context == session_start.GUIDELINES.read_text(encoding="utf-8")
     assert not stderr
 
