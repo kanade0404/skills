@@ -1,11 +1,10 @@
-# node
 node_modules/
 
-# python bytecode
 __pycache__/
 
-# local Claude Code overrides (per-machine, not distributed)
 .claude/settings.local.json
 
-# direnv's local evaluation cache for .envrc (machine-local, not distributed)
 .direnv/
+
+.venv/
+.coverage

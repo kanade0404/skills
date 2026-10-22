@@ -1,0 +1,44 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["eslint", "typescript", "unicorn", "oxc", "import", "node", "promise"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "pedantic": "error",
+    "perf": "error",
+    "style": "error",
+    "restriction": "error",
+    "nursery": "error"
+  },
+  "rules": {
+    "eslint/one-var": ["error", "never"],
+    "import/no-nodejs-modules": ["error", { "allow": ["node:module", "node:path", "node:process"] }],
+    "eslint/max-lines": ["error", { "max": 300, "skipBlankLines": true, "skipComments": true }],
+    // ファイル名は Python のスクリプトとそろえる。
+    "unicorn/filename-case": ["error", { "case": "snakeCase" }],
+    // ライブラリの型は readonly で宣言されていないので、そこだけ除く。
+    "typescript/prefer-readonly-parameter-types": [
+      "error",
+      {
+        "allow": [
+          {
+            "from": "package",
+            "package": "@textlint/kernel",
+            "name": ["TextlintKernel", "TextlintKernelRule", "TextlintKernelFilterRule", "TextlintKernelPlugin"]
+          }
+        ]
+      }
+    ],
+    // 次の4つは他のルールと矛盾するので外す。
+    // JS 用の require-await。typescript/promise-function-async・return-await と両立しないので、
+    // 型を見る typescript/require-await に任せる(typescript-eslint の推奨と同じ)。
+    "eslint/require-await": "off",
+    // undefined を禁止するルール。unicorn/no-null(null ではなく undefined を使う)と両立しない。
+    "eslint/no-undefined": "off",
+    // ES5 向けに async を禁止するルール。promise/prefer-await-to-then・unicorn/prefer-top-level-await と両立しない。
+    "oxc/no-async-await": "off",
+    // require(esm) で読まれるライブラリ向けのルール。このファイルは直接実行するだけで、unicorn/prefer-top-level-await と両立しない。
+    "node/no-top-level-await": "off"
+  },
+  "ignorePatterns": ["node_modules"]
+}

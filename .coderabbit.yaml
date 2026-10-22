@@ -1,0 +1,7 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+reviews:
+  path_filters:
+    # BEGIN tools/vendored.json (tools/vendored_paths.py sync が書く)
+    - "!plugins/ja-writing/skills/yomiyasu/**"
+    - "!plugins/productivity/skills/handoff/**"
+    # END tools/vendored.json

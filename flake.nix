@@ -27,9 +27,16 @@
             packages = [
               python
               pkgs.uv
-              pkgs.nodejs_24
+              pkgs.bun
+              pkgs.semgrep
+              pkgs.git
               pkgs.jq
             ];
+            env.UV_PYTHON = "${python}/bin/python3";
+            # semgrep の依存が PYTHONPATH に入り、uv の仮想環境に紛れ込むのを防ぐ(semgrep 本体はラッパーで自分の依存を見つける)。
+            shellHook = ''
+              unset PYTHONPATH
+            '';
           };
         });
     };

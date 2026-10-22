@@ -1,0 +1,10 @@
+{
+  "name": "productivity",
+  "displayName": "productivity",
+  "version": "0.1.0",
+  "description": "会話を次のエージェントへ引き継ぐなど、作業を進めるためのスキル",
+  "author": { "name": "kanade0404" },
+  "repository": "https://github.com/kanade0404/skills",
+  "license": "MIT",
+  "keywords": ["handoff", "productivity"]
+}

@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: nix develop --command bash -euo pipefail {0}
+
+env:
+  SKILL_DIR: plugins/ja-writing/skills/textlint
+
+jobs:
+  python:
+    name: Python (lint, types, tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
+      - run: bun install --frozen-lockfile --ignore-scripts --cwd "$SKILL_DIR"
+      - run: uv sync --locked
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run mypy
+      - run: uv run basedpyright
+      - run: uv run pytest
+      # フックは利用者の python3 で直接動くので、macOS 標準の 3.9 でもテストする。
+      - run: uv run --locked --python 3.9 pytest
+
+  typescript:
+    name: TypeScript (tsc, oxfmt, oxlint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
+      - run: bun install --frozen-lockfile --ignore-scripts --cwd "$SKILL_DIR"
+      - run: bun --bun run --cwd "$SKILL_DIR" check
+
+  semgrep:
+    name: Semgrep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
+      - run: |
+          excludes=$(python3 tools/vendored_paths.py semgrep)
+          mapfile -t exclude_args <<< "$excludes"
+          semgrep scan --metrics=off --error \
+            --config p/python --config p/security-audit --config p/secrets \
+            --config p/github-actions --config p/typescript \
+            "${exclude_args[@]}" \
+            .

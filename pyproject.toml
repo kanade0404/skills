@@ -1,0 +1,137 @@
+[project]
+name = "skills"
+version = "0.0.0"
+description = "エージェント向けプラグインとスキル"
+# フックは利用者の python3 で直接動くので、macOS 標準の 3.9 でも動く範囲で書く。
+requires-python = ">=3.9"
+dependencies = []
+
+[dependency-groups]
+dev = [
+  "basedpyright",
+  "mypy",
+  "pydantic",
+  "pytest",
+  "pytest-cov",
+  "ruff",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+target-version = "py39"
+line-length = 120
+extend-exclude = [
+  # BEGIN tools/vendored.json (tools/vendored_paths.py sync が書く)
+  "plugins/ja-writing/skills/yomiyasu",
+  "plugins/productivity/skills/handoff",
+  # END tools/vendored.json
+]
+
+[tool.ruff.lint]
+preview = true
+select = ["ALL"]
+ignore = [
+  "missing-trailing-comma", # フォーマッタと衝突する
+  "missing-copyright-notice", # ファイルごとの著作権表示は置かない
+  "incorrect-blank-line-before-class",   # D211 と衝突する
+  "multi-line-summary-second-line",   # D212 と衝突する
+  # docstring は必須にしない。必須にすると、名前を言い換えただけの docstring が増える。
+  "undocumented-public-module",
+  "undocumented-public-class",
+  "undocumented-public-method",
+  "undocumented-public-function",
+  "undocumented-public-package",
+  "undocumented-magic-method",
+  "undocumented-public-nested-class",
+  "undocumented-public-init",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# scripts/ と tools/ はパッケージではなく、直接実行するスクリプト
+"plugins/**/scripts/*.py" = ["implicit-namespace-package"]
+# フックの入出力のキー名(hookSpecificOutput など)は Claude Code が決めている。
+"plugins/**/scripts/protocol.py" = ["implicit-namespace-package", "mixed-case-variable-in-class-scope"]
+"tools/*.py" = ["implicit-namespace-package"]
+"tests/**/*.py" = [
+  "implicit-namespace-package",
+  "magic-value-comparison", # テストの期待値はそのまま書く
+  "assert", # pytest の assert
+  "no-self-use", # pytest のテストクラスはテストをまとめるだけで self を使わない
+]
+
+[tool.ruff.lint.isort]
+# スクリプトとテストの共通部品は pythonpath に入れて import する。
+known-first-party = ["textlint_runner", "post_edit", "stop", "session_start", "lint", "protocol", "vendor_skill", "vendored_paths", "support"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.pydoclint]
+# 1行の docstring に Returns・Raises の節を求めない。節を足すためだけの文を書かせない。
+ignore-one-line-docstrings = true
+
+[tool.ruff.format]
+preview = true
+
+[tool.mypy]
+# mypy は 3.9 を検査対象にできないので 3.10 で検査する。3.9 の文法は ruff(target-version)と basedpyright で確かめる。
+python_version = "3.10"
+plugins = ["pydantic.mypy"]
+strict = true
+warn_unreachable = true
+disallow_any_explicit = true
+disallow_any_decorated = true
+disallow_any_unimported = true
+strict_bytes = true
+local_partial_types = true
+extra_checks = true
+enable_error_code = [
+  "deprecated",
+  "exhaustive-match",
+  "explicit-override",
+  "ignore-without-code",
+  "mutable-override",
+  "possibly-undefined",
+  "redundant-expr",
+  "redundant-self",
+  "truthy-bool",
+  "truthy-iterable",
+  "unimported-reveal",
+  "unused-awaitable",
+  "unused-ignore",
+]
+mypy_path = ["plugins/ja-writing/skills/textlint/scripts", "tools", "tests"]
+files = ["plugins/ja-writing/skills/textlint/scripts", "tools", "tests"]
+explicit_package_bases = true
+
+[tool.basedpyright]
+pythonVersion = "3.9"
+typeCheckingMode = "all"
+include = ["plugins/ja-writing/skills/textlint/scripts", "tools", "tests"]
+extraPaths = ["plugins/ja-writing/skills/textlint/scripts", "tools", "tests"]
+reportImplicitStringConcatenation = false # ruff のフォーマッタと衝突する
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["plugins/ja-writing/skills/textlint/scripts", "tools", "tests"]
+addopts = [
+  "--strict-config",
+  "--strict-markers",
+  "--import-mode=importlib",
+  "--cov",
+  "--cov-report=term-missing:skip-covered",
+]
+xfail_strict = true
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+branch = true
+source = ["plugins/ja-writing/skills/textlint/scripts", "tools"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+exclude_also = ['if __name__ == "__main__":']

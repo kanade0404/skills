@@ -1,0 +1,10 @@
+{
+  "filters": {
+    "comments": true
+  },
+  "rules": {
+    "@textlint-ja/preset-ai-writing": {
+      "ai-tech-writing-guideline": false
+    }
+  }
+}
