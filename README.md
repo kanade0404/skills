@@ -76,6 +76,9 @@ Claude Code と Codex では、次のフックが動く。括弧の中は Claude
 作業を進めるためのスキルをまとめたプラグイン。
 
 - `handoff`: 今の会話を、次のエージェントが引き継ぐための文書にまとめる（[mattpocock/skills](https://github.com/mattpocock/skills/tree/main/skills/productivity/handoff)の写し）。Claude Code では `/productivity:handoff [次のセッションでやること]` で呼ぶ
+- `prune-comments`: 文脈を持たないサブエージェントに、決まった例外を除くコメントを消させ、その結果を検める。コメントで説明していた意外な動作はコードで分かるよう直す箇所として、守るべき制約はテストや型で表す提案として報告する。利用者が呼んだときだけ動く。Claude Code では `/productivity:prune-comments [ファイルかディレクトリ]` で呼ぶ（[cursor/plugins の pstack](https://github.com/cursor/plugins/tree/main/pstack)の no-comments を元にした）
+- `reproduce-bug`: 不具合を報告する前に、失敗するテストで再現する。根拠を明示して報告し、直す前に利用者の同意を得る。コードを読んで不具合を疑ったときや、レビューやサブエージェントが不具合を指摘したときに使う
+- `persist-lesson`: 同じ失敗を繰り返さないようにしたい、という依頼で、教訓をスキルや検査に落とす。置き場所は、配布先、記録した決定、前例を確かめ、機械的に検査できるかで決める
 
 入れ方は ja-writing と同じで、プラグイン名を `productivity` にする。
 
