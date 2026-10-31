@@ -1,0 +1,14 @@
+{
+  "name": "poc133-handoff",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test poc133-cf-auth-preflight-20261010/auth.test.mjs poc133-cf-auth-preflight-20261010/body.test.mjs poc133-cf-auth-preflight-20261010/gateway.test.mjs poc133-lease-restart-20261009/policy.test.mjs poc133-mtls-boundary-20261009/policy.test.mjs poc133-live-do-preparation-20261011/edge.test.mjs poc133-live-do-preparation-20261011/scope.test.mjs poc133-provider-workaround-20261017/snapshot-guard.test.mjs",
+    "build": "node poc133-live-do-preparation-20261011/build.mjs",
+    "test:integration": "node --test poc133-live-do-preparation-20261011/integration.test.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1",
+    "miniflare": "5.20261001.0-alpha"
+  }
+}

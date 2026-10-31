@@ -1,0 +1,161 @@
+{
+  "note": "Public, redacted source archive; hashes describe exported files, not live deployment seals.",
+  "files": [
+    {
+      "path": "poc133-atomic-deploy-20261017/runtime.mjs",
+      "sha256": "69fbbac5559db97c3bae8682b1245b73b52b2849d33313e96db31bca4569bedb"
+    },
+    {
+      "path": "poc133-broker-boundary-20261008/guarded.js",
+      "sha256": "16cf5250da9d32d71cbe09cc3aa69f53650572c0539ec10ea8216ccca7b3ec5d"
+    },
+    {
+      "path": "poc133-capability-recovery-20261008/coordinator.js",
+      "sha256": "87fafdd2b2cb18ba3e2dbbf8303b8b4805e1b09aaf8e3f0200b9c2ed515b344c"
+    },
+    {
+      "path": "poc133-cf-auth-preflight-20261010/auth.mjs",
+      "sha256": "f68803df199845fe0f77ee41bcb46ca17b2b010fd2d0832f97cb54ec97f00eac"
+    },
+    {
+      "path": "poc133-cf-auth-preflight-20261010/auth.test.mjs",
+      "sha256": "5262544850e5ae9bec7be7057faa9c5e56c1ce52a3b087e0cf42061430640959"
+    },
+    {
+      "path": "poc133-cf-auth-preflight-20261010/body.test.mjs",
+      "sha256": "cb799b2060df5697f00e4a4d6e6b01e50f32c5c71bd33a8fae40f61a849406ec"
+    },
+    {
+      "path": "poc133-cf-auth-preflight-20261010/gateway.mjs",
+      "sha256": "602b6e5bb750a06f0bfcf921fafccab6ea2724acda7d80731703a86ec118b0b9"
+    },
+    {
+      "path": "poc133-cf-auth-preflight-20261010/gateway.test.mjs",
+      "sha256": "36f45d859ea77651a880f8fc6647aa4fd2c9182578d413319e4222da963d3e2d"
+    },
+    {
+      "path": "poc133-do-20261005/coordinator.js",
+      "sha256": "f878460c39d64bcba9ce04321ac509c719b8640de58ed9df1a9c547e7f97f132"
+    },
+    {
+      "path": "poc133-lease-restart-20261009/coordinator.js",
+      "sha256": "2a5158781caa55bdcc269cbb401f141130adbfbea47f6b691fad109246715635"
+    },
+    {
+      "path": "poc133-lease-restart-20261009/policy.mjs",
+      "sha256": "791892db064c4881635f4de080952e51039d649118688513d84283a821d211f7"
+    },
+    {
+      "path": "poc133-lease-restart-20261009/policy.test.mjs",
+      "sha256": "e3080da7fa1bb43dd018a1528dcb27e4bb6e0f835fc39f14f2b32763a42c3b02"
+    },
+    {
+      "path": "poc133-live-do-apply-20261011/safety.mjs",
+      "sha256": "3913eafeaaaa08e8e91dc1555c5a7e4614016400c02c8601f2c6388846509cd4"
+    },
+    {
+      "path": "poc133-live-do-plan-20261011/guard.mjs",
+      "sha256": "abc82a1b9f62145674be377037b6ea6d169032d65d62ecd1c9193e101971012a"
+    },
+    {
+      "path": "poc133-live-do-preparation-20261011/authority.mjs",
+      "sha256": "15f0bf46639e5c4d95d77fe269a378f6290f640e5f40289a954135f3b8f93543"
+    },
+    {
+      "path": "poc133-live-do-preparation-20261011/build.mjs",
+      "sha256": "4d01bd0caaa96c6792565257d1bad95010664e7de6586bb4d4e5b61b48ca2c8b"
+    },
+    {
+      "path": "poc133-live-do-preparation-20261011/deadline-fixture.mjs",
+      "sha256": "fcf3a13e87cb4602289d4e77111fb3584cb56b5dc50bd4fb566a9c471d33ff20"
+    },
+    {
+      "path": "poc133-live-do-preparation-20261011/edge.mjs",
+      "sha256": "bc684dd0ee58a9bd2f0166c5701b7765b25a2f738e017734f222d5001f270d66"
+    },
+    {
+      "path": "poc133-live-do-preparation-20261011/edge.test.mjs",
+      "sha256": "bb1df89c8a25eea80998481b49f0c60a49cb8649bd27d982f33590ec1a6301b9"
+    },
+    {
+      "path": "poc133-live-do-preparation-20261011/integration.test.mjs",
+      "sha256": "0b26dbf0187749dab6c46a61b4e33406d6e2aa324cae81c972def69e9682eca9"
+    },
+    {
+      "path": "poc133-live-do-preparation-20261011/scope.mjs",
+      "sha256": "c467a8259ba2cb5b373c0d1695b5c2944168e6aae25296afebbd084e873ef734"
+    },
+    {
+      "path": "poc133-live-do-preparation-20261011/scope.test.mjs",
+      "sha256": "d09222826d60428ae4e9052c6fa2a6f69f82e399735706c977d7495e7c2b860a"
+    },
+    {
+      "path": "poc133-live-do-preparation-20261011/test-client.mjs",
+      "sha256": "95eb65b4a45785ec4f8d1763402cc89b7ece623f7ba04860baef9db9d8d5a299"
+    },
+    {
+      "path": "poc133-mtls-boundary-20261009/policy.mjs",
+      "sha256": "6af27927eac57e696d8a40d36fc613ddb371265549567c826d639b52e7055791"
+    },
+    {
+      "path": "poc133-mtls-boundary-20261009/policy.test.mjs",
+      "sha256": "cdb63ebd20a753b263949d065b77e126a37aa54c834f114704b9b9d5a629f67d"
+    },
+    {
+      "path": "poc133-patched-private-apply-20261017/guard.mjs",
+      "sha256": "b1e3692a5e4c45c58841b9b4cc248d6bc66e3ddbb9a2c82b1929615d2b1e937d"
+    },
+    {
+      "path": "poc133-provider-workaround-20261017/build-tools/terraform-provider-cloudflare-5.27.0/poc-schema-test/exports_test.go",
+      "sha256": "d9b74071e405a6ce7012f3f922c9063ec7d956ade62c3187442ea3548911d8e2"
+    },
+    {
+      "path": "poc133-provider-workaround-20261017/provider-schema.patch",
+      "sha256": "45b3e18fa755c6c8a222a754bee5b50db17ca77ee091bd21d211ec080ab6d89f"
+    },
+    {
+      "path": "poc133-provider-workaround-20261017/snapshot-guard.mjs",
+      "sha256": "348ba4daa8730c4cd3274b425ff83d94b44f728e5ec738b10843d8dee45fa03a"
+    },
+    {
+      "path": "poc133-provider-workaround-20261017/snapshot-guard.test.mjs",
+      "sha256": "0a87bbf4a4b4d575623f78af6abde09437339c5a7bde47174cea4a985947f22c"
+    },
+    {
+      "path": "poc133-renew-private-20261024/guard.mjs",
+      "sha256": "b768bdd64975c9cf8ee888437e37a20fe5292d00cf2c956265aa8ba9e26f69cd"
+    },
+    {
+      "path": "poc133-renew-private-20261024/guard.test.mjs",
+      "sha256": "1de6e4b4e64ed257ea84b8550626ec85f89c39cc4f40d106f0fee13215bf735e"
+    },
+    {
+      "path": "poc133-renew-private-20261024/prepare.mjs",
+      "sha256": "490702f2e0ea121f566012ce26ed6f356041f246996c0c8586ad2251c7b399b7"
+    },
+    {
+      "path": "poc133-renew-private-20261024/run.mjs",
+      "sha256": "972db55d652216f97f954699f7494550abb2ca686ec3fc167496101580ac9409"
+    },
+    {
+      "path": "poc133-renew-private-20261024/terraform/main.tf",
+      "sha256": "5d31d267a2710fa557c40b64266b77ffd1a77eb0494e4eaab79fff7f8548710a"
+    },
+    {
+      "path": "poc133-renew-private-20261024/terraform/renewal.tf",
+      "sha256": "7f991d5d6fbfbee5546ca340c693985503c8d8e10cb88de1d4b0ac19ffe4397a"
+    },
+    {
+      "path": "poc133-renew-private-20261024/terraform/tests/candidate.tftest.hcl",
+      "sha256": "d2a224a353a56a52ca1297fadfce4422dd4376c74ebc46fa050b07c82291a3e1"
+    },
+    {
+      "path": "poc133-renew-private-20261024/terraform/tests/renewal.tftest.hcl",
+      "sha256": "a8de78cc232ac13730cff4160439aeb9f42f3dc4aaefcc6fe0b2cc77f22df2a6"
+    },
+    {
+      "path": "poc133-renew-private-20261024/terraform/variables.tf",
+      "sha256": "e57f18e92cb852e5f233532291ee8bd3b7ca46be775f400fb30a556c5d5e0ef3"
+    }
+  ]
+}

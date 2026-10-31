@@ -1,0 +1,13 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { workerRequest, controllerRequest } from "./policy.mjs";
+const worker = { lane: "task-a", digest: "trusted-digest", op: "comment-a", payload: "approved" };
+test("worker maps only approved operation to trusted lane", () => assert.deepEqual(workerRequest(worker, { op: "comment-a", payload: "approved" }), { lane: "task-a", digest: "trusted-digest", request: { op: "comment-a", payload: "approved" } }));
+for (const body of [null, [], "text", {}, { op: "comment-a" }, { op: "other", payload: "approved" }, { op: "comment-a", payload: "changed" }]) test("invalid worker shape " + JSON.stringify(body), () => assert.equal(workerRequest(worker, body), null));
+for (const key of ["lane", "method", "epoch", "incarnation", "worker", "digest", "stopped", "result"]) test("worker cannot supply " + key, () => assert.equal(workerRequest(worker, { op: "comment-a", payload: "approved", [key]: "forged" }), null));
+test("unregistered worker denied", () => assert.equal(workerRequest(null, { op: "comment-a", payload: "approved" }), null));
+const controller = { lanes: ["task-a"] };
+test("controller reads only registered lane", () => assert.deepEqual(controllerRequest(controller, { lane: "task-a", method: "inspect", input: null }), { lane: "task-a", method: "inspect", input: null }));
+test("controller revokes a scoped grant", () => assert.deepEqual(controllerRequest(controller, { lane: "task-a", method: "revoke", input: { digest: "grant" } }), { lane: "task-a", method: "revoke", input: { digest: "grant" } }));
+for (const body of [null, [], "x", {}, { lane: "other", method: "inspect", input: null }, { lane: "task-a", method: "takeOver", input: {} }, { lane: "task-a", method: "inspect", input: {} }, { lane: "task-a", method: "revoke", input: null }, { lane: "task-a", method: "revoke", input: { digest: 4 } }, { lane: "task-a", method: "revoke", input: { digest: "x", extra: true } }, { lane: "task-a", method: "inspect", input: null, extra: true }]) test("controller scope rejects " + JSON.stringify(body), () => assert.equal(controllerRequest(controller, body), null));
+test("unregistered controller denied", () => assert.equal(controllerRequest(null, { lane: "task-a", method: "inspect", input: null }), null));

@@ -1,0 +1,13 @@
+--- ../poc133-live-do-apply-20261011/run-1792207815532/provider-diagnosis/v5.27.0-schema.go	2026-10-17 12:33:23
++++ build-tools/terraform-provider-cloudflare-5.27.0/internal/services/worker_version/schema.go	2026-10-17 13:02:08
+@@ -95,6 +95,10 @@
+ 				Optional:    true,
+ 				NestedObject: schema.NestedAttributeObject{
+ 					Attributes: map[string]schema.Attribute{
++						"container": schema.StringAttribute{
++							Description: "Container name associated with the Durable Object export.",
++							Optional:    true,
++						},
+ 						"type": schema.StringAttribute{
+ 							Description: "The kind of export.\nAvailable values: \"worker\", \"durable-object\".",
+ 							Required:    true,
