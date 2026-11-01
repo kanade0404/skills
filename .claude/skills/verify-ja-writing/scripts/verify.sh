@@ -23,8 +23,23 @@ MARKER="$WORK/.verify-ja-writing"
 MODEL="${VERIFY_MODEL:-haiku}"
 BUDGET="${VERIFY_BUDGET_USD:-0.30}"
 
-# 許可を求める画面がないので、Bash は python3 の単独の呼び出しだけを通す。利用者が承認する代わりに、その形をモデルに伝える。
-SKILL_BASH_RULE="Permission note for this session: nobody can approve permission prompts. A Bash command is auto-approved only when the whole command is one plain invocation starting with 'python3 ' or '/usr/bin/python3 ' (no '&&', ';', pipes, redirects, or variable assignments). Run each script as its own Bash call, and create or change files with the Write and Edit tools."
+# 許可を求める画面がないので、Bash はスキルが使うスクリプトの単独の呼び出しだけを通す。
+# python3 -c や任意のスクリプトは通さない。利用者が承認する代わりに、その形をモデルに伝える。
+skill_bash_rule() {
+  echo "Permission note for this session: nobody can approve permission prompts. A Bash command is auto-approved only when the whole command is one plain invocation of 'python3 ' or '/usr/bin/python3 ' (optionally with -B) followed by the absolute path of one of these scripts: $*. No other Python command is allowed (no -c, no -m, no other script), and no '&&', ';', pipes, redirects, or variable assignments. Run each script as its own Bash call, and create or change files with the Write and Edit tools."
+}
+
+# allowedTools の規則を、渡されたスクリプトの絶対パスごとに作る(python3 と /usr/bin/python3、-B の有無)。
+allowed_rules() {
+  local script interp flag
+  for script in "$@"; do
+    for interp in python3 /usr/bin/python3; do
+      for flag in "" "-B "; do
+        printf 'Bash(%s %s%s *)\n' "$interp" "$flag" "$script"
+      done
+    done
+  done
+}
 
 # フックは /bin/sh 経由の python3 で動く。対話シェルの alias(mise の shim など)を避け、同じ解決を使う。
 PY=$(/bin/sh -c 'command -v python3')
@@ -147,7 +162,8 @@ summarize() {
 
 cmd_drive() {
   require_launched
-  local feature="${1:-}"
+  local feature="${1:-}" rule
+  local -a rules
   case "$feature" in
     session-start)
       # スキルの名前を見出しと取り違えないよう、フックが足した文書だと明示する(答えは漏らさない)。
@@ -167,15 +183,19 @@ $(< "$FIXTURES/stop-answer.md")" --tools ""
       ;;
     textlint-skill)
       cp "$FIXTURES/bad.md" "$WS/draft.md"
+      rules=()
+      while IFS= read -r rule; do rules+=("$rule"); done < <(allowed_rules "$TEXTLINT_SCRIPTS/lint.py")
       run_headless textlint-skill "/ja-writing:textlint draft.md" \
-        --tools "Bash,Read,Edit,Write,Skill" --allowedTools "Bash(python3 *)" "Bash(/usr/bin/python3 *)" \
-        --append-system-prompt "$SKILL_BASH_RULE"
+        --tools "Bash,Read,Edit,Write,Skill" --allowedTools "${rules[@]}" \
+        --append-system-prompt "$(skill_bash_rule "$TEXTLINT_SCRIPTS/lint.py")"
       ;;
     yomiyasu-skill)
       cp "$FIXTURES/yomiyasu-source.md" "$WS/source.md"
+      rules=()
+      while IFS= read -r rule; do rules+=("$rule"); done < <(allowed_rules "$YOMIYASU_SCRIPTS/yomiyasu_lint.py" "$YOMIYASU_SCRIPTS/yomiyasu_check.py")
       YOMIYASU_STATE_DIR="$YOMIYASU_STATE" run_headless yomiyasu-skill "/ja-writing:yomiyasu source.md" \
-        --tools "Bash,Read,Edit,Write,Skill" --allowedTools "Bash(python3 *)" "Bash(/usr/bin/python3 *)" \
-        --append-system-prompt "$SKILL_BASH_RULE"
+        --tools "Bash,Read,Edit,Write,Skill" --allowedTools "${rules[@]}" \
+        --append-system-prompt "$(skill_bash_rule "$YOMIYASU_SCRIPTS/yomiyasu_lint.py" "$YOMIYASU_SCRIPTS/yomiyasu_check.py")"
       ;;
     *)
       die "drive の機能は session-start post-edit stop textlint-skill yomiyasu-skill のどれか(features/README.md を参照)"

@@ -20,7 +20,7 @@
 前提として、launch と doctor が通っている。`verify.sh` が `fixtures/yomiyasu-source.md` を `ws/source.md` に写す。
 
 - 呼び出しは `VERIFY_MODEL=sonnet VERIFY_BUDGET_USD=1.00 verify.sh drive yomiyasu-skill` で再現する。依頼は `/ja-writing:yomiyasu source.md` である。
-- 記録は `YOMIYASU_STATE_DIR` で作業ディレクトリの `yomiyasu-state/` に向ける。Bash の許可の形は、textlint スキルと同じく追加のシステムプロンプトで伝える。
+- 記録は `YOMIYASU_STATE_DIR` で作業ディレクトリの `yomiyasu-state/` に向ける。Bash は `yomiyasu_lint.py` と `yomiyasu_check.py` の絶対パスを指す `python3` の単独のコマンドだけを許す。その形は、textlint スキルと同じく追加のシステムプロンプトで伝える。
 - スキルが読まれたことは `session/*.jsonl` の `<command-name>/ja-writing:yomiyasu</command-name>` で確かめる。スラッシュコマンドは `Skill` の `tool_use` にならない。
 - 推敲の結果は `yomiyasu-skill/files/` で確かめる。`source.md` は見本と同じままで、`source.rewritten.md` のような別の名前の最終稿が増えている。
 - 原文の lint は、Bash の `tool_use` に `yomiyasu_lint.py source.md` が出れば確かめられる。

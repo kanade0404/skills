@@ -92,7 +92,7 @@ export RUN_ID=$(date +%Y%m%d-%H%M%S)
 - `--output-format stream-json --verbose --include-hook-events` で、フックの開始と結果を記録に含める。
 - `--debug-file <証拠>/debug.log` で、フックの実行のログを残す。
 
-`textlint-skill` と `yomiyasu-skill` では、Bash を `python3` で始まる単独のコマンドだけに許す。承認する人がいないので、その形を `--append-system-prompt` でモデルに伝える。
+`textlint-skill` と `yomiyasu-skill` では、Bash を、そのスキルが使うスクリプトの絶対パスを指す `python3`・`/usr/bin/python3`（`-B` の有無を含む）の単独のコマンドだけに許す。`textlint-skill` は `lint.py`、`yomiyasu-skill` は `yomiyasu_lint.py` と `yomiyasu_check.py` だけで、`python3 -c` や他のスクリプトは通らない。承認する人がいないので、その形を `--append-system-prompt` でモデルに伝える。
 `yomiyasu-skill` は haiku では手順を守りきれないので、`VERIFY_MODEL=sonnet VERIFY_BUDGET_USD=1.00` を付ける。
 
 `--bare` は使わない。フックを飛ばすうえ、認証が `ANTHROPIC_API_KEY` だけになり、claude.ai のログインでは動かない。
