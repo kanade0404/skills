@@ -7,7 +7,7 @@ Claude Code のセッションが始まると、SessionStart フックが textli
 - `session-context` は、`config/guidelines.md` の全文を `additionalContext` として渡す。
 - `session-install` は、依存がなければ `bun install` で入れてから規約を渡す。入れるのに失敗しても標準エラーに書くだけで、終了コード 0 のまま規約を渡す。
 - `session-context-off` は、規約を渡さない。依存を入れる処理は止まらない。
-- `session-events` は、起動、再開、`/clear`、compact のどれでも動く。matcher も重複の防止もないので、そのたびに規約を入れる。
+- `session-events` は、起動、再開、`/clear`、compact のどれでも動くはずである。matcher も重複の防止もないので、そのたびに規約を入れる。確かめたのは起動だけで、再開、`/clear`、compact はコードからの予想にとどまる。
 
 ## How to get to it (user POV)
 
@@ -19,13 +19,13 @@ Claude Code のセッションが始まると、SessionStart フックが textli
 
 前提として、launch が通っている。drive が確かめるのは launch の目印だけなので、doctor は自分で先に実行する。
 
-- 起動は `verify.sh drive session-start` で再現する。依頼は、SessionStart フックが足した文書の 1 行目をそのまま答えさせるものである。
+- 起動は `.claude/skills/verify-ja-writing/scripts/verify.sh drive session-start` で再現する。依頼は、SessionStart フックが足した文書の 1 行目をそのまま答えさせるものである。
 - 渡した規約は `session-start/hooks.jsonl` の `hook_name` が `SessionStart:startup` の `hook_response` に出る。同じ名前の `hook_started` の行もある。
 - `hook_response` の `exit_code` は 0 になる。`stdout` は JSON の文字列なので、`jq '.stdout | fromjson | .hookSpecificOutput.additionalContext'` で開く。中身は `# 日本語の文章の規約（ja-writing）` で始まる。
 - Claude が受け取ったことは `session-start/result.json` で確かめる。`result` が `# 日本語の文章の規約（ja-writing）` になる。
-- 規約を切る動きは `TEXTLINT_SESSION_CONTEXT=false verify.sh drive session-start` で動かす。`SessionStart:startup` の `stdout` が空になる。`result` は `NONE` になることが多い。
+- 規約を切る動きは `TEXTLINT_SESSION_CONTEXT=false .claude/skills/verify-ja-writing/scripts/verify.sh drive session-start` で動かす。`SessionStart:startup` の `stdout` が空になる。`result` は `NONE` になることが多い。
 - 依存を入れる経路は launch が通る。launch は SessionStart フックと同じ `session_start.py` を空の `deps/` に向けて実行するので、初回の `bun install` がここで走る。
-- 代替の駆動は `verify.sh hook session-start` で、`fallback-hook-session-start/stdout.json` に同じ JSON が出る。
+- 代替の駆動は `.claude/skills/verify-ja-writing/scripts/verify.sh hook session-start` で、`fallback-hook-session-start/stdout.json` に同じ JSON が出る。
 
 ## Gotchas
 

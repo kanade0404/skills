@@ -21,13 +21,13 @@
 
 前提として、launch と doctor が通っている。
 
-- 答えさせる操作は `verify.sh drive stop` で再現する。claude は `fixtures/stop-answer.md` の 1 行をそのまま答える。ツールは渡さない。
+- 答えさせる操作は `.claude/skills/verify-ja-writing/scripts/verify.sh drive stop` で再現する。claude は `fixtures/stop-answer.md` の 1 行をそのまま答える。ツールは渡さない。
 - 指摘は `stop/hooks.jsonl` の `Stop` に出る。`stdout` を `fromjson` で開いた `systemMessage` が `textlint: 答えに` で始まり、`@textlint-ja/ai-writing/no-ai-list-formatting` を含む。
 - 2026-11-01 の実行では、見本の指摘は `no-ai-list-formatting` の 1 件だった。`革新的` と `劇的` は指摘されなかった。件数は判定に使わない。
 - 答えそのものは `stop/result.json` の `result` で確かめる。見本の 1 行と同じになっている。
-- block のモードは `TEXTLINT_STOP_MODE=block verify.sh drive stop` で動かす。`Stop` の `hook_response` が 2 回出る。
+- block のモードは `TEXTLINT_STOP_MODE=block .claude/skills/verify-ja-writing/scripts/verify.sh drive stop` で動かす。`Stop` の `hook_response` が 2 回出る。
 - block の 1 回目の `stdout` は `"decision": "block"` を持ち、`reason` が `直前の答えに textlint の指摘が` で始まる。2 回目は `stop_hook_active` が真なので空で終わり、`result` は書き直した答えになる。
-- 代替の駆動は `verify.sh hook stop` で、`last_assistant_message` に見本を入れた JSON を `stop.py` に渡す。`fallback-hook-stop/stdout.json` に同じ `systemMessage` が出る。
+- 代替の駆動は `.claude/skills/verify-ja-writing/scripts/verify.sh hook stop` で、`last_assistant_message` に見本を入れた JSON を `stop.py` に渡す。`fallback-hook-stop/stdout.json` に同じ `systemMessage` が出る。
 
 ## Gotchas
 

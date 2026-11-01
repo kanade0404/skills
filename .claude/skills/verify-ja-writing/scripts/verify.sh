@@ -12,6 +12,9 @@ FIXTURES="$SCRIPT_DIR/../fixtures"
 
 : "${RUN_ID:?RUN_ID を設定する(例: RUN_ID=\$(date +%Y%m%d-%H%M%S))}"
 case "$RUN_ID" in *[!A-Za-z0-9._-]*) echo "RUN_ID は英数字と . _ - だけにする" >&2; exit 2 ;; esac
+case "$RUN_ID" in . | ..) echo "RUN_ID に . と .. は使えない" >&2; exit 2 ;; esac
+# 外の設定が検査の規則を差し替えないよう、同梱の設定だけを使わせる。
+unset TEXTLINT_CONFIG
 
 WORK_ROOT="${VERIFY_WORK_ROOT:-${TMPDIR:-/tmp}}"
 WORK="${WORK_ROOT%/}/verify-ja-writing/$RUN_ID"
@@ -66,7 +69,10 @@ session_dir() {
 }
 
 cmd_launch() {
-  mkdir -p "$WS" "$DEPS" "$YOMIYASU_STATE" "$EVID"
+  # 同じ RUN_ID の同時の launch が作業ディレクトリを共有しないよう、既にあれば止める。
+  [ ! -e "$WORK" ] || die "$WORK が既にある。RUN_ID を変えるか、先に cleanup を実行する"
+  mkdir -p "$(dirname "$WORK")" "$EVID"
+  mkdir "$WORK" "$WS" "$DEPS" "$YOMIYASU_STATE"
   echo "$RUN_ID" > "$MARKER"
   # 隔離したワークスペースに .claude/ も .textlintrc も置かない。同梱の設定だけで検査させるため。
   echo "launch: SessionStart フックと同じコードで textlint の依存を $DEPS に入れる"
@@ -84,21 +90,25 @@ cmd_launch() {
 
 cmd_doctor() {
   local ok=0 claude version
-  check() { if eval "$2" > /dev/null 2>&1; then echo "OK: $1"; else echo "NG: $1"; ok=1; fi; }
+  # check <説明> <コマンド> [引数...]: eval を使わず、引数をそのまま実行する。
+  check() { local desc="$1"; shift; if "$@" > /dev/null 2>&1; then echo "OK: $desc"; else echo "NG: $desc"; ok=1; fi; }
+  py_ok() { "$PY" -c 'import sys; sys.exit(sys.version_info < (3, 9))'; }
+  bun_ok() { [ -n "$1" ] && "$PY" -c 'import sys; v=tuple(map(int,sys.argv[1].split(".")[:2])); sys.exit(v < (1, 3))' "$1"; }
+  claude_logged_in() { "$1" auth status | grep -q '"loggedIn": true'; }
   echo "repo: $REPO ($(git -C "$REPO" rev-parse --short HEAD), branch $(git -C "$REPO" branch --show-current))"
   echo "python3(/bin/sh): $PY $("$PY" --version 2>&1)"
-  check "python3 が 3.9 以上" "'$PY' -c 'import sys; sys.exit(sys.version_info < (3, 9))'"
+  check "python3 が 3.9 以上" py_ok
   version=$(bun --version 2>/dev/null || true)
   echo "bun: ${version:-なし}"
-  check "bun が 1.3 以上" "[ -n '$version' ] && '$PY' -c 'import sys; v=tuple(map(int,\"$version\".split(\".\")[:2])); sys.exit(v < (1, 3))'"
+  check "bun が 1.3 以上" bun_ok "$version"
   claude=$(/bin/sh -c 'command -v claude' || true)
   echo "claude: ${claude:-なし} $([ -n "$claude" ] && "$claude" --version 2>/dev/null)"
-  check "claude にログインしている" "'$claude' auth status | grep -q '\"loggedIn\": true'"
-  check "plugin.json と hooks.json が検証を通る" "'$claude' plugin validate '$PLUGIN'"
-  check "launch 済み($MARKER)" "[ -f '$MARKER' ]"
-  check "textlint の依存がある($DEPS)" "[ -f '$DEPS/node_modules/@textlint/kernel/package.json' ]"
-  check "ワークスペースに .claude/ がない" "[ ! -e '$WS/.claude' ]"
-  check "証拠の置き場が git に無視される" "git -C '$REPO' check-ignore -q '$EVID'"
+  check "claude にログインしている" claude_logged_in "$claude"
+  check "plugin.json と hooks.json が検証を通る" "$claude" plugin validate "$PLUGIN"
+  check "launch 済み($MARKER)" test -f "$MARKER"
+  check "textlint の依存がある($DEPS)" test -f "$DEPS/node_modules/@textlint/kernel/package.json"
+  check "ワークスペースに .claude/ がない" test ! -e "$WS/.claude"
+  check "証拠の置き場が git に無視される" git -C "$REPO" check-ignore -q "$EVID"
   return "$ok"
 }
 
@@ -140,6 +150,7 @@ run_headless() {
   fi
   summarize "$out"
   echo "exit_code=$status"
+  return "$status"
 }
 
 summarize() {
@@ -260,13 +271,17 @@ cmd_yomiyasu() {
 
 cmd_cleanup() {
   local pid
-  if [ -f "$WORK/claude.pid" ]; then
-    pid=$(cat "$WORK/claude.pid")
-    # 自分が起動した claude だけを止める。名前で止めない。
-    if kill -0 "$pid" 2> /dev/null; then kill "$pid" && echo "stopped claude pid $pid"; fi
-  fi
   if [ -d "$WORK" ]; then
     [ -f "$MARKER" ] && [ "$(cat "$MARKER")" = "$RUN_ID" ] || die "$WORK はこの RUN_ID のものではないので消さない"
+  fi
+  if [ -f "$WORK/claude.pid" ]; then
+    pid=$(cat "$WORK/claude.pid")
+    # 自分が起動した claude だけを止める。PID の再利用に備え、コマンドラインにこの実行の証拠の置き場が含まれるときだけ止める。
+    if kill -0 "$pid" 2> /dev/null && ps -p "$pid" -o command= | grep -qF -- "$EVID/"; then
+      kill "$pid" && echo "stopped claude pid $pid"
+    fi
+  fi
+  if [ -d "$WORK" ]; then
     local sessions
     sessions=$(session_dir)
     case "$sessions" in

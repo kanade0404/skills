@@ -21,15 +21,15 @@ Claude Code が Markdown やテキストのファイルを書き換えると、P
 
 前提として、launch と doctor が通り、`ws/` に `note.md` がない状態から始める。
 
-- 書かせる操作は `verify.sh drive post-edit` で再現する。claude は `fixtures/bad.md` の中身を `ws/note.md` に Write で書く。
+- 書かせる操作は `.claude/skills/verify-ja-writing/scripts/verify.sh drive post-edit` で再現する。claude は `fixtures/bad.md` の中身を `ws/note.md` に Write で書く。
 - 指摘は `post-edit/hooks.jsonl` の `PostToolUse:Write` に出る。`stdout` を `fromjson` で開くと、`decision` が `block` で、`reason` に指摘が 1 件入る。
 - 指摘の ruleId は `ja-technical-writing/ja-no-redundant-expression` のように preset の名前が前に付く。
 - 直す操作は同じ実行の中で続く。claude が Edit で直すと、`PostToolUse:Edit` は `stdout` が空で終わる。
 - 結果は `post-edit/files/note.md` で確かめる。3 行目が `この機能は設定を変更できる。とても便利です！` になっている。
-- warn のモードは `TEXTLINT_HOOK_MODE=warn verify.sh drive post-edit` で動かす。`stdout` が `hookSpecificOutput.additionalContext` になり、`decision` は出ない。Claude は文脈の指摘を読んで直すことがある。
-- off のモードは `TEXTLINT_HOOK_MODE=off verify.sh drive post-edit` で動かす。`PostToolUse:Write` の `stdout` が空で、`files/note.md` は見本のまま残る。
+- warn のモードは `TEXTLINT_HOOK_MODE=warn .claude/skills/verify-ja-writing/scripts/verify.sh drive post-edit` で動かす。`stdout` が `hookSpecificOutput.additionalContext` になり、`decision` は出ない。Claude は文脈の指摘を読んで直すことがある。
+- off のモードは `TEXTLINT_HOOK_MODE=off .claude/skills/verify-ja-writing/scripts/verify.sh drive post-edit` で動かす。`PostToolUse:Write` の `stdout` が空で、`files/note.md` は見本のまま残る。
 - 隔離は `post-edit/init.json` で確かめる。`plugins` が `ja-writing@inline` と組み込みの `@builtin` だけになっている。
-- 代替の駆動は `verify.sh hook post-edit` で、Write と同じ形の JSON を `post_edit.py` に渡す。`fallback-hook-post-edit/stdout.json` に同じ指摘が出る。
+- 代替の駆動は `.claude/skills/verify-ja-writing/scripts/verify.sh hook post-edit` で、Write と同じ形の JSON を `post_edit.py` に渡す。`fallback-hook-post-edit/stdout.json` に同じ指摘が出る。
 
 ## Gotchas
 

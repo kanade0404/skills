@@ -5,8 +5,8 @@
 
 ## 前提となる状態
 
-- `RUN_ID` を決め、`verify.sh launch` で隔離した作業ディレクトリと textlint の依存を用意する。
-- `verify.sh doctor` を実行し、すべての行が `OK:` になることを確かめる。
+- `RUN_ID` を決め、`.claude/skills/verify-ja-writing/scripts/verify.sh launch` で隔離した作業ディレクトリと textlint の依存を用意する。
+- `.claude/skills/verify-ja-writing/scripts/verify.sh doctor` を実行し、すべての行が `OK:` になることを確かめる。
 - claude は `ws/` で起動し、`--plugin-dir plugins/ja-writing` だけを読ませる。利用者の設定とプラグインは読ませない。
 - 見本の文は `fixtures/` のものを使う。指摘がわざと出る文なので、書き換えない。
 - この実行で起動していない claude のセッションは駆動しない。
@@ -15,15 +15,17 @@
 
 - どの手順も launch 直後の状態から始める。前の機能が `ws/` に残したファイルは、次の機能の結果と混ざる。混ぜたくなければ RUN_ID を分ける。
 - コマンドは書いたとおりに実行する。機能の名前と引数は変えない。
-- 利用者の経路は `verify.sh drive <機能>` で動かす。`hook`・`lint`・`yomiyasu` のサブコマンドは代替の駆動である。
+- 利用者の経路は `.claude/skills/verify-ja-writing/scripts/verify.sh drive <機能>` で動かす。`hook`・`lint`・`yomiyasu` のサブコマンドは代替の駆動である。
 - フックのモードは `TEXTLINT_HOOK_MODE` と `TEXTLINT_STOP_MODE` を `verify.sh` の前に付けて切り替える。
-- 片付けは `verify.sh cleanup` で済ませ、証拠は消さない。
+- コマンドは、リポジトリの最上位をカレントディレクトリとして、`.claude/skills/verify-ja-writing/scripts/verify.sh` のパスで書いている。
+- `verify.sh` は環境変数 `TEXTLINT_CONFIG` を外して動かす。外の設定が検査の規則を差し替えないようにするためである。
+- 片付けは `.claude/skills/verify-ja-writing/scripts/verify.sh cleanup` で済ませ、証拠は消さない。
 
 ## 証明と見送りの報告
 
 - 利用者の操作と、その結果の状態の両方を残す。フックの返事だけでなく、実行後のファイルも示す。
 - ヘッドレスの証明には `transcript.jsonl` の `hook_response`、`init.json`、`files/` の 3 つをそろえる。
-- 代替の駆動の証拠には、標準入力の JSON、標準出力、終了コードをそろえる。
+- 代替の駆動の証拠は入口ごとにそろえる。`hook` は標準入力の JSON、標準出力、終了コード。`lint` と `yomiyasu` はファイルの引数、標準出力、終了コード、生成されたファイルか記録。
 - 証拠には、機能の名前と使った入口（drive または代替）を必ず添える。
 - 入口に届かなかったときは、実行したコマンドと満たせなかった前提を報告する。
 - 見送った入口を、別の入口で確かめたことにしない。

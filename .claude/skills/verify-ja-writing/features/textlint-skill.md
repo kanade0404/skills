@@ -21,13 +21,13 @@
 
 前提として、launch と doctor が通っている。`verify.sh` が `fixtures/bad.md` を `ws/draft.md` に写す。
 
-- 呼び出しは `verify.sh drive textlint-skill` で再現する。依頼は `/ja-writing:textlint draft.md` で、Bash は `lint.py` の絶対パスを指す `python3` の単独のコマンドだけを許す。
+- 呼び出しは `.claude/skills/verify-ja-writing/scripts/verify.sh drive textlint-skill` で再現する。依頼は `/ja-writing:textlint draft.md` で、Bash は `lint.py` の絶対パスを指す `python3` の単独のコマンドだけを許す。
 - 許可の形は追加のシステムプロンプトでモデルに伝える。承認する人がいないので、合わないコマンドはそのまま拒否されるからである。
 - スラッシュコマンドは `Skill` の `tool_use` にならない。スキルが読まれたことは `session/*.jsonl` の `<command-name>/ja-writing:textlint</command-name>` と `Base directory for this skill` で確かめる。
 - スキルが動いたことは `textlint-skill/transcript.jsonl` の Bash の `tool_use` で確かめる。`scripts/lint.py draft.md` を含むコマンドが出て、対応する `tool_result` に `draft.md:3:11  error` が出る。
 - 直した結果は `textlint-skill/files/draft.md` で確かめる。`することができる` がなくなっている。
 - 件数の報告は `textlint-skill/result.json` の `result` で確かめる。直す前の 1 件と、直した後の 0 件が入る。
-- 代替の駆動は `verify.sh lint` と `verify.sh lint --fix` である。`fallback-lint/stdout.txt` に `draft.md:3:11  error` の行が出て、終了コードは 1 になる。
+- 代替の駆動は `.claude/skills/verify-ja-writing/scripts/verify.sh lint` と `.claude/skills/verify-ja-writing/scripts/verify.sh lint --fix` である。`fallback-lint/stdout.txt` に `draft.md:3:11  error` の行が出て、終了コードは 1 になる。
 - `--fix` のあとは終了コード 0 で、`fallback-lint/draft.after.md` が `変更できる` に直る。見本の指摘は自動で直せるので、error は残らない。
 
 ## Gotchas
