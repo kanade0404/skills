@@ -29,19 +29,26 @@ BUDGET="${VERIFY_BUDGET_USD:-0.30}"
 # 許可を求める画面がないので、Bash はスキルが使うスクリプトの単独の呼び出しだけを通す。
 # python3 -c や任意のスクリプトは通さない。利用者が承認する代わりに、その形をモデルに伝える。
 skill_bash_rule() {
-  echo "Permission note for this session: nobody can approve permission prompts. A Bash command is auto-approved only when the whole command is one plain invocation of 'python3 ' or '/usr/bin/python3 ' (optionally with -B) followed by the absolute path of one of these scripts: $*. No other Python command is allowed (no -c, no -m, no other script), and no '&&', ';', pipes, redirects, or variable assignments. Run each script as its own Bash call, and create or change files with the Write and Edit tools."
+  echo "Permission note for this session: nobody can approve permission prompts. A Bash command is auto-approved only when it is one plain invocation of 'python3 ' or '/usr/bin/python3 ' (optionally with -B) followed by the absolute path of one of these scripts: $*, with the arguments the skill documents (the file under the current directory, or the run and verify subcommands). No other Python command is allowed (no -c, no -m, no other script), and no '&&', ';', pipes, redirects, or variable assignments. Run each script as its own Bash call, and create or change files with the Write and Edit tools."
 }
 
-# allowedTools の規則を、渡されたスクリプトの絶対パスごとに作る(python3 と /usr/bin/python3、-B の有無)。
+# allowedTools の規則を作る: allowed_rules <スクリプトの絶対パス> <引数の形>...
+# python3 と /usr/bin/python3、-B の有無ごとに、引数の形を固定した規則を出す(スクリプトだけを許し、任意の引数は許さない)。
 allowed_rules() {
-  local script interp flag
-  for script in "$@"; do
+  local script="$1" interp flag args
+  shift
+  for args in "$@"; do
     for interp in python3 /usr/bin/python3; do
       for flag in "" "-B "; do
-        printf 'Bash(%s %s%s *)\n' "$interp" "$flag" "$script"
+        printf 'Bash(%s %s%s %s)\n' "$interp" "$flag" "$script" "$args"
       done
     done
   done
+}
+
+# 規則のコマンド文字列は引用符なしの絶対パスで書く。空白や記号を含むパスでは一致しないので、先に止める。
+require_plain_paths() {
+  case "$PLUGIN$WS" in *[!A-Za-z0-9._/+-]*) die "チェックアウトか作業ディレクトリのパスに空白や記号がある。許可の規則が一致しないので、plain なパスで実行する" ;; esac
 }
 
 # フックは /bin/sh 経由の python3 で動く。対話シェルの alias(mise の shim など)を避け、同じ解決を使う。
@@ -194,16 +201,23 @@ $(< "$FIXTURES/stop-answer.md")" --tools ""
       ;;
     textlint-skill)
       cp "$FIXTURES/bad.md" "$WS/draft.md"
+      require_plain_paths
       rules=()
-      while IFS= read -r rule; do rules+=("$rule"); done < <(allowed_rules "$TEXTLINT_SCRIPTS/lint.py")
+      while IFS= read -r rule; do rules+=("$rule"); done < <(
+        allowed_rules "$TEXTLINT_SCRIPTS/lint.py" "draft.md" "--fix draft.md" "--fix --dry-run draft.md" "$WS/draft.md" "--fix $WS/draft.md"
+      )
       run_headless textlint-skill "/ja-writing:textlint draft.md" \
         --tools "Bash,Read,Edit,Write,Skill" --allowedTools "${rules[@]}" \
         --append-system-prompt "$(skill_bash_rule "$TEXTLINT_SCRIPTS/lint.py")"
       ;;
     yomiyasu-skill)
       cp "$FIXTURES/yomiyasu-source.md" "$WS/source.md"
+      require_plain_paths
       rules=()
-      while IFS= read -r rule; do rules+=("$rule"); done < <(allowed_rules "$YOMIYASU_SCRIPTS/yomiyasu_lint.py" "$YOMIYASU_SCRIPTS/yomiyasu_check.py")
+      while IFS= read -r rule; do rules+=("$rule"); done < <(
+        allowed_rules "$YOMIYASU_SCRIPTS/yomiyasu_lint.py" "source.md" "source.md --doc-type *" "$WS/source.md" "$WS/source.md --doc-type *"
+        allowed_rules "$YOMIYASU_SCRIPTS/yomiyasu_check.py" "run *" "verify *"
+      )
       YOMIYASU_STATE_DIR="$YOMIYASU_STATE" run_headless yomiyasu-skill "/ja-writing:yomiyasu source.md" \
         --tools "Bash,Read,Edit,Write,Skill" --allowedTools "${rules[@]}" \
         --append-system-prompt "$(skill_bash_rule "$YOMIYASU_SCRIPTS/yomiyasu_lint.py" "$YOMIYASU_SCRIPTS/yomiyasu_check.py")"
