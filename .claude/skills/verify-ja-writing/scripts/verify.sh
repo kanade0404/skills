@@ -220,6 +220,7 @@ $(< "$FIXTURES/stop-answer.md")" --tools ""
       )
       YOMIYASU_STATE_DIR="$YOMIYASU_STATE" run_headless yomiyasu-skill "/ja-writing:yomiyasu source.md" \
         --tools "Bash,Read,Edit,Write,Skill" --allowedTools "${rules[@]}" \
+        --disallowedTools "Bash(*--state-dir*)" \
         --append-system-prompt "$(skill_bash_rule "$YOMIYASU_SCRIPTS/yomiyasu_lint.py" "$YOMIYASU_SCRIPTS/yomiyasu_check.py")"
       ;;
     *)
@@ -281,6 +282,7 @@ cmd_yomiyasu() {
       --stance 説明 --state-dir "$YOMIYASU_STATE" --new-run) > "$out/stdout.txt" 2> "$out/stderr.log" || status=$?
   echo "$status" > "$out/exit_code"
   echo "fallback yomiyasu exit=$status"; cat "$out/stdout.txt"
+  return "$status"
 }
 
 cmd_cleanup() {

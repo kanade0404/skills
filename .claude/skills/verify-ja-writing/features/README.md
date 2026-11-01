@@ -6,7 +6,7 @@
 ## 前提となる状態
 
 - `RUN_ID` を決め、`.claude/skills/verify-ja-writing/scripts/verify.sh launch` で隔離した作業ディレクトリと textlint の依存を用意する。
-- `.claude/skills/verify-ja-writing/scripts/verify.sh doctor` を実行し、すべての行が `OK:` になることを確かめる。
+- `.claude/skills/verify-ja-writing/scripts/verify.sh doctor` を実行し、`OK:` か `NG:` で始まる確認の行がすべて `OK:` になることを確かめる。
 - claude は `ws/` で起動し、`--plugin-dir plugins/ja-writing` だけを読ませる。利用者の設定とプラグインは読ませない。
 - 見本の文は `fixtures/` のものを使う。指摘がわざと出る文なので、書き換えない。
 - この実行で起動していない claude のセッションは駆動しない。
