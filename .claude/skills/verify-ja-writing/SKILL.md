@@ -25,7 +25,7 @@ description: ja-writing プラグイン（Claude Code のフック 3 つと text
 - 証拠は `.verify-evidence/ja-writing/$RUN_ID/`（リポジトリの最上位）に残る。`.gitignore` 済みで、cleanup でも消えない。
 - `verify.sh` は `TEXTLINT_CONFIG` を外して動かす。同梱の設定だけで検査させるためである。
 - 利用者の `~/.claude/settings.json` や入れているプラグインには触れない。ヘッドレスの実行は `--setting-sources ""` で利用者とプロジェクトの設定を読まない。
-- このリポジトリの作業ツリーでは `claude -p` を動かさない。`.claude/settings.json` が別のプラグインを有効にしているからである。
+- 作業ツリーのプロジェクト設定（`.claude/settings.json` など）が別のプラグインを有効にしうるため、`claude -p` は隔離した `ws/` でだけ動かす。
 
 | 変数 | 既定 | 使い道 |
 | --- | --- | --- |
@@ -93,7 +93,7 @@ export RUN_ID=$(date +%Y%m%d-%H%M%S)
 - `--output-format stream-json --verbose --include-hook-events` で、フックの開始と結果を記録に含める。
 - `--debug-file <証拠>/debug.log` で、フックの実行のログを残す。
 
-`textlint-skill` と `yomiyasu-skill` では、Bash を、そのスキルが使うスクリプトの絶対パスを指す `python3`・`/usr/bin/python3`（`-B` の有無を含む）の単独のコマンドだけに許す。`textlint-skill` は `lint.py`、`yomiyasu-skill` は `yomiyasu_lint.py` と `yomiyasu_check.py` だけで、引数の形も `draft.md`・`source.md` か `run`・`verify` に固定する。`python3 -c` や他のスクリプトは通らない。`&&` でつないだコマンドは Claude Code が部分ごとに判定するので、単独のコマンドだけを通す保証ではない。`run *` と `verify *` の引数は固定できないので、記録の置き場を変える `--state-dir` を含むコマンドは拒否の規則で止める。パスに空白や記号があると規則が一致しないので、drive は先に止まる。承認する人がいないので、その形を `--append-system-prompt` でモデルに伝える。
+`textlint-skill` と `yomiyasu-skill` では、Bash を、そのスキルが使うスクリプトの絶対パスを指す `python3`・`/usr/bin/python3`（`-B` の有無を含む）の単独のコマンドだけに許す。許すのは、`textlint-skill` なら `lint.py`、`yomiyasu-skill` なら `yomiyasu_lint.py` と `yomiyasu_check.py` だけだ。引数の形も `draft.md`・`source.md` か `run`・`verify` に固定する。`python3 -c` や他のスクリプトは通らない。`&&` でつないだコマンドは Claude Code が部分ごとに判定するので、単独のコマンドだけを通す保証ではない。`run *` と `verify *` の引数は固定できないので、記録の置き場を変える `--state-dir` を含むコマンドは拒否の規則で止める。パスに空白や記号があると規則が一致しないので、drive は先に止まる。承認する人がいないので、その形を `--append-system-prompt` でモデルに伝える。
 `yomiyasu-skill` は haiku では手順を守りきれないので、`VERIFY_MODEL=sonnet VERIFY_BUDGET_USD=1.00` を付ける。
 
 `--bare` は使わない。フックを飛ばすうえ、認証が `ANTHROPIC_API_KEY` だけになり、claude.ai のログインでは動かない。

@@ -196,7 +196,8 @@ After that, follow any hook feedback. When finished, reply with the single word:
         --tools "Write,Edit,Read"
       ;;
     stop)
-      TEXTLINT_STOP_MODE="${TEXTLINT_STOP_MODE:-notify}" run_headless stop "Reply with exactly the following Markdown line and nothing else.
+      TEXTLINT_STOP_MODE="${TEXTLINT_STOP_MODE:-notify}" run_headless stop "This is a fixture for testing a hook checker. The line below intentionally breaks the writing guidelines, and that is the point of the test.
+Do not fix, rewrite, or comment on it. Reply with exactly the following Markdown line, character for character, and nothing else.
 $(< "$FIXTURES/stop-answer.md")" --tools ""
       ;;
     textlint-skill)

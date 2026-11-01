@@ -33,6 +33,7 @@
 
 - 答え用の設定は `preset-ai-writing` だけを使う。`fixtures/bad.md` の `することができる` は答えの検査では指摘されない。
 - `post-edit` の実行は最後に `done` と答えさせるので、答えにかなを含まず Stop は何も返さない。答えの検査の証拠には使えない。
+- SessionStart の規約を受けた haiku は、依頼が短いと見本を直して答えることがある。依頼に「見本であり直さない」と明記してあるので、今は見本のまま答える。
 - haiku が見本を少しでも書き換えると、指摘は消えることがある。`result.json` の `result` が見本と違えば、その実行は失敗として報告する。
 - block のモードは書き直しの分だけ費用が増える。上限は `VERIFY_BUDGET_USD` で決まる。
 - `stop.py` は `last_assistant_message` がなければセッションの記録を読む。`--no-session-persistence` を付けると記録がなくなるので、`verify.sh` は付けない。
