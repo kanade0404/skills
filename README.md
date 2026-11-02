@@ -80,7 +80,7 @@ Claude Code と Codex では、次のフックが動く。括弧の中は Claude
 
 入れ方は ja-writing と同じで、プラグイン名を `productivity` にする。
 
-Claude Code では、Agent ツールを呼ぶたびに PreToolUse のフックが `subagent-judgment` の条件を文脈に入れる。呼び出しは止めない。切り替えは `SUBAGENT_JUDGMENT_REMINDER`（プラグイン設定の `subagent_reminder`）で、`0`・`false`・`no`・`off` のどれかにすると入れない。フックは ja-writing と同じく `python3` コマンドで動くので、Python 3.9 以上を `python3` の名前で呼べるようにしておく。
+Claude Code では、フックが `subagent-judgment` の条件を文脈に入れる。セッションの開始時（startup・resume・clear・compact のどれでも）に SessionStart のフックが短い注意を入れ、これが最初の Agent 呼び出しをカバーする。PreToolUse のフックの文脈は呼び出しの結果と一緒に届くので、2 回目以降の Agent 呼び出しを受け持つ。どちらも呼び出しは止めない。切り替えは `SUBAGENT_JUDGMENT_REMINDER`（プラグイン設定の `subagent_reminder`）で、`0`・`false`・`no`・`off` のどれかにすると入れない。フックは ja-writing と同じく `python3` コマンドで動くので、Python 3.9 以上を `python3` の名前で呼べるようにしておく。
 
 ## 上流から写したスキル
 

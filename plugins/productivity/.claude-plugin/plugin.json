@@ -11,7 +11,7 @@
     "subagent_reminder": {
       "type": "boolean",
       "title": "サブエージェントの判断を促す",
-      "description": "Agent ツールを呼ぶたびに、subagent-judgment スキルの条件を文脈に入れる（百数十トークン）",
+      "description": "セッションの開始時と Agent ツールを呼ぶたびに、subagent-judgment スキルの条件を文脈に入れる（百数十トークン）",
       "default": true
     }
   }
