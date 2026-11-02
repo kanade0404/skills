@@ -38,7 +38,8 @@ def run(env: Mapping[str, str]) -> str:
     output: PreToolUseOutput = {
         "hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": REMINDER},
     }
-    return json.dumps(output, ensure_ascii=False)
+    # 標準出力の文字コードが UTF-8 でない環境(Windows の cp1252 など)でも書けるように、ASCII だけで出す。
+    return json.dumps(output)
 
 
 def main() -> Literal[0]:
