@@ -63,7 +63,7 @@ ignore = [
 
 [tool.ruff.lint.isort]
 # スクリプトとテストの共通部品は pythonpath に入れて import する。
-known-first-party = ["textlint_runner", "post_edit", "stop", "session_start", "lint", "protocol", "vendor_skill", "vendored_paths", "support"]
+known-first-party = ["textlint_runner", "post_edit", "stop", "session_start", "lint", "protocol", "vendor_skill", "vendored_paths", "support", "subagent_reminder"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -102,21 +102,21 @@ enable_error_code = [
   "unused-awaitable",
   "unused-ignore",
 ]
-mypy_path = ["plugins/ja-writing/skills/textlint/scripts", "tools", "tests"]
-files = ["plugins/ja-writing/skills/textlint/scripts", "tools", "tests"]
+mypy_path = ["plugins/ja-writing/skills/textlint/scripts", "plugins/productivity/scripts", "tools", "tests"]
+files = ["plugins/ja-writing/skills/textlint/scripts", "plugins/productivity/scripts", "tools", "tests"]
 explicit_package_bases = true
 
 [tool.basedpyright]
 pythonVersion = "3.9"
 typeCheckingMode = "all"
-include = ["plugins/ja-writing/skills/textlint/scripts", "tools", "tests"]
-extraPaths = ["plugins/ja-writing/skills/textlint/scripts", "tools", "tests"]
+include = ["plugins/ja-writing/skills/textlint/scripts", "plugins/productivity/scripts", "tools", "tests"]
+extraPaths = ["plugins/ja-writing/skills/textlint/scripts", "plugins/productivity/scripts", "tools", "tests"]
 reportImplicitStringConcatenation = false # ruff のフォーマッタと衝突する
 
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
-pythonpath = ["plugins/ja-writing/skills/textlint/scripts", "tools", "tests"]
+pythonpath = ["plugins/ja-writing/skills/textlint/scripts", "plugins/productivity/scripts", "tools", "tests"]
 addopts = [
   "--strict-config",
   "--strict-markers",
@@ -129,7 +129,7 @@ filterwarnings = ["error"]
 
 [tool.coverage.run]
 branch = true
-source = ["plugins/ja-writing/skills/textlint/scripts", "tools"]
+source = ["plugins/ja-writing/skills/textlint/scripts", "plugins/productivity/scripts", "tools"]
 
 [tool.coverage.report]
 fail_under = 100
