@@ -32,6 +32,14 @@ skipped と neutral は「通る」扱いなので、チェックの状態だけ
 - #186 の head `7f76197` では、CI の終わり（06:42:48）の 6 秒後に CodeRabbit のチェックが skipped（Review paused）で付いた。
 - #188 の head `d80d136` も skipped（Review paused）だった。
 
+## CodeRabbit の見分け方
+
+CodeRabbit のアカウントは、GraphQL では `coderabbitai`、REST では `coderabbitai[bot]` として返る（#186・#187・#188）。
+判定スクリプトは、名前がこの 2 つのどちらかと文字単位で一致し、GraphQL の `__typename` が `Bot` のアカウントだけを CodeRabbit とみなす。
+前方一致にすると、`coderabbitai-evil` のような別のアカウントがレビューを書いて判定を通せてしまう。
+check run も、アプリの slug が `coderabbitai` で名前が `CodeRabbit` のものだけを見る。
+`automerge-gate/all-passed` は、`github-actions` のアプリが出したものだけを使う。
+
 ## 自動の一時停止
 
 `reviews.auto_review.auto_pause_after_reviewed_commits` の既定値は 5 とされている。
@@ -104,7 +112,8 @@ CodeRabbit は、行に付いたコメントが直ったと見ると、本文の
 ## 本文の指摘に答えたかの追い方
 
 本文の指摘には、スレッドのような解決の状態が無い。
-CodeRabbit 以外のアカウントが書いたコメントに指摘の id が含まれていれば、その指摘に答えたとみなす。
+リポジトリに書き込めるアカウント（`authorAssociation` が OWNER、MEMBER、COLLABORATOR）のコメントに指摘の id があれば、その指摘に答えたとみなす。
+公開リポジトリでは誰でもコメントできるので、外部の人のコメントでは答えたことにしない。
 対象にするのは、PR のコメント、レビューの本文、スレッドの最初と最後のコメントだ。
 
 「後のレビューに同じ指摘が無ければ直った」とはみなさない。

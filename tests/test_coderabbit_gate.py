@@ -5,7 +5,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, ClassVar, cast
 
 import pytest
 
@@ -42,13 +42,24 @@ def pull(
     return {"state": state, "isDraft": draft, "headRefOid": head, "mergeable": mergeable, "mergeStateStatus": "CLEAN"}
 
 
-def review(db_id: int, body: str, commit: str = HEAD, author: str = "coderabbitai") -> dict[str, object]:
-    url = f"https://example.test/r/{db_id}"
-    return {"databaseId": db_id, "author": {"login": author}, "body": body, "url": url, "commit": {"oid": commit}}
+def comment(
+    db_id: int, body: str, author: str = "kanade0404", typename: str = "", association: str = ""
+) -> dict[str, object]:
+    # GraphQL の形。CodeRabbit の名前なら Bot、それ以外は User で、リポジトリの所有者として書いたものにする。
+    bot = author in gate.CODERABBIT_LOGINS
+    return {
+        "databaseId": db_id,
+        "author": {"login": author, "__typename": typename or ("Bot" if bot else "User")},
+        "authorAssociation": association or ("NONE" if bot else "OWNER"),
+        "body": body,
+        "url": f"https://example.test/c/{db_id}",
+    }
 
 
-def comment(db_id: int, body: str, author: str = "kanade0404") -> dict[str, object]:
-    return {"databaseId": db_id, "author": {"login": author}, "body": body, "url": f"https://example.test/c/{db_id}"}
+def review(
+    db_id: int, body: str, commit: str = HEAD, author: str = "coderabbitai", typename: str = ""
+) -> dict[str, object]:
+    return {**comment(db_id, body, author, typename), "commit": {"oid": commit}}
 
 
 def thread(  # ruff: ignore[too-many-arguments] - スレッドの形を組み立てるテストの部品
@@ -307,6 +318,52 @@ class TestCodeRabbitState:
         )
         reviews = items(section(evaluate(github), "coderabbit"), "reviews")
         assert reviews[0]["actionable_posted"] == 2
+
+
+class TestIdentity:
+    STATUS: ClassVar[str] = "<!-- auto-generated comment by CodeRabbit for review status -->"
+
+    @pytest.mark.parametrize(
+        ("author", "typename"),
+        [
+            ("coderabbitai-evil", "Bot"),
+            ("CodeRabbitAI", "Bot"),
+            ("coderabbitai", "User"),
+            ("coderabbitai[bot]", "User"),
+        ],
+    )
+    def test_lookalike_review_is_not_coderabbit(self, author: str, typename: str) -> None:
+        github = FakeGitHub(reviews=[review(1, self.STATUS, author=author, typename=typename)], check_runs=GREEN_CI)
+        result = evaluate(github)
+        assert result["verdict"] == gate.WAITING
+        assert section(result, "coderabbit")["state"] == "not_started"
+
+    def test_lookalike_summary_is_not_evidence(self) -> None:
+        spoof = comment(1, real("summary_reviewed"), "coderabbitai-evil", "Bot")
+        assert (
+            section(evaluate(FakeGitHub(comments=[spoof], check_runs=GREEN_CI)), "coderabbit")["reviewed_head"] is False
+        )
+
+    def test_rest_style_bot_login_is_coderabbit(self) -> None:
+        github = FakeGitHub(reviews=[review(1, self.STATUS, author="coderabbitai[bot]")], check_runs=GREEN_CI)
+        assert evaluate(github)["verdict"] == gate.READY
+
+    def test_lookalike_check_runs_are_plain_ci(self) -> None:
+        runs = [
+            check("CodeRabbit", app="coderabbitai-evil", title="Finished", run_id=4),
+            check(gate.GATE_CHECK, app="other-app", run_id=5),
+        ]
+        result = evaluate(FakeGitHub(check_runs=runs))
+        assert section(result, "coderabbit")["check"] is None
+        assert section(result, "ci")["gate"] is None
+        assert section(result, "ci")["state"] == "success"
+
+    def test_ack_from_outsider_does_not_count(self) -> None:
+        reviews = [HEAD_REVIEW, review(2, real("review_outside_diff"), real("review_outside_diff_commit"))]
+        drive_by = comment(1, "cr-comment:v1:f9fe793faafbe7cc296b213d", "someone", association="NONE")
+        result = evaluate(FakeGitHub(reviews=reviews, comments=[drive_by], check_runs=GREEN_CI))
+        assert result["addressed_body_findings"] == []
+        assert result["verdict"] == gate.ACTION_NEEDED
 
 
 class TestThreads:

@@ -33,7 +33,16 @@ EXIT_CODES = {READY: 0, WAITING: 3, ACTION_NEEDED: 4, BLOCKED: 5, CLOSED: 6}
 EXIT_ERROR = 1
 
 GATE_CHECK = "automerge-gate/all-passed"
-CODERABBIT = "coderabbitai"
+GATE_APP = "github-actions"
+# CodeRabbit は完全に一致する名前だけで見分ける。前方一致だと coderabbitai-evil のような別のアカウントを通してしまう。
+# GraphQL は coderabbitai、REST は coderabbitai[bot] を返す。どちらも Bot のアカウントに限る。
+CODERABBIT_LOGINS = frozenset({"coderabbitai", "coderabbitai[bot]"})
+CODERABBIT_APP = "coderabbitai"
+CODERABBIT_CHECK = "CodeRabbit"
+# 本文の指摘に答えたとみなすのは、リポジトリに書き込めるアカウントのコメントだけにする。
+TRUSTED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+CODERABBIT_RUN = (CODERABBIT_APP, CODERABBIT_CHECK)
+GATE_RUN = (GATE_APP, GATE_CHECK)
 GREEN = frozenset({"success", "skipped", "neutral"})
 MAX_GH_FAILURES = 3
 SHORT_SHA = 7
@@ -90,8 +99,8 @@ query($owner: String!, $name: String!, $number: Int!, $after: String) {
         pageInfo { hasNextPage endCursor }
         nodes {
           id isResolved isOutdated path line originalLine
-          first: comments(first: 1) { nodes { databaseId author { login } body url } }
-          last: comments(last: 1) { nodes { databaseId author { login } body } }
+          first: comments(first: 1) { nodes { databaseId author { login __typename } authorAssociation body url } }
+          last: comments(last: 1) { nodes { databaseId author { login __typename } authorAssociation body } }
         }
       }
     }
@@ -104,7 +113,7 @@ query($owner: String!, $name: String!, $number: Int!, $after: String) {
     pullRequest(number: $number) {
       page: reviews(first: 100, after: $after) {
         pageInfo { hasNextPage endCursor }
-        nodes { databaseId author { login } body url commit { oid } }
+        nodes { databaseId author { login __typename } authorAssociation body url commit { oid } }
       }
     }
   }
@@ -116,7 +125,7 @@ query($owner: String!, $name: String!, $number: Int!, $after: String) {
     pullRequest(number: $number) {
       page: comments(first: 100, after: $after) {
         pageInfo { hasNextPage endCursor }
-        nodes { databaseId author { login } body url }
+        nodes { databaseId author { login __typename } authorAssociation body url }
       }
     }
   }
@@ -161,11 +170,16 @@ def dig(value: object, *keys: str) -> object:
 
 
 def login(node: object) -> str:
-    return text(dig(node, "author", "login")) or text(dig(node, "user", "login"))
+    return text(dig(node, "author", "login"))
 
 
-def is_coderabbit(name: str) -> bool:
-    return name.lower().startswith(CODERABBIT)
+def is_coderabbit(node: object) -> bool:
+    # GraphQL の author が CodeRabbit の名前と完全に一致し、しかも Bot であるときだけ CodeRabbit とみなす。
+    return login(node) in CODERABBIT_LOGINS and text(dig(node, "author", "__typename")) == "Bot"
+
+
+def is_trusted(node: object) -> bool:
+    return not is_coderabbit(node) and text(as_dict(node).get("authorAssociation")) in TRUSTED_ASSOCIATIONS
 
 
 def excerpt(body: str) -> str:
@@ -341,8 +355,8 @@ def run_summary(run: dict[str, object]) -> dict[str, object]:
 
 
 def evaluate_ci(snapshot: Snapshot, findings: Findings, *, allow_no_ci: bool) -> dict[str, object]:
-    runs = [run for (app, _), run in latest_runs(snapshot.check_runs).items() if not is_coderabbit(app)]
-    gate = next((run for run in runs if text(run.get("name")) == GATE_CHECK), None)
+    runs = [run for (app, name), run in latest_runs(snapshot.check_runs).items() if (app, name) != CODERABBIT_RUN]
+    gate = next((run for (app, name), run in latest_runs(snapshot.check_runs).items() if (app, name) == GATE_RUN), None)
     # automerge-gate があれば、それが ignore-checks を当てた集約の結果なので、それだけを見る。
     considered = [gate] if gate is not None else runs
     pending = [run_summary(run) for run in considered if text(run.get("status")) != "completed"]
@@ -387,12 +401,12 @@ def coderabbit_reviews(snapshot: Snapshot) -> list[dict[str, object]]:
     return [
         as_dict(review)
         for review in snapshot.reviews
-        if is_coderabbit(login(review)) and is_status_review(text(as_dict(review).get("body")))
+        if is_coderabbit(review) and is_status_review(text(as_dict(review).get("body")))
     ]
 
 
 def coderabbit_comments(snapshot: Snapshot) -> list[str]:
-    return [text(as_dict(comment).get("body")) for comment in snapshot.comments if is_coderabbit(login(comment))]
+    return [text(as_dict(comment).get("body")) for comment in snapshot.comments if is_coderabbit(comment)]
 
 
 def same_commit(short: str, head: str) -> bool:
@@ -493,8 +507,7 @@ def not_reviewed_state(  # ruff: ignore[too-many-return-statements] - CodeRabbit
 
 def evaluate_coderabbit(snapshot: Snapshot, findings: Findings) -> dict[str, object]:
     reviews = coderabbit_reviews(snapshot)
-    runs = [run for (app, _), run in latest_runs(snapshot.check_runs).items() if is_coderabbit(app)]
-    run = runs[0] if runs else None
+    run = latest_runs(snapshot.check_runs).get(CODERABBIT_RUN)
     evidence = head_evidence(snapshot, reviews)
     incomplete = incomplete_publications(reviews)
     if run and text(run.get("status")) != "completed":
@@ -618,19 +631,13 @@ def body_findings_of(review: dict[str, object], inline_ids: set[str]) -> list[di
 
 
 def acknowledgements(snapshot: Snapshot) -> str:
-    # CodeRabbit 以外が書いた本文をつなげる。本文の指摘の id を含めば、その指摘に答えたとみなす。
-    parts = [
-        text(as_dict(node).get("body"))
-        for node in [*snapshot.comments, *snapshot.reviews]
-        if not is_coderabbit(login(node))
-    ]
+    # リポジトリに書き込める人が書いた本文をつなげる。本文の指摘の id を含めば、その指摘に答えたとみなす。
+    parts = [text(as_dict(node).get("body")) for node in [*snapshot.comments, *snapshot.reviews] if is_trusted(node)]
     for item in snapshot.threads:
         thread = as_dict(item)
         for key in ("first", "last"):
             parts += [
-                text(as_dict(node).get("body"))
-                for node in as_list(dig(thread, key, "nodes"))
-                if not is_coderabbit(login(node))
+                text(as_dict(node).get("body")) for node in as_list(dig(thread, key, "nodes")) if is_trusted(node)
             ]
     return "\n".join(parts)
 
