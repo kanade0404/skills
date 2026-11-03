@@ -451,7 +451,6 @@ def incomplete_publications(reviews: list[dict[str, object]]) -> list[str]:
 
 
 def head_evidence(snapshot: Snapshot, reviews: list[dict[str, object]], sha: str | None = None) -> list[str]:
-    # sha を渡すと、head の代わりにそのコミットをレビューしたかの根拠を返す。review_learning.py が使う。
     head = sha or snapshot.head
     evidence = [
         f"head を対象にした CodeRabbit のレビュー {integer(review.get('databaseId'))}"

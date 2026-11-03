@@ -5,9 +5,7 @@ reviews:
     - "!plugins/ja-writing/skills/yomiyasu/**"
     - "!plugins/productivity/skills/handoff/**"
     # END tools/vendored.json
-    # 指摘の記録はデータで、review_learning.py が追記する。記録だけの push でレビューの往復を起こさない。
     - "!harness/review-learnings.jsonl"
-  # レビューの指摘から昇格させた規則。harness/review-rules.json を正本にして、印の間は手で直さない。
   # BEGIN harness/review-rules.json (review_learning.py sync が書く)
   path_instructions:
     - path: "plugins/**/scripts/*.py"
@@ -16,7 +14,6 @@ reviews:
     custom_checks: []
   # END harness/review-rules.json
   tools:
-    # Semgrep は CI で動かしているので、CodeRabbit では ast-grep の規則を足す。同じ規則を CI の ast-grep でも動かす。
     ast-grep:
       enabled: true
       essential_rules: true

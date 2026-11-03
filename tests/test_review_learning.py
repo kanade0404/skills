@@ -18,14 +18,12 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).parent / "fixtures" / "review_learning"
 TODAY = "2026-11-03"
 TARGET = gate.Target(owner="kanade0404", name="skills", number=190)
-# #190 の 4d7fe4c(CodeRabbit がレビューしていない)と、CodeRabbit がレビューした 050c3e7。
 UNREVIEWED = "4d7fe4c1489eee2067988e2289eb16ff721a7cb0"
 REVIEWED = "050c3e7c25774f7baa17bbd99275bb2940bd95c7"
 GATE_FILE = "plugins/productivity/scripts/coderabbit_gate.py"
 
 
 def real(name: str) -> dict[str, object]:
-    # kanade0404/skills の #190・#191 を review_learning.fetch で取った実データ(URL の scope は伏せた)。
     return gate.as_dict(rl.load_json((FIXTURES / f"{name}.json").read_text(encoding="utf-8")))
 
 
@@ -42,7 +40,6 @@ def snapshot(name: str) -> gate.Snapshot:
 
 
 class Replay:
-    # 実データを GraphQL の応答として返す、偽の gh。
     def __init__(self, data: dict[str, object]) -> None:
         self.data: dict[str, object] = data
 
@@ -134,7 +131,6 @@ CHECK_RULE = rule(
 
 
 def write_repo(root: Path, rules: Sequence[dict[str, object]] = (), records: Sequence[rl.Record] = ()) -> Path:
-    # 規則、記録、.coderabbit.yaml、表、ast-grep の規則を持つ小さなリポジトリを作る。
     (root / "harness" / "ast-grep" / "review-rules").mkdir(parents=True)
     (root / "plugins" / "p" / "scripts").mkdir(parents=True)
     _ = (root / "plugins" / "p" / "scripts" / "a.py").write_text("x = 1\n", encoding="utf-8")
@@ -153,8 +149,6 @@ def output(capsys: pytest.CaptureFixture[str]) -> dict[str, object]:
 
 
 def test_repository_is_in_sync() -> None:
-    # .coderabbit.yaml と harness/review-rules.md の印の間が harness/review-rules.json と一致する。
-    # 規則の証拠の id が記録にあることも確かめる。
     store = rl.load_store(ROOT / rl.STORE)
     assert rl.sync(ROOT, rl.load_catalog(ROOT / rl.RULES), store, write=False) == []
 
@@ -170,7 +164,6 @@ class TestStore:
         store: dict[str, rl.Record] = {}
         first = record()
         assert rl.append(path, store, [first]) == [first]
-        # 中身が同じなら、日付が違っても行を増やさない。
         assert rl.append(path, store, [replace(first, recorded_at="2027-01-01")]) == []
         second = replace(first, cls="other")
         assert rl.append(path, store, [second]) == [second]
@@ -212,7 +205,6 @@ class TestOutcome:
     @pytest.mark.parametrize(
         ("texts", "expected"),
         [
-            # #186 で見送った返信と、#188・#191 の返信の書き方。
             (["この指摘は取り込まない。拒否の規則は文字列の一致なので"], ("declined", None)),
             (
                 ["対応済み。9d454a3 で決定 1 の要件ごとの受け入れテストを完了条件に追加している。"],
@@ -257,7 +249,6 @@ class TestCodeRabbitRecords:
 
         coderabbit = {**node("coderabbitai", "**Fix it.**", "NONE"), "databaseId": 5}
         threads: list[object] = [
-            # id の無いスレッドは comment の id で追う。見送りは書き込める人の返信からだけ読む。
             {
                 "path": "a.py",
                 "line": None,
@@ -265,13 +256,11 @@ class TestCodeRabbitRecords:
                 "first": {"nodes": [coderabbit]},
                 "all": {"nodes": [coderabbit, node("evil", "1234567 で直した", "NONE"), node("kanade0404", "見送る")]},
             },
-            # CodeRabbit 以外が始めたスレッドは取り込まない。
             {"path": "a.py", "first": {"nodes": [node("evil", "cr-comment:v1:abcdef12")]}, "all": {"nodes": []}},
         ]
         snap = replace(snapshot("pr190"), threads=threads)
         records = rl.thread_records(snap, context())
         assert [(r.id, r.line, r.outcome) for r in records] == [("coderabbit:comment-5", 3, "declined")]
-        # CodeRabbit 以外のスレッドに書いた id では、本文の指摘を行の指摘に見せかけられない。
         assert len(rl.body_records(snap, context())) == len(rl.body_records(snapshot("pr190"), context()))
 
     def test_duplicate_body_finding(self) -> None:
@@ -303,7 +292,6 @@ class TestMiss:
         assert rl.missed(local(cls="other"), coderabbit) is True
         assert rl.missed(local(), [record(pr=1)]) is True
         assert rl.missed(local(), [local()]) is True
-        # head をレビューしていない、または種類が無いなら、見逃しかは分からない。
         assert rl.missed(local(coderabbit_reviewed_head=False), []) is None
         assert rl.missed(local(cls=None), []) is None
 
@@ -324,7 +312,6 @@ class TestMiss:
 
 class TestLocal:
     def test_real_security_guidance_finding_of_190(self) -> None:
-        # security-guidance が 4d7fe4c で見つけた前方一致。CodeRabbit は 4d7fe4c をレビューしていないので見逃しは null。
         records = rl.local_records(local_input(), snapshot("pr190"), context())
         assert len(records) == 1
         found = records[0]
@@ -386,7 +373,6 @@ class TestReport:
         assert result["by_source"] == {"coderabbit": 5, "local:security-guidance": 1}
 
     def test_seeded_store(self) -> None:
-        # #186〜#191 から取り込んだ記録。2 件以上の種類と、昇格させた規則を確かめる。
         result = rl.report(rl.load_store(ROOT / rl.STORE), rl.load_catalog(ROOT / rl.RULES))
         assert "unverified-comment-author" not in gate.as_list(result["promote"])
         assert "adr-unspecified-contract" in gate.as_list(result["promote"])
@@ -485,7 +471,6 @@ class TestRun:
         assert result["found"] == 4
         assert len(gate.as_list(result["appended"])) == 4
         assert result["coderabbit_reviewed_head"] is True
-        # 同じ PR をもう一度取り込んでも、行は増えない。
         assert (
             rl.run(
                 ["--root", str(root), "capture-coderabbit", "kanade0404/skills", "190"],
@@ -498,7 +483,6 @@ class TestRun:
 
     def test_capture_local_and_amend(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         root = write_repo(tmp_path)
-        # このリポジトリの種類の定義を使い、CodeRabbit の指摘に種類を付ける。
         classes = rl.load_json((ROOT / rl.RULES).read_text(encoding="utf-8"))
         _ = (root / rl.RULES).write_text(json.dumps({**gate.as_dict(classes), "rules": []}, ensure_ascii=False))
         source = tmp_path / "findings.json"
@@ -513,10 +497,8 @@ class TestRun:
         assert rl.run(args, Replay(real("pr190")), lambda: TODAY) == 0
         result = output(capsys)
         local_id = next(i for i in map(gate.text, gate.as_list(result["appended"])) if i.startswith("local:"))
-        # CodeRabbit は 050c3e7 をレビューし、649 行目に同じ種類の指摘を出していたので、見逃しではない。
         assert result["missed_by_coderabbit"] == []
         assert rl.load_store(root / rl.STORE)[local_id].missed_by_coderabbit is False
-        # 種類を直すと見逃しになり、判定し直した行が追記される。
         amendments = tmp_path / "amend.json"
         _ = amendments.write_text(json.dumps({local_id: {"class": "other", "outcome": "declined"}}))
         assert (

@@ -1,21 +1,3 @@
-# レビューの指摘を追記だけの記録に残し、繰り返す種類を強制する仕組みへ昇格させるための集計をする。
-#
-# 使い方:
-#   review_learning.py capture-coderabbit <owner/repo> <pr>
-#   review_learning.py capture-local <owner/repo> <pr> --input findings.json
-#   review_learning.py amend --input amendments.json
-#   review_learning.py report
-#   review_learning.py stale
-#   review_learning.py sync [--check]
-#
-# 記録は harness/review-learnings.jsonl に 1 行 1 件で追記する。同じ id の行が複数あれば、最後の行を使う。
-# 昇格した規則と種類の定義は harness/review-rules.json にある。
-# sync がそれを .coderabbit.yaml と harness/review-rules.md に写す。
-# コメントの本文は信頼しないデータとして扱う。正規表現で読むだけで、実行も、コマンドへの埋め込みもしない。
-# 記録の形、ローカルの指摘の入力の形、見逃しの判定は
-# plugins/productivity/skills/review-learning/references/ にまとめている。
-#
-
 from __future__ import annotations
 
 import argparse
@@ -51,13 +33,9 @@ OUTCOMES = ("fixed", "declined", "already-fixed")
 LEVELS = ("architecture", "types", "ast-grep", "test", "path_instructions", "custom_check", "docs")
 CODERABBIT = "coderabbit"
 HUMAN = "human"
-# correct の「2 回起きたら種類として扱う」に合わせる。ADR の決定 5 の 3 回(提案)より早めに昇格させる。
 PROMOTE_AT = 2
-# ローカルの指摘と CodeRabbit の指摘を同じ箇所とみなす行の差。コミットをまたぐと行がずれるので幅を持たせる。
 LINE_WINDOW = 10
-# Tricorder は「役に立たない」が 10% を超えた解析を止める(Sadowski 2018)。見送りの割合で同じ線を引く。
 NOISE_LIMIT = 0.10
-# 指示が増えるほど守られにくくなるので、CodeRabbit に渡す指示の数と長さに、CodeRabbit の上限より低い上限を置く。
 MAX_PATH_INSTRUCTIONS = 5
 MAX_PATH_INSTRUCTION_CHARS = 1500
 MAX_CUSTOM_CHECKS = 3
@@ -68,7 +46,6 @@ TOOL_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
 ADDRESSED_RE = re.compile(r"Addressed in commits? ([0-9a-f]{7,40})")
-# 返信の中のコミットの SHA。cr-comment の id を消してから探す。英単語を拾わないよう、数字を 1 つ以上含むものに限る。
 REPLY_SHA_RE = re.compile(r"(?<![0-9A-Za-z])(?=[0-9a-f]*[0-9])[0-9a-f]{7,40}(?![0-9A-Za-z])")
 DECLINE_RE = re.compile(r"取り込まない|見送|対応しない|won'?t fix|declin", re.IGNORECASE)
 ALREADY_RE = re.compile(r"対応済み|既に|すでに|already", re.IGNORECASE)
@@ -107,9 +84,6 @@ class LearningError(RuntimeError):
     pass
 
 
-# 記録
-
-
 def load_json(raw: str) -> object:
     return cast("object", json.loads(raw))
 
@@ -128,7 +102,6 @@ class Record:
     cls: str | None = None
     outcome: str | None = None
     fix_commit: str | None = None
-    # ローカルの指摘だけが持つ。CodeRabbit が head_sha をレビューしたか(None は分からない)と、見逃したか。
     coderabbit_reviewed_head: bool | None = None
     missed_by_coderabbit: bool | None = None
     note: str = ""
@@ -175,7 +148,6 @@ def record_from(data: dict[str, object]) -> Record:
 
 
 def load_store(path: Path) -> dict[str, Record]:
-    # 追記だけの記録を読み、id ごとに最後の行を残す。
     records: dict[str, Record] = {}
     if not path.exists():
         return records
@@ -192,7 +164,6 @@ def load_store(path: Path) -> dict[str, Record]:
 
 
 def append(path: Path, store: dict[str, Record], records: Iterable[Record]) -> list[Record]:
-    # 新しい id か、中身が変わったものだけを追記する。同じ内容を何度取り込んでも行は増えない。
     changed = [record for record in records if record.id not in store or not store[record.id].same_as(record)]
     if changed:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -201,9 +172,6 @@ def append(path: Path, store: dict[str, Record], records: Iterable[Record]) -> l
                 _ = handle.write(json.dumps(record.to_json(), ensure_ascii=False, sort_keys=True) + "\n")
                 store[record.id] = record
     return changed
-
-
-# 種類と規則の定義
 
 
 @dataclass(frozen=True)
@@ -264,11 +232,7 @@ def load_catalog(path: Path) -> Catalog:
     return catalog
 
 
-# CodeRabbit の指摘の取り込み
-
-
 def fetch(runner: Runner, target: gate.Target) -> gate.Snapshot:
-    # 判定スクリプトの問い合わせを使う。スレッドだけは、解決済みも含めて返信をすべて読むために別に問い合わせる。
     return gate.Snapshot(
         pull=gate.graphql(runner, gate.PR_QUERY, target),
         threads=gate.paginate(runner, THREADS_QUERY, target),
@@ -280,7 +244,6 @@ def fetch(runner: Runner, target: gate.Target) -> gate.Snapshot:
 
 
 def outcome_of(texts: Iterable[str]) -> tuple[str | None, str | None]:
-    # 書き込める人の返信から、見送り、対応済み、修正の順に決める。決まらなければ None を返す。
     joined = "\n".join(re.sub(rf"{MARKER_PREFIX}[0-9a-f]+", " ", body) for body in texts)
     sha = next(iter(REPLY_SHA_RE.findall(joined)), None)
     if DECLINE_RE.search(joined):
@@ -297,7 +260,6 @@ def trusted_bodies(nodes: Iterable[object]) -> list[str]:
 
 
 def segment_for(body: str, identifier: str) -> str:
-    # 1 つのコメントで複数の指摘に答えることがあるので、その id から次の id までを返す。
     start = body.find(MARKER_PREFIX + identifier)
     if start < 0:
         return ""
@@ -382,7 +344,6 @@ def body_records(snapshot: gate.Snapshot, context: Context) -> list[Record]:
 
 
 def keep_class(new: Record, store: dict[str, Record]) -> Record:
-    # 取り込み直しで、amend で付けた種類と結果を消さない。一度決まった結果は、amend でだけ変える。
     old = store.get(new.id)
     if old is None:
         return new
@@ -391,11 +352,7 @@ def keep_class(new: Record, store: dict[str, Record]) -> Record:
     )
 
 
-# ローカルの指摘の取り込みと見逃しの判定
-
-
 def near(left: int | None, right: int | None) -> bool:
-    # 行が分からないときは、同じ箇所とみなす。見逃しと言い切らない側に倒す。
     return left is None or right is None or abs(left - right) <= LINE_WINDOW
 
 
@@ -420,7 +377,6 @@ def require(condition: bool, message: str) -> None:  # ruff: ignore[boolean-type
 
 
 def parse_local(raw: object) -> tuple[str, list[dict[str, object]]]:
-    # 入力の形は references/local-findings.md に書いた。合わないものは取り込まずに止める。
     data = gate.as_dict(raw)
     require(gate.integer(data.get("version")) == 1, "version は 1 にする")
     tool = gate.text(data.get("tool"))
@@ -476,7 +432,6 @@ def local_records(raw: object, snapshot: gate.Snapshot, context: Context) -> lis
 
 
 def refresh_misses(store: dict[str, Record], today: str) -> list[Record]:
-    # 種類が付いたり CodeRabbit の指摘が増えたりしたら、ローカルの指摘の見逃しを判定し直す。
     values = list(store.values())
     updated: list[Record] = []
     for record in values:
@@ -486,9 +441,6 @@ def refresh_misses(store: dict[str, Record], today: str) -> list[Record]:
         if verdict != record.missed_by_coderabbit:
             updated.append(replace(record, missed_by_coderabbit=verdict, recorded_at=today))
     return updated
-
-
-# 集計
 
 
 def class_rows(store: dict[str, Record], catalog: Catalog) -> list[dict[str, object]]:
@@ -540,7 +492,6 @@ def report(store: dict[str, Record], catalog: Catalog) -> dict[str, object]:
 
 
 def repo_files(root: Path) -> list[str]:
-    # .git と依存のディレクトリには入らない。node_modules は大きく、規則の対象でもない。
     files: list[str] = []
     for directory, names, entries in os.walk(root):
         names[:] = [name for name in names if name not in SKIPPED_DIRS]
@@ -550,7 +501,6 @@ def repo_files(root: Path) -> list[str]:
 
 
 def matches_scope(scope: str, files: Iterable[str]) -> bool:
-    # fnmatch の * は / もまたぐので、**/ は付けても付けなくても同じに読む。
     patterns = {scope, scope.removeprefix("**/")}
     return any(fnmatch.fnmatchcase(name, pattern) for name in files for pattern in patterns)
 
@@ -575,11 +525,7 @@ def stale(root: Path, catalog: Catalog, store: dict[str, Record]) -> dict[str, o
     return {"stale": items, "rules": len(catalog.rules)}
 
 
-# .coderabbit.yaml と表への書き出し
-
-
 def quoted(value: str) -> str:
-    # JSON の文字列は YAML の二重引用符の文字列としても読める。
     return json.dumps(value, ensure_ascii=False)
 
 
@@ -676,9 +622,6 @@ def sync(root: Path, catalog: Catalog, store: dict[str, Record], *, write: bool)
     return stale_files
 
 
-# 実行
-
-
 def today() -> str:
     return dt.datetime.now(dt.timezone.utc).date().isoformat()
 
@@ -722,7 +665,6 @@ def capture(namespace: argparse.Namespace, env: Env, *, local: bool) -> dict[str
 
 
 def amended(record: Record, value: object, stamp: str) -> Record:
-    # 値が文字列なら種類だけを、オブジェクトなら class、outcome、fix_commit のうち書いたものを直す。
     fields = {"class": value} if isinstance(value, str) else gate.as_dict(value)
     unknown = sorted(set(fields) - {"class", "outcome", "fix_commit"})
     require(not unknown, f"{record.id} に直せない項目がある: {', '.join(unknown)}")
