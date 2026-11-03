@@ -274,22 +274,6 @@ class TestCodeRabbitState:
         assert section(result, "coderabbit")["state"] == "publishing"
         assert result["verdict"] == gate.WAITING
 
-    def test_partial_publication_waits(self) -> None:
-        first = review(1, "<!-- coderabbit-review-publication v1 publication=p1 attempt=a batch=1/2 -->")
-        result = evaluate(FakeGitHub(reviews=[first], check_runs=[*GREEN_CI, coderabbit_check()]))
-        assert result["verdict"] == gate.WAITING
-        assert "p1" in reasons(result)
-
-    def test_partial_publication_on_an_old_commit_does_not_block(self) -> None:
-        old = review(1, "<!-- coderabbit-review-publication v1 publication=p0 attempt=a batch=1/2 -->", OTHER)
-        github = FakeGitHub(reviews=[old, HEAD_REVIEW], check_runs=[*GREEN_CI, coderabbit_check()])
-        assert evaluate(github)["verdict"] == gate.READY
-
-    def test_complete_publication_is_reviewed(self) -> None:
-        bodies = [f"<!-- coderabbit-review-publication v1 publication=p1 attempt=a batch={i}/2 -->" for i in (1, 2)]
-        github = FakeGitHub(reviews=[review(1, bodies[0]), review(2, bodies[1])], check_runs=GREEN_CI)
-        assert evaluate(github)["verdict"] == gate.READY
-
     def test_draft_is_blocked(self) -> None:
         github = FakeGitHub(
             pull_request=pull(draft=True),
@@ -324,6 +308,24 @@ class TestCodeRabbitState:
         )
         reviews = items(section(evaluate(github), "coderabbit"), "reviews")
         assert reviews[0]["actionable_posted"] == 2
+
+
+class TestPublication:
+    def test_partial_publication_waits(self) -> None:
+        first = review(1, "<!-- coderabbit-review-publication v1 publication=p1 attempt=a batch=1/2 -->")
+        result = evaluate(FakeGitHub(reviews=[first], check_runs=[*GREEN_CI, coderabbit_check()]))
+        assert result["verdict"] == gate.WAITING
+        assert "p1" in reasons(result)
+
+    def test_partial_publication_on_an_old_commit_does_not_block(self) -> None:
+        old = review(1, "<!-- coderabbit-review-publication v1 publication=p0 attempt=a batch=1/2 -->", OTHER)
+        github = FakeGitHub(reviews=[old, HEAD_REVIEW], check_runs=[*GREEN_CI, coderabbit_check()])
+        assert evaluate(github)["verdict"] == gate.READY
+
+    def test_complete_publication_is_reviewed(self) -> None:
+        bodies = [f"<!-- coderabbit-review-publication v1 publication=p1 attempt=a batch={i}/2 -->" for i in (1, 2)]
+        github = FakeGitHub(reviews=[review(1, bodies[0]), review(2, bodies[1])], check_runs=GREEN_CI)
+        assert evaluate(github)["verdict"] == gate.READY
 
 
 class TestIdentity:
