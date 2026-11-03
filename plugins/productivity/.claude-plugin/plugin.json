@@ -2,11 +2,11 @@
   "name": "productivity",
   "displayName": "productivity",
   "version": "0.1.0",
-  "description": "会話の引き継ぎやサブエージェントの使いどころなど、作業を進めるためのスキル",
+  "description": "会話の引き継ぎ、サブエージェントの使いどころ、CodeRabbit のレビュー対応など、作業を進めるためのスキル",
   "author": { "name": "kanade0404" },
   "repository": "https://github.com/kanade0404/skills",
   "license": "MIT",
-  "keywords": ["handoff", "productivity", "subagent"],
+  "keywords": ["handoff", "productivity", "subagent", "coderabbit", "code-review"],
   "userConfig": {
     "subagent_reminder": {
       "type": "boolean",

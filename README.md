@@ -77,6 +77,7 @@ Claude Code と Codex では、次のフックが動く。括弧の中は Claude
 
 - `handoff`: 今の会話を、次のエージェントが引き継ぐための文書にまとめる（[mattpocock/skills](https://github.com/mattpocock/skills/tree/main/skills/productivity/handoff)の写し）。Claude Code では `/productivity:handoff [次のセッションでやること]` で呼ぶ
 - `subagent-judgment`: サブエージェントに任せるかを判断する条件と、任せるときの指示の書き方を定める。Anthropic の記事「[Building agents: When to fold subagents into your main agent loop](https://claude.com/resources/articles/building-agents-when-to-fold-subagents-into-your-main-agent-loop)」の要点に、このリポジトリの例外を加えた
+- `coderabbit-review-gate`: PR に push したあと、READY になるまで CodeRabbit の指摘に対応する。判定は `scripts/coderabbit_gate.py` が受け持つ。CodeRabbit のレビューが head に届いたか、未解決のスレッドとレビュー本文にだけある指摘が残っていないか、CI が通ったかを見る。判定スクリプトは `gh` と Python 3.9 以上で動く
 
 入れ方は ja-writing と同じで、プラグイン名を `productivity` にする。
 
@@ -120,3 +121,5 @@ CI と同じ検査は次のとおり。
 | 全体 | `semgrep scan ...`（引数は `.github/workflows/ci.yml`） | semgrep の python・security-audit・secrets・github-actions・typescript |
 
 ruff と oxlint で外したルールは、それぞれ `pyproject.toml` と `.oxlintrc.json` に理由を書いている。上流から写したスキルは手を加えないので検査しない。
+
+PR のチェックは、`.github/workflows/automerge-gate.yml` の[pkgdeps/automerge-gate](https://github.com/pkgdeps/automerge-gate)で 1 つのチェック `automerge-gate/all-passed` にまとめる。リポジトリが公開でフォークからの PR を受けるので、public モードで動かす。CodeRabbit のチェックはレビューしなくても skipped や neutral で通るので集約から除き、レビューの確認は productivity の `coderabbit-review-gate` で行う。コメントで動く `claude.yml` もコミットの検査ではないので除いている。
