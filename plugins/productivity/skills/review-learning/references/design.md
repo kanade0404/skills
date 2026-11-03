@@ -122,7 +122,9 @@ CodeRabbit の指摘の結果は、次の順で決める。
 
 CodeRabbit の文書は、ast-grep のパッケージについて `rules` と `utils` を予約された名前としている。
 取り違えを避けるため、規則は `harness/ast-grep/review-rules/` に置いた。
-CodeRabbit は v0.50.0 の ast-grep を動かすので、CI でも `pyproject.toml` で同じ版に固定した。
+CI の ast-grep は、CodeRabbit が動かす版に `pyproject.toml` で固定する。
+文書は v0.50.0 と書くが、#190 のレビューの実行情報には `ast-grep (0.51.1)` とあったので、実行情報の版に合わせた。
+CodeRabbit の版が変わったら、手で上げる。
 CI は Semgrep も動かすが、CodeRabbit では Semgrep を動かさないので、両方で同じに効くのは ast-grep の規則になる。
 
 ## CodeRabbit が読む指示ファイル

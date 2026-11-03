@@ -120,7 +120,7 @@ CI と同じ検査は次のとおり。
 | Python | `uv run pytest` と `uv run --python 3.9 pytest` | 警告をエラーにし、分岐カバレッジ 100% を求める |
 | TypeScript | `bun --bun run --cwd plugins/ja-writing/skills/textlint check` | tsc（strict と追加フラグ）、oxfmt、oxlint（nursery を含む全カテゴリ、型を使うルールを含む） |
 | 全体 | `semgrep scan ...`（引数は `.github/workflows/ci.yml`） | semgrep の python・security-audit・secrets・github-actions・typescript |
-| 全体 | `uv run ast-grep test --skip-snapshot-tests` と `uv run ast-grep scan ...`（引数は `.github/workflows/ci.yml`） | レビューの指摘から昇格させた `harness/ast-grep/review-rules/` の規則。CodeRabbit と同じ v0.50.0 |
+| 全体 | `uv run ast-grep test --skip-snapshot-tests` と `uv run ast-grep scan ...`（引数は `.github/workflows/ci.yml`） | レビューの指摘から昇格させた `harness/ast-grep/review-rules/` の規則 |
 
 ruff と oxlint で外したルールは、それぞれ `pyproject.toml` と `.oxlintrc.json` に理由を書いている。上流から写したスキルは手を加えないので検査しない。
 

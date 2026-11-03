@@ -8,8 +8,7 @@ dependencies = []
 
 [dependency-groups]
 dev = [
-  # CodeRabbit が動かす版(docs.coderabbit.ai/tools/ast-grep の v0.50.0)に合わせて固定する。
-  "ast-grep-cli==0.50.0",
+  "ast-grep-cli==0.51.1",
   "basedpyright",
   "mypy",
   "pydantic",

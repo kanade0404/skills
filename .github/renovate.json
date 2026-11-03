@@ -48,7 +48,7 @@
       "groupSlug": "python-runtime"
     },
     {
-      "description": "Pin ast-grep-cli to the version CodeRabbit runs (docs.coderabbit.ai/tools/ast-grep), so CI and CodeRabbit apply the review rules the same way. Bump it by hand when CodeRabbit's version changes.",
+      "description": "Pin ast-grep-cli to the version CodeRabbit runs (the ast-grep version in CodeRabbit's review run info), so CI and CodeRabbit apply the review rules the same way. Bump it by hand when CodeRabbit's version changes.",
       "matchPackageNames": [
         "ast-grep-cli"
       ],
