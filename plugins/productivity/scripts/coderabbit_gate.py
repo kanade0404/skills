@@ -45,6 +45,8 @@ CODERABBIT_RUN = (CODERABBIT_APP, CODERABBIT_CHECK)
 GATE_RUN = (GATE_APP, GATE_CHECK)
 GREEN = frozenset({"success", "skipped", "neutral"})
 MAX_GH_FAILURES = 3
+# gh が通信で止まっても --timeout を守れるように、1 回の呼び出しの上限を決める。
+GH_TIMEOUT = 60.0
 SHORT_SHA = 7
 
 # CodeRabbit が本文に埋める目印。docs.coderabbit.ai と、このリポジトリの PR で観測した形に合わせる。
@@ -213,9 +215,13 @@ def run_gh(args: Sequence[str]) -> str:
     if gh is None:
         msg = "gh が見つからない"
         raise GhError(msg)
-    result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - gh は which で解決した絶対パス、引数はリストで渡す
-        [gh, *args], check=False, capture_output=True, text=True, env=gh_env(os.environ)
-    )
+    try:
+        result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - gh は which で解決した絶対パス、引数はリストで渡す
+            [gh, *args], check=False, capture_output=True, text=True, env=gh_env(os.environ), timeout=GH_TIMEOUT
+        )
+    except subprocess.TimeoutExpired as error:
+        msg = f"gh {' '.join(args[:2])} が {GH_TIMEOUT:.0f} 秒で終わらなかった"
+        raise GhError(msg) from error
     if result.returncode != 0:
         msg = f"gh {' '.join(args[:2])} が失敗した: {result.stderr.strip()[:500]}"
         raise GhError(msg)
@@ -509,7 +515,8 @@ def evaluate_coderabbit(snapshot: Snapshot, findings: Findings) -> dict[str, obj
     reviews = coderabbit_reviews(snapshot)
     run = latest_runs(snapshot.check_runs).get(CODERABBIT_RUN)
     evidence = head_evidence(snapshot, reviews)
-    incomplete = incomplete_publications(reviews)
+    # 古いコミットのレビューで batch が欠けていても、head の判定は止めない。
+    incomplete = incomplete_publications([r for r in reviews if text(dig(r, "commit", "oid")) == snapshot.head])
     if run and text(run.get("status")) != "completed":
         # 同じ head をもう一度レビューしている最中なら、結果が出るまで待つ。
         findings.waiting.append("CodeRabbit が head をレビューしている")
@@ -646,7 +653,9 @@ def evaluate_body_findings(snapshot: Snapshot) -> tuple[list[dict[str, object]],
     inline_ids: set[str] = set()
     for item in snapshot.threads:
         for node in as_list(dig(item, "first", "nodes")):
-            inline_ids.update(groups(FINDING_RE, text(as_dict(node).get("body"))))
+            # 誰でも id を書いたスレッドを作れるので、CodeRabbit が書いたものだけを行に付いた指摘とみなす。
+            if is_coderabbit(node):
+                inline_ids.update(groups(FINDING_RE, text(as_dict(node).get("body"))))
     acknowledged = acknowledgements(snapshot)
     open_items: list[dict[str, object]] = []
     addressed: list[str] = []

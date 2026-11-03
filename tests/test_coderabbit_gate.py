@@ -45,12 +45,12 @@ def pull(
 def comment(
     db_id: int, body: str, author: str = "kanade0404", typename: str = "", association: str = ""
 ) -> dict[str, object]:
-    # GraphQL の形。CodeRabbit の名前なら Bot、それ以外は User で、リポジトリの所有者として書いたものにする。
+    # GraphQL の形。CodeRabbit の名前なら Bot、それ以外は User にする。kanade0404 だけをリポジトリの所有者とする。
     bot = author in gate.CODERABBIT_LOGINS
     return {
         "databaseId": db_id,
         "author": {"login": author, "__typename": typename or ("Bot" if bot else "User")},
-        "authorAssociation": association or ("NONE" if bot else "OWNER"),
+        "authorAssociation": association or ("OWNER" if author == "kanade0404" else "NONE"),
         "body": body,
         "url": f"https://example.test/c/{db_id}",
     }
@@ -70,8 +70,9 @@ def thread(  # ruff: ignore[too-many-arguments] - スレッドの形を組み立
     last_author: str = "coderabbitai",
     last_body: str = "",
     line: int | None = 3,
+    first_author: str = "coderabbitai",
 ) -> dict[str, object]:
-    first = comment(10, body, "coderabbitai")
+    first = comment(10, body, first_author)
     return {
         "id": thread_id,
         "isResolved": resolved,
@@ -279,6 +280,11 @@ class TestCodeRabbitState:
         assert result["verdict"] == gate.WAITING
         assert "p1" in reasons(result)
 
+    def test_partial_publication_on_an_old_commit_does_not_block(self) -> None:
+        old = review(1, "<!-- coderabbit-review-publication v1 publication=p0 attempt=a batch=1/2 -->", OTHER)
+        github = FakeGitHub(reviews=[old, HEAD_REVIEW], check_runs=[*GREEN_CI, coderabbit_check()])
+        assert evaluate(github)["verdict"] == gate.READY
+
     def test_complete_publication_is_reviewed(self) -> None:
         bodies = [f"<!-- coderabbit-review-publication v1 publication=p1 attempt=a batch={i}/2 -->" for i in (1, 2)]
         github = FakeGitHub(reviews=[review(1, bodies[0]), review(2, bodies[1])], check_runs=GREEN_CI)
@@ -357,6 +363,14 @@ class TestIdentity:
         assert section(result, "coderabbit")["check"] is None
         assert section(result, "ci")["gate"] is None
         assert section(result, "ci")["state"] == "success"
+
+    def test_outsider_thread_cannot_hide_a_body_finding(self) -> None:
+        reviews = [HEAD_REVIEW, review(2, real("review_outside_diff"), real("review_outside_diff_commit"))]
+        spam = thread(
+            "T9", resolved=True, body="<!-- cr-comment:v1:f9fe793faafbe7cc296b213d -->", first_author="someone"
+        )
+        result = evaluate(FakeGitHub(reviews=reviews, threads=[spam], check_runs=GREEN_CI))
+        assert [f["id"] for f in items(result, "body_findings")] == ["f9fe793faafbe7cc296b213d"]
 
     def test_ack_from_outsider_does_not_count(self) -> None:
         reviews = [HEAD_REVIEW, review(2, real("review_outside_diff"), real("review_outside_diff_commit"))]
@@ -589,6 +603,13 @@ class TestGh:
         assert gate.run_gh(["api", "x; rm -rf /"]) == "1 api x; rm -rf /\n"
         with pytest.raises(gate.GhError, match="失敗"):
             _ = gate.run_gh(["api", "fail"])
+
+    def test_run_gh_times_out(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        _ = write_executable(tmp_path, "gh", "import time\ntime.sleep(5)\n")
+        monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+        monkeypatch.setattr(gate, "GH_TIMEOUT", 0.2)
+        with pytest.raises(gate.GhError, match="終わらなかった"):
+            _ = gate.run_gh(["api", "slow"])
 
     def test_gh_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(shutil, "which", no_gh)
