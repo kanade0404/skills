@@ -15,7 +15,7 @@
     {
       "name": "productivity",
       "source": "plugins/productivity",
-      "description": "会話の引き継ぎやサブエージェントの使いどころなど、作業を進めるためのスキル"
+      "description": "会話の引き継ぎ、サブエージェントの使いどころ、CodeRabbit のレビュー対応など、作業を進めるためのスキル"
     }
   ]
 }
