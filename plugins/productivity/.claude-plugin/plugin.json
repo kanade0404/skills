@@ -2,9 +2,17 @@
   "name": "productivity",
   "displayName": "productivity",
   "version": "0.1.0",
-  "description": "会話を次のエージェントへ引き継ぐなど、作業を進めるためのスキル",
+  "description": "会話の引き継ぎやサブエージェントの使いどころなど、作業を進めるためのスキル",
   "author": { "name": "kanade0404" },
   "repository": "https://github.com/kanade0404/skills",
   "license": "MIT",
-  "keywords": ["handoff", "productivity"]
+  "keywords": ["handoff", "productivity", "subagent"],
+  "userConfig": {
+    "subagent_reminder": {
+      "type": "boolean",
+      "title": "サブエージェントの判断を促す",
+      "description": "セッションの開始時と Agent ツールを呼ぶたびに、subagent-judgment スキルの条件を文脈に入れる（百数十トークン）",
+      "default": true
+    }
+  }
 }

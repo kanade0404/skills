@@ -76,8 +76,11 @@ Claude Code と Codex では、次のフックが動く。括弧の中は Claude
 作業を進めるためのスキルをまとめたプラグイン。
 
 - `handoff`: 今の会話を、次のエージェントが引き継ぐための文書にまとめる（[mattpocock/skills](https://github.com/mattpocock/skills/tree/main/skills/productivity/handoff)の写し）。Claude Code では `/productivity:handoff [次のセッションでやること]` で呼ぶ
+- `subagent-judgment`: サブエージェントに任せるかを判断する条件と、任せるときの指示の書き方を定める。Anthropic の記事「[Building agents: When to fold subagents into your main agent loop](https://claude.com/resources/articles/building-agents-when-to-fold-subagents-into-your-main-agent-loop)」の要点に、このリポジトリの例外を加えた
 
 入れ方は ja-writing と同じで、プラグイン名を `productivity` にする。
+
+Claude Code では、フックが `subagent-judgment` の条件を文脈に入れる。セッションの開始時（startup・resume・clear・compact のどれでも）に SessionStart のフックが短い注意を入れ、これが最初の Agent 呼び出しをカバーする。PreToolUse のフックの文脈は呼び出しの結果と一緒に届くので、2 回目以降の Agent 呼び出しを受け持つ。どちらも呼び出しは止めない。切り替えは `SUBAGENT_JUDGMENT_REMINDER`（プラグイン設定の `subagent_reminder`）で、`0`・`false`・`no`・`off` のどれかにすると入れない。フックは ja-writing と同じく `python3` コマンドで動くので、Python 3.9 以上を `python3` の名前で呼べるようにしておく。
 
 ## 上流から写したスキル
 
