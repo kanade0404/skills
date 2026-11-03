@@ -383,6 +383,7 @@ def parse_local(raw: object) -> tuple[str, list[dict[str, object]]]:
     require(bool(TOOL_RE.match(tool)), f"tool は英小文字、数字、ハイフンにする: {tool!r}")
     head = gate.text(data.get("head_sha"))
     require(bool(SHA_RE.match(head)) and len(head) == len("0" * 40), "head_sha は 40 桁の SHA にする")
+    require(isinstance(data.get("findings"), list), "findings は配列にする")
     findings = [gate.as_dict(item) for item in gate.as_list(data.get("findings"))]
     for index, finding in enumerate(findings):
         where = f"findings[{index}]"

@@ -71,6 +71,7 @@ CodeRabbit の指摘の結果は、次の順で決める。
 ```
 
 - `tool` は英小文字、数字、ハイフンで 40 文字まで。`code-review`、`security-review`、`security-guidance`、`claude-review` を使う。人の指摘は `human` にする
+- `findings` は配列にする。指摘が無ければ空の配列を渡す
 - `path` と `claim` は必須
 - `line` は正の整数か null
 - `class` は英小文字とハイフンか null。null なら、`harness/review-rules.json` の `patterns` で `claim` から決める

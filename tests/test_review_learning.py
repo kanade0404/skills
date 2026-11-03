@@ -334,6 +334,8 @@ class TestLocal:
         ("changes", "message"),
         [
             ({"version": 2}, "version"),
+            ({"findings": finding()}, "findings は配列"),
+            ({"findings": None}, "findings は配列"),
             ({"tool": "Bad Tool"}, "tool"),
             ({"head_sha": "4d7fe4c"}, "head_sha"),
             ({"findings": [finding(path="")]}, "path"),
