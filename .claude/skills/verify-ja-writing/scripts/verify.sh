@@ -11,8 +11,8 @@ YOMIYASU_SCRIPTS="$PLUGIN/skills/yomiyasu/scripts"
 FIXTURES="$SCRIPT_DIR/../fixtures"
 
 : "${RUN_ID:?RUN_ID を設定する(例: RUN_ID=\$(date +%Y%m%d-%H%M%S))}"
-case "$RUN_ID" in *[!A-Za-z0-9._-]*) echo "RUN_ID は英数字と . _ - だけにする" >&2; exit 2 ;; esac
-case "$RUN_ID" in . | ..) echo "RUN_ID に . と .. は使えない" >&2; exit 2 ;; esac
+# . は使えない。セッションのフォルダ名は / と . を - に潰すので、foo.bar と foo-bar が同じ名前になり、記録が混ざる。
+case "$RUN_ID" in *[!A-Za-z0-9_-]*) echo "RUN_ID は英数字と _ - だけにする" >&2; exit 2 ;; esac
 # 外の設定が検査の規則を差し替えないよう、同梱の設定だけを使わせる。
 unset TEXTLINT_CONFIG
 
@@ -302,7 +302,7 @@ cmd_cleanup() {
     local sessions
     sessions=$(session_dir)
     case "$sessions" in
-      *verify-ja-writing-"${RUN_ID//./-}"-ws) [ -d "$sessions" ] && rm -rf "$sessions" && echo "removed $sessions" ;;
+      *verify-ja-writing-"$RUN_ID"-ws) [ -d "$sessions" ] && rm -rf "$sessions" && echo "removed $sessions" ;;
     esac
     rm -rf "$WORK"
     echo "removed $WORK"

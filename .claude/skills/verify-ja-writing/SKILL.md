@@ -20,7 +20,7 @@ description: ja-writing プラグイン（Claude Code のフック 3 つと text
 - `claude` を直接打たない。利用者の対話シェルの `claude` は、システムプロンプトを足す alias になっている。スクリプトは `/bin/sh` から実体を探す。
 - `python3` も対話シェルでは mise の shim に化けることがある。フックは `/bin/sh` 経由で動くので、スクリプトも同じ方法で `python3` を探す。
 - ヘッドレスの claude の Bash ツールは、利用者のシェルの設定を読む。このマシンでは `python3` が mise の shim になり、`ls` は別のコマンドに置き換わる。スキルの drive では、モデルが `/usr/bin/python3` で実行し直す。
-- 環境変数 `RUN_ID` を必ず決める。`.` と `..` は使えない。launch は同じ `RUN_ID` の作業ディレクトリが既にあれば止まる。作業ディレクトリと証拠の置き場は `RUN_ID` ごとに分かれるので、並行して動かしても混ざらない。
+- 環境変数 `RUN_ID` を必ず決める。`.` は使えない。セッションのフォルダ名が `foo.bar` と `foo-bar` で同じになり、記録が混ざるからである。launch は同じ `RUN_ID` の作業ディレクトリが既にあれば止まる。作業ディレクトリと証拠の置き場は `RUN_ID` ごとに分かれるので、並行して動かしても混ざらない。
 - 作業ディレクトリは `${VERIFY_WORK_ROOT:-$TMPDIR}/verify-ja-writing/$RUN_ID/` に作る。セッション専用の scratchpad があれば `VERIFY_WORK_ROOT` に渡す。
 - 証拠は `.verify-evidence/ja-writing/$RUN_ID/`（リポジトリの最上位）に残る。`.gitignore` 済みで、cleanup でも消えない。
 - `verify.sh` は `TEXTLINT_CONFIG` を外して動かす。同梱の設定だけで検査させるためである。
@@ -29,7 +29,7 @@ description: ja-writing プラグイン（Claude Code のフック 3 つと text
 
 | 変数 | 既定 | 使い道 |
 | --- | --- | --- |
-| `RUN_ID` | なし（必須） | 実行の名前。英数字と `.` `_` `-` だけ |
+| `RUN_ID` | なし（必須） | 実行の名前。英数字と `_` `-` だけ |
 | `VERIFY_WORK_ROOT` | `$TMPDIR` | 作業ディレクトリを作る場所 |
 | `VERIFY_MODEL` | `haiku` | ヘッドレスの実行に使うモデル |
 | `VERIFY_BUDGET_USD` | `0.30` | 1 回の実行で使える金額の上限（`--max-budget-usd`） |
