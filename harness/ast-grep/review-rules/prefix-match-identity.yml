@@ -1,0 +1,37 @@
+# 昇格の記録: harness/review-rules.json の prefix-match-identity。
+# kanade0404/skills#190 の 4d7fe4c で、is_coderabbit が name.lower().startswith(CODERABBIT) で CodeRabbit を見分けていた。
+# coderabbitai-evil のような別のアカウントが通り、head へのレビューを偽って READY にできた(050c3e7 で修正)。
+id: prefix-match-identity
+language: python
+severity: error
+message: >-
+  名前や許可リストを startswith / endswith で照合している。許可した名前で始まる別の名前(coderabbitai-evil など)を通してしまう。
+  完全一致の集合で照合する(例: `login in CODERABBIT_LOGINS`、`CODERABBIT_LOGINS = frozenset({...})`)。
+note: >-
+  前方一致が本当に要るとき(SHA の短縮形など)は、定数ではなく変数で比べるか、
+  `# ast-grep-ignore: prefix-match-identity` を理由と一緒に行に付ける。
+  根拠は harness/review-rules.json と harness/review-learnings.jsonl の記録。
+rule:
+  kind: call
+  all:
+    - has:
+        field: function
+        kind: attribute
+        has:
+          field: attribute
+          regex: ^(startswith|endswith)$
+    - any:
+        # 名前や許可リストを表す定数(大文字の名前)と前方一致・後方一致で比べている。
+        # 大文字の定数すべてにすると、文字列の接尾辞の表(yomiyasu の 22 か所)まで拾うので、名前で絞る。
+        - has:
+            field: arguments
+            has:
+              kind: identifier
+              regex: ^_?[A-Z0-9_]*(ALLOW|TRUST|LOGIN|USER|AUTHOR|OWNER|BOT|ACCOUNT|HOST|DOMAIN|ORIGIN|SENDER|ACTOR|EMAIL)[A-Z0-9_]*$
+        # 見分ける関数(is_*、has_*、can_*、allow*、trusted*、verify*)の中で前方一致・後方一致を使っている
+        - inside:
+            kind: function_definition
+            stopBy: end
+            has:
+              field: name
+              regex: ^_?(is|has|can|allow|allowed|trusted|verify|authorize|authorized)(_|$)

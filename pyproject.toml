@@ -8,6 +8,8 @@ dependencies = []
 
 [dependency-groups]
 dev = [
+  # CodeRabbit が動かす版(docs.coderabbit.ai/tools/ast-grep の v0.50.0)に合わせて固定する。
+  "ast-grep-cli==0.50.0",
   "basedpyright",
   "mypy",
   "pydantic",
@@ -63,7 +65,7 @@ ignore = [
 
 [tool.ruff.lint.isort]
 # スクリプトとテストの共通部品は pythonpath に入れて import する。
-known-first-party = ["textlint_runner", "post_edit", "stop", "session_start", "lint", "protocol", "vendor_skill", "vendored_paths", "support", "subagent_reminder", "coderabbit_gate"]
+known-first-party = ["textlint_runner", "post_edit", "stop", "session_start", "lint", "protocol", "vendor_skill", "vendored_paths", "support", "subagent_reminder", "coderabbit_gate", "review_learning"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

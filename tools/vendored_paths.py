@@ -4,6 +4,7 @@
 
     python3 tools/vendored_paths.py sync     # pyproject.toml と .coderabbit.yaml の印の間を書き直す
     python3 tools/vendored_paths.py semgrep  # semgrep の --exclude の引数を1行ずつ出す
+    python3 tools/vendored_paths.py ast-grep # ast-grep scan の --globs の引数を1行ずつ出す
     python3 tools/vendored_paths.py review   # PR レビューで除くディレクトリを、読点で区切って出す
 """
 
@@ -61,6 +62,8 @@ def _output(command: str, root: Path, config: Path) -> str | None:
         return "".join(f"{name} を書き直しました\n" for name in sync(root, config))
     if command == "semgrep":
         return "".join(f"--exclude\n{destination}\n" for destination in destinations(config))
+    if command == "ast-grep":
+        return "".join(f"--globs\n!{destination}/**\n" for destination in destinations(config))
     if command == "review":
         return "、".join(f"{destination}/" for destination in destinations(config)) + "\n"
     return None
@@ -73,7 +76,7 @@ def run(args: Sequence[str], root: Path = ROOT, config: Path = CONFIG) -> Litera
         _ = sys.stderr.write(f"{error}\n")
         return 1
     if output is None:
-        _ = sys.stderr.write("使い方: python3 tools/vendored_paths.py sync|semgrep|review\n")
+        _ = sys.stderr.write("使い方: python3 tools/vendored_paths.py sync|semgrep|ast-grep|review\n")
         return 2
     _ = sys.stdout.write(output)
     return 0

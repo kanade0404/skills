@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "classes": {
+    "prefix-match-identity": {
+      "description": "アカウント名や許可リストを前方一致・後方一致で照合し、別の名前を通してしまう",
+      "patterns": ["(?i)prefix[- ]match", "前方一致", "startswith"]
+    },
+    "unverified-comment-author": {
+      "description": "PR のコメントの本文を、書いた人を確かめずに判定に使う",
+      "patterns": ["(?i)-authored\\b", "authorAssociation", "(著者|投稿者)を確かめ"]
+    },
+    "unvalidated-run-id": {
+      "description": "外から渡る識別子を、そのままパスやフォルダ名に使う",
+      "patterns": ["RUN_ID"]
+    },
+    "exit-status-dropped": {
+      "description": "子プロセスの終了コードを呼び出し元に返さない",
+      "patterns": ["(?i)exit (status|code)", "終了コード"]
+    },
+    "permission-rule-too-broad": {
+      "description": "Claude Code の許可の規則が、意図より広いコマンドを通す",
+      "patterns": ["(?i)allow rules", "(?i)bash rules", "(?i)argument-validating wrapper"]
+    },
+    "subprocess-no-timeout": {
+      "description": "外部コマンドの呼び出しに時間の上限が無い",
+      "patterns": ["(?i)\\btimeout\\b", "タイムアウト"]
+    },
+    "shell-eval": {
+      "description": "シェルで文字列を eval する",
+      "patterns": ["(?i)\\beval\\b"]
+    },
+    "doc-contradicts-behavior": {
+      "description": "文書の手順や約束が、スクリプトの実際の動きと合わない",
+      "patterns": []
+    },
+    "adr-unspecified-contract": {
+      "description": "ADR が、実装に要る契約(境界、失敗時の扱い、比較の基準、受け入れテスト)を決めていない",
+      "patterns": []
+    }
+  },
+  "rules": [
+    {
+      "id": "prefix-match-identity",
+      "class": "prefix-match-identity",
+      "level": "ast-grep",
+      "enforcer": "harness/ast-grep/review-rules/prefix-match-identity.yml",
+      "scope": "**/*.py",
+      "evidence": {
+        "records": ["local:security-guidance:beb628cf761515d6"],
+        "prs": [190],
+        "commits": ["4d7fe4c1489eee2067988e2289eb16ff721a7cb0", "050c3e7c25774f7baa17bbd99275bb2940bd95c7"],
+        "fixtures": ["harness/ast-grep/review-rule-tests/prefix-match-identity-test.yml"]
+      },
+      "reason": "1 件だが、CodeRabbit のレビューを偽って READY にできる認可の迂回なので、重大度で 2 件を待たずに昇格させる。照合の書き方は構文で決まるので ast-grep で機械的に止められる。型では startswith を禁じられず、関数を 1 つにまとめる設計(is_coderabbit)はすでにあるが、別のファイルで同じ書き方をするのは防げない。"
+    },
+    {
+      "id": "unverified-comment-author",
+      "class": "unverified-comment-author",
+      "level": "path_instructions",
+      "enforcer": ".coderabbit.yaml",
+      "scope": "plugins/**/scripts/*.py",
+      "evidence": {
+        "records": ["local:security-guidance:a8a14651274151f4", "coderabbit:33569afdf8224158cd71ff17"],
+        "prs": [190],
+        "commits": ["4d7fe4c1489eee2067988e2289eb16ff721a7cb0", "050c3e7c25774f7baa17bbd99275bb2940bd95c7", "c570b18078188ca8ed4d72f527fa1d7d23aaf7d3"]
+      },
+      "reason": "2 件(4d7fe4c の acknowledgements、050c3e7 の inline_ids)。どちらも、本文をどう使うかで正しさが決まる判断で、ast-grep では誤検知なしに書けない(表示用の title の読み取りは著者を確かめなくてよい)。判定に使う本文を書いた人を確かめているかを、CodeRabbit に scripts に限って見させる。",
+      "instructions": "PR のコメント、レビュー、スレッドの本文を判定に使うコードを確かめる。判定に使う本文は、coderabbit_gate.is_coderabbit(CodeRabbit の Bot か)か coderabbit_gate.is_trusted(authorAssociation が OWNER、MEMBER、COLLABORATOR か)で書いた人を確かめたものに限る。公開リポジトリでは誰でもコメントでき、id や目印を書いて判定を変えられるからだ。著者を確かめずに本文を判定に使う箇所があれば、指摘する。表示用の抜き出し(title など)だけに使う場合は指摘しない。"
+    }
+  ]
+}

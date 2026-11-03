@@ -66,6 +66,16 @@ JSON にはすべての項目が入るので、`BLOCKED` のときも `unresolve
 5. 指摘に返信し、対応したスレッドを解決する。
 6. 1 に戻る。push したら、CodeRabbit が新しい head をレビューするのを待つところから始める。
 
+`READY` になったら、指摘を記録に取り込む。
+同じ指摘を二度受けないように、繰り返す種類を規則に移すためだ。
+手順と、ローカルのレビューの指摘の渡し方は、review-learning スキルにある。
+
+```
+python3 <productivity プラグインのディレクトリ>/scripts/review_learning.py capture-coderabbit <owner/repo> <PR 番号>
+```
+
+`/code-review`、`/security-review`、security-guidance のレビューを走らせたら、その指摘も `capture-local` で取り込む。
+
 `BLOCKED` のときは、`reasons` と `commands` に従って原因を取り除く。
 
 - 自動レビューの停止は、PR に `@coderabbitai resume` とコメントする。1 回だけでよければ `@coderabbitai review` を使う。

@@ -1,0 +1,6 @@
+# ast-grep の設定。規則は CodeRabbit(.coderabbit.yaml の reviews.tools.ast-grep.rule_dirs)と CI の両方で動かす。
+# 規則の追加と削除は harness/review-rules.json に記録し、review_learning.py sync で整合を確かめる。
+ruleDirs:
+  - harness/ast-grep/review-rules
+testConfigs:
+  - testDir: harness/ast-grep/review-rule-tests

@@ -35,6 +35,13 @@ jobs:
       - run: uv run mypy
       - run: uv run basedpyright
       - run: uv run pytest
+      # レビューの指摘から昇格させた ast-grep の規則。CodeRabbit も同じ規則を動かすが、止まっていても CI で必ず効かせる。
+      # ast-grep は CodeRabbit と同じ版を pyproject.toml で固定している。
+      - run: uv run ast-grep test --skip-snapshot-tests
+      - run: |
+          globs=$(python3 tools/vendored_paths.py ast-grep)
+          mapfile -t glob_args <<< "$globs"
+          uv run ast-grep scan "${glob_args[@]}" .
       # フックは利用者の python3 で直接動くので、macOS 標準の 3.9 でもテストする。
       - run: uv run --locked --python 3.9 pytest
 

@@ -5,3 +5,20 @@ reviews:
     - "!plugins/ja-writing/skills/yomiyasu/**"
     - "!plugins/productivity/skills/handoff/**"
     # END tools/vendored.json
+    # 指摘の記録はデータで、review_learning.py が追記する。記録だけの push でレビューの往復を起こさない。
+    - "!harness/review-learnings.jsonl"
+  # レビューの指摘から昇格させた規則。harness/review-rules.json を正本にして、印の間は手で直さない。
+  # BEGIN harness/review-rules.json (review_learning.py sync が書く)
+  path_instructions:
+    - path: "plugins/**/scripts/*.py"
+      instructions: "PR のコメント、レビュー、スレッドの本文を判定に使うコードを確かめる。判定に使う本文は、coderabbit_gate.is_coderabbit(CodeRabbit の Bot か)か coderabbit_gate.is_trusted(authorAssociation が OWNER、MEMBER、COLLABORATOR か)で書いた人を確かめたものに限る。公開リポジトリでは誰でもコメントでき、id や目印を書いて判定を変えられるからだ。著者を確かめずに本文を判定に使う箇所があれば、指摘する。表示用の抜き出し(title など)だけに使う場合は指摘しない。"
+  pre_merge_checks:
+    custom_checks: []
+  # END harness/review-rules.json
+  tools:
+    # Semgrep は CI で動かしているので、CodeRabbit では ast-grep の規則を足す。同じ規則を CI の ast-grep でも動かす。
+    ast-grep:
+      enabled: true
+      essential_rules: true
+      rule_dirs:
+        - "harness/ast-grep/review-rules"

@@ -1,0 +1,30 @@
+# invalid の 1 件目は kanade0404/skills の 4d7fe4c の plugins/productivity/scripts/coderabbit_gate.py:167-168 をそのまま写した。
+# valid の 1 件目は、050c3e7 で直したあとの同じ関数。
+id: prefix-match-identity
+valid:
+  - |
+    def is_coderabbit(node: object) -> bool:
+        return login(node) in CODERABBIT_LOGINS and text(dig(node, "author", "__typename")) == "Bot"
+  - |
+    def same_commit(short: str, head: str) -> bool:
+        return len(short) >= SHORT_SHA and head.startswith(short)
+  - |
+    if body.startswith("#!"):
+        pass
+  - |
+    weak = stem.endswith(_DEMOTE_REDUCE)
+  - |
+    def relative(path: str) -> str:
+        return path if path.startswith(os.pardir) else path
+invalid:
+  - |
+    def is_coderabbit(name: str) -> bool:
+        return name.lower().startswith(CODERABBIT)
+  - |
+    allowed = host.endswith(ALLOWED_DOMAIN)
+  - |
+    def is_trusted_sender(sender: str) -> bool:
+        return sender.startswith("bot-")
+  - |
+    def allow(origin: str) -> bool:
+        return origin.endswith(".example.com")
