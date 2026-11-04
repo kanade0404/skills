@@ -35,6 +35,11 @@ jobs:
       - run: uv run mypy
       - run: uv run basedpyright
       - run: uv run pytest
+      - run: uv run ast-grep test --skip-snapshot-tests
+      - run: |
+          globs=$(python3 tools/vendored_paths.py ast-grep)
+          mapfile -t glob_args <<< "$globs"
+          uv run ast-grep scan "${glob_args[@]}" .
       # フックは利用者の python3 で直接動くので、macOS 標準の 3.9 でもテストする。
       - run: uv run --locked --python 3.9 pytest
 

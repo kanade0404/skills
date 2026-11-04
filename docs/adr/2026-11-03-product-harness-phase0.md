@@ -96,6 +96,8 @@ B は `time` コマンドを拡張したもので、macOS と Linux で動く。
 
 各セグメントの開始時に、このログを読む。ログの置き場所は `harness/learnings.md` とし、1 件ごとに日付、失敗、根本原因、修正、証拠のパスを書く（提案）。
 
+追記: PR のレビューの指摘は、この決定に沿って `harness/review-learnings.jsonl` に記録する。機械で数えて昇格させるので、Markdown ではなく JSON Lines にした。昇格の目安は、pstack の `correct` に合わせて 2 回とし、重い指摘は 1 回でも昇格させる。手順は productivity の review-learning スキルにある。
+
 ### 6. 自動圧縮に頼らず、セグメントに分けて引き継ぐ
 
 自動の compact のあとは品質が落ちる。そこで、長い作業は次の仕組みで進める。

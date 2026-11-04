@@ -78,6 +78,7 @@ Claude Code と Codex では、次のフックが動く。括弧の中は Claude
 - `handoff`: 今の会話を、次のエージェントが引き継ぐための文書にまとめる（[mattpocock/skills](https://github.com/mattpocock/skills/tree/main/skills/productivity/handoff)の写し）。Claude Code では `/productivity:handoff [次のセッションでやること]` で呼ぶ
 - `subagent-judgment`: サブエージェントに任せるかを判断する条件と、任せるときの指示の書き方を定める。Anthropic の記事「[Building agents: When to fold subagents into your main agent loop](https://claude.com/resources/articles/building-agents-when-to-fold-subagents-into-your-main-agent-loop)」の要点に、このリポジトリの例外を加えた
 - `coderabbit-review-gate`: PR に push したあと、READY になるまで CodeRabbit の指摘に対応する。判定は `scripts/coderabbit_gate.py` が受け持つ。CodeRabbit のレビューが head に届いたか、未解決のスレッドとレビュー本文にだけある指摘が残っていないか、CI が通ったかを見る。判定スクリプトは `gh` と Python 3.9 以上で動く
+- `review-learning`: レビューの指摘を `harness/review-learnings.jsonl` に追記して、種類ごとに数える。2 回起きた種類と CodeRabbit が見逃した種類は、ast-grep の規則や CodeRabbit の `path_instructions` に昇格させる。集計は `scripts/review_learning.py` が受け持つ。規則と強制する仕組みの対応表は `harness/review-rules.md` にある
 
 入れ方は ja-writing と同じで、プラグイン名を `productivity` にする。
 
@@ -119,6 +120,7 @@ CI と同じ検査は次のとおり。
 | Python | `uv run pytest` と `uv run --python 3.9 pytest` | 警告をエラーにし、分岐カバレッジ 100% を求める |
 | TypeScript | `bun --bun run --cwd plugins/ja-writing/skills/textlint check` | tsc（strict と追加フラグ）、oxfmt、oxlint（nursery を含む全カテゴリ、型を使うルールを含む） |
 | 全体 | `semgrep scan ...`（引数は `.github/workflows/ci.yml`） | semgrep の python・security-audit・secrets・github-actions・typescript |
+| 全体 | `uv run ast-grep test --skip-snapshot-tests` と `uv run ast-grep scan ...`（引数は `.github/workflows/ci.yml`） | レビューの指摘から昇格させた `harness/ast-grep/review-rules/` の規則 |
 
 ruff と oxlint で外したルールは、それぞれ `pyproject.toml` と `.oxlintrc.json` に理由を書いている。上流から写したスキルは手を加えないので検査しない。
 

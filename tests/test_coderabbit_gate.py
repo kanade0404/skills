@@ -419,6 +419,21 @@ class TestBodyFindings:
         assert (finding["path"], finding["line"]) == (".claude/skills/verify-ja-writing/scripts/verify.sh", 67)
         assert "Keep session records separate" in gate.text(finding["title"])
 
+    def test_nitpick_title_is_the_bold_heading(self) -> None:
+        body = (
+            "<!-- coderabbit-ai-generated:v1 -->\n**Actionable comments posted: 0**\n"
+            "<details>\n<summary>Nitpick comments: 1</summary><blockquote>\n"
+            "<details>\n<summary>pyproject.toml: 1</summary><blockquote>\n"
+            "`11-12`: **Trivial** · **Maintainability & Code Quality** · **Quick win**\n"
+            "**Update the ast-grep pin or the parity claim. CodeRabbit now runs v0.51.1.**\n"
+            "<details>\n<summary>Proposed change</summary>\n</details>\n"
+            "Review comment at @pyproject.toml around lines 11 - 12:\n"
+            "<!-- cr-comment:v1:00168dfab1ed5dab9d0314a1 -->\n"
+        )
+        github = FakeGitHub(reviews=[HEAD_REVIEW, review(2, body)], check_runs=GREEN_CI)
+        (finding,) = items(evaluate(github), "body_findings")
+        assert finding["title"] == "Update the ast-grep pin or the parity claim. CodeRabbit now runs v0.51.1."
+
     def test_follow_up_comments(self) -> None:
         # #188 の新しい形式。5 件とも本文だけにあり、スレッドを持たない。
         github = FakeGitHub(

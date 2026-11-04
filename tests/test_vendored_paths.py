@@ -67,6 +67,10 @@ class TestRun:
         assert vendored_paths.run(["semgrep"], config=config) == 0
         assert capsys.readouterr().out == "--exclude\na/s\n--exclude\nb/s\n"
 
+    def test_ast_grep(self, config: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        assert vendored_paths.run(["ast-grep"], config=config) == 0
+        assert capsys.readouterr().out == "--globs\n!a/s/**\n--globs\n!b/s/**\n"
+
     def test_review(self, config: Path, capsys: pytest.CaptureFixture[str]) -> None:
         assert vendored_paths.run(["review"], config=config) == 0
         assert capsys.readouterr().out == "a/s/、b/s/\n"

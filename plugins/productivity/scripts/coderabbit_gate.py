@@ -450,8 +450,8 @@ def incomplete_publications(reviews: list[dict[str, object]]) -> list[str]:
     return [publication for publication, (total, batches) in seen.items() if batches != set(range(1, total + 1))]
 
 
-def head_evidence(snapshot: Snapshot, reviews: list[dict[str, object]]) -> list[str]:
-    head = snapshot.head
+def head_evidence(snapshot: Snapshot, reviews: list[dict[str, object]], sha: str | None = None) -> list[str]:
+    head = sha or snapshot.head
     evidence = [
         f"head を対象にした CodeRabbit のレビュー {integer(review.get('databaseId'))}"
         for review in reviews
@@ -594,6 +594,9 @@ def location(segment: str) -> tuple[str, int | None, int | None]:
 
 
 def segment_title(segment: str) -> str:
+    line = next((excerpt(match) for match in reversed(groups(TITLE_LINE_RE, segment))), "")
+    if line:
+        return line
     for summary in groups(SUMMARY_RE, segment):
         title = excerpt(summary)
         if title and "Prompt for AI Agents" not in title and not title.endswith(")"):

@@ -1,0 +1,31 @@
+id: prefix-match-identity
+language: python
+severity: error
+message: >-
+  名前や許可リストを startswith / endswith で照合している。許可した名前で始まる別の名前(coderabbitai-evil など)を通してしまう。
+  完全一致の集合で照合する(例: `login in CODERABBIT_LOGINS`、`CODERABBIT_LOGINS = frozenset({...})`)。
+note: >-
+  前方一致が本当に要るとき(SHA の短縮形など)は、定数ではなく変数で比べるか、
+  `# ast-grep-ignore: prefix-match-identity` を理由と一緒に行に付ける。
+  根拠は harness/review-rules.json と harness/review-learnings.jsonl の記録。
+rule:
+  kind: call
+  all:
+    - has:
+        field: function
+        kind: attribute
+        has:
+          field: attribute
+          regex: ^(startswith|endswith)$
+    - any:
+        - has:
+            field: arguments
+            has:
+              kind: identifier
+              regex: ^_?[A-Z0-9_]*(ALLOW|TRUST|LOGIN|USER|AUTHOR|OWNER|BOT|ACCOUNT|HOST|DOMAIN|ORIGIN|SENDER|ACTOR|EMAIL)[A-Z0-9_]*$
+        - inside:
+            kind: function_definition
+            stopBy: end
+            has:
+              field: name
+              regex: ^_?(is|has|can|allow|allowed|trusted|verify|authorize|authorized)(_|$)

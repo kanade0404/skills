@@ -1,0 +1,4 @@
+ruleDirs:
+  - harness/ast-grep/review-rules
+testConfigs:
+  - testDir: harness/ast-grep/review-rule-tests
