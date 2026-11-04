@@ -594,6 +594,9 @@ def location(segment: str) -> tuple[str, int | None, int | None]:
 
 
 def segment_title(segment: str) -> str:
+    line = next((excerpt(match) for match in reversed(groups(TITLE_LINE_RE, segment))), "")
+    if line:
+        return line
     for summary in groups(SUMMARY_RE, segment):
         title = excerpt(summary)
         if title and "Prompt for AI Agents" not in title and not title.endswith(")"):
